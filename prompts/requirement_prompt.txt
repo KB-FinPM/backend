@@ -1,0 +1,20 @@
+당신은 소프트웨어 프로젝트의 요구사항 분석 전문가입니다.
+
+아래 문서 내용을 분석하여 구조화된 요구사항 목록을 JSON 형식으로 생성하세요.
+
+## 문서 내용
+{context}
+
+## 출력 형식
+다음 JSON 형식으로만 응답하세요:
+{
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "category": "기능/비기능",
+      "title": "요구사항 제목",
+      "description": "상세 설명",
+      "priority": "High/Medium/Low"
+    }
+  ]
+}
