@@ -1,16 +1,18 @@
+# EN: FastAPI application entry point and router registration.
+# KO: FastAPI 앱 진입점이며 주요 라우터를 등록합니다.
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, upload, generation
+from app.api import generation, health, upload
 from app.core.config import settings
 
 app = FastAPI(
     title="FINPM Agent API",
     version="0.1.0",
-    description="AI 기반 프로젝트 관리 지원 플랫폼",
+    description="AI-based project management agent platform.",
 )
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -19,7 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 라우터 등록
 app.include_router(health.router, tags=["health"])
 app.include_router(upload.router, prefix="/upload", tags=["upload"])
 app.include_router(generation.router, prefix="/generate", tags=["generation"])

@@ -1,5 +1,11 @@
-from pydantic import BaseModel, Field
+# EN: Common API response schemas.
+# KO: API 공통 응답 스키마입니다.
+
 from typing import Any, Optional
+
+from pydantic import BaseModel, Field
+
+from app.schemas.artifact import DocumentMetadata
 
 
 class BaseResponse(BaseModel):
@@ -15,4 +21,8 @@ class ErrorResponse(BaseResponse):
 
 class GenerationResponse(BaseResponse):
     project_id: str
-    result: Any = Field(None, description="생성된 결과 JSON")
+    result: Any = Field(None, description="Generated artifact result JSON")
+
+
+class DocumentUploadResponse(BaseResponse):
+    document: DocumentMetadata

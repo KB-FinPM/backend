@@ -1,3 +1,6 @@
+# EN: Shared logger factory for backend modules.
+# KO: 백엔드 모듈에서 공통으로 사용하는 Logger 생성기입니다.
+
 import logging
 import sys
 from app.core.config import settings

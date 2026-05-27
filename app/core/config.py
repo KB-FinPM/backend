@@ -1,3 +1,6 @@
+# EN: Application configuration loaded from environment variables.
+# KO: 환경 변수에서 로드되는 애플리케이션 설정입니다.
+
 from pydantic_settings import BaseSettings
 from typing import List
 

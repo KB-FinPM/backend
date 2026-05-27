@@ -1,3 +1,6 @@
+# EN: Common request and response envelopes for all agents.
+# KO: 모든 Agent가 공유하는 요청 및 응답 Envelope 스키마입니다.
+
 from pydantic import BaseModel, Field
 from typing import Any, Optional
 

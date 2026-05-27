@@ -1,47 +1,96 @@
+# EN: Orchestrates source-document based artifact generation flows.
+# KO: 선행 문서 기반 후행 산출물 생성 흐름을 제어합니다.
+
+from typing import Any
+
+from app.agents.core_agents.requirement_agent.agent import requirement_agent
+from app.agents.core_agents.validator_agent.agent import validator_agent
+from app.core.logger import get_logger
+from app.rag.retrieval import retrieval_service
+from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
-from app.schemas.agent import AgentRequest
-from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class GenerationOrchestrator:
-    """
-    요구사항 생성 전체 흐름 제어.
-    Agent 호출 순서, RAG 검색, Validator 호출을 담당합니다.
-    비즈니스 로직이 아닌 흐름(Flow) 만 제어합니다.
-    """
+    """Coordinates generation flows across retrieval, core agents, and validation."""
+
+    def __init__(
+        self,
+        retrieval: Any = retrieval_service,
+        requirement_generator: Any = requirement_agent,
+        validator: Any = validator_agent,
+    ) -> None:
+        self.retrieval = retrieval
+        self.requirement_generator = requirement_generator
+        self.validator = validator
 
     async def generate_requirement(self, request: GenerationRequest) -> GenerationResponse:
-        logger.info(f"[Orchestrator] generate_requirement start | project_id={request.project_id}")
+        generation_flow = request.generation_flow()
+        logger.info(
+            "[Orchestrator] generate_requirement start | "
+            f"project_id={request.project_id} | "
+            f"target_artifact_type={generation_flow.target_artifact_type}"
+        )
 
-        # Step 1. 문서 검색 (RAG)
-        # TODO: rag_service.search(project_id, query) 호출
-        documents = []
+        documents = await self.retrieval.search(
+            project_id=request.project_id,
+            query=request.query or "",
+        )
 
-        # Step 2. Input Agent - 문서 정제
-        # TODO: document_input_agent.process(documents)
-
-        # Step 3. Core Agent - 요구사항 생성
         agent_request = AgentRequest(
             project_id=request.project_id,
             documents=documents,
+            context={
+                "source_document_ids": request.source_document_ids,
+                "document_ids": request.document_ids,
+                "source_document_type": (
+                    generation_flow.source_document_type.value
+                    if generation_flow.source_document_type
+                    else None
+                ),
+                "target_artifact_type": generation_flow.target_artifact_type.value,
+                "template": generation_flow.template.model_dump(),
+                "query": request.query,
+            },
         )
-        # TODO: requirement_agent.generate(agent_request)
-        agent_result = {"mock": "RequirementAgent 결과"}
+        agent_response = await self.requirement_generator.generate(agent_request)
+        if not agent_response.success:
+            return self._failed_response(request, agent_response)
 
-        # Step 4. Validator Agent
-        # TODO: validator_agent.validate(agent_result)
+        validated_response = await self.validator.validate(agent_response.result)
+        if not validated_response.success:
+            return self._failed_response(request, validated_response)
 
-        # Step 5. Output Agent - 결과 포맷팅
-        # TODO: document_output_agent.format(agent_result)
-
-        logger.info(f"[Orchestrator] generate_requirement done | project_id={request.project_id}")
-
+        logger.info(
+            "[Orchestrator] generate_requirement done | "
+            f"project_id={request.project_id}"
+        )
         return GenerationResponse(
             project_id=request.project_id,
-            result=agent_result,
+            result=validated_response.result,
+        )
+
+    def _failed_response(
+        self,
+        request: GenerationRequest,
+        agent_response: AgentResponse,
+    ) -> GenerationResponse:
+        logger.warning(
+            "[Orchestrator] generate_requirement failed | "
+            f"project_id={request.project_id} | "
+            f"agent={agent_response.agent_name} | error={agent_response.error}"
+        )
+        return GenerationResponse(
+            success=False,
+            message=agent_response.error or "generation failed",
+            project_id=request.project_id,
+            result={
+                "agent_name": agent_response.agent_name,
+                "error": agent_response.error,
+            },
         )
 
 
