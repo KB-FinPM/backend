@@ -1,13 +1,17 @@
-from pydantic import BaseModel, Field
 from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class UploadRequest(BaseModel):
-    project_id: str = Field(..., description="프로젝트 ID")
-    file_name: str = Field(..., description="업로드 파일명")
+    project_id: str = Field(..., description="Project ID")
+    file_name: str = Field(..., description="Uploaded file name")
 
 
 class GenerationRequest(BaseModel):
-    project_id: str = Field(..., description="프로젝트 ID")
-    document_ids: list[str] = Field(default=[], description="참조할 문서 ID 목록")
-    query: Optional[str] = Field(None, description="추가 요청사항")
+    project_id: str = Field(..., description="Project ID")
+    document_ids: list[str] = Field(
+        default_factory=list,
+        description="Document IDs to use as generation context",
+    )
+    query: Optional[str] = Field(None, description="Additional generation request")
