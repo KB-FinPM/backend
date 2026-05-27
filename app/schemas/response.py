@@ -1,5 +1,8 @@
-from pydantic import BaseModel, Field
 from typing import Any, Optional
+
+from pydantic import BaseModel, Field
+
+from app.schemas.artifact import DocumentMetadata
 
 
 class BaseResponse(BaseModel):
@@ -15,4 +18,8 @@ class ErrorResponse(BaseResponse):
 
 class GenerationResponse(BaseResponse):
     project_id: str
-    result: Any = Field(None, description="생성된 결과 JSON")
+    result: Any = Field(None, description="Generated artifact result JSON")
+
+
+class DocumentUploadResponse(BaseResponse):
+    document: DocumentMetadata

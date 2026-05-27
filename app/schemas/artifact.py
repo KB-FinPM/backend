@@ -11,6 +11,13 @@ class DocumentType(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class DocumentStatus(StrEnum):
+    UPLOADED = "UPLOADED"
+    PARSED = "PARSED"
+    INDEXED = "INDEXED"
+    FAILED = "FAILED"
+
+
 class ArtifactType(StrEnum):
     REQUIREMENT_SPEC = "REQUIREMENT_SPEC"
     SCREEN_DESIGN = "SCREEN_DESIGN"
@@ -41,4 +48,16 @@ class GenerationFlow(BaseModel):
     template: TemplateReference = Field(
         default_factory=TemplateReference,
         description="Template selection for the generated artifact",
+    )
+
+
+class DocumentMetadata(BaseModel):
+    document_id: str = Field(..., description="Document ID")
+    project_id: str = Field(..., description="Project ID")
+    document_type: DocumentType = Field(..., description="Uploaded document type")
+    file_name: str = Field(..., description="Original uploaded file name")
+    storage_path: str = Field(..., description="Object storage path")
+    status: DocumentStatus = Field(
+        DocumentStatus.UPLOADED,
+        description="Current document processing status",
     )

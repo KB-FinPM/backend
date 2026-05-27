@@ -2,12 +2,21 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.schemas.artifact import ArtifactType, DocumentType, GenerationFlow, TemplateReference
+from app.schemas.artifact import (
+    ArtifactType,
+    DocumentType,
+    GenerationFlow,
+    TemplateReference,
+)
 
 
 class UploadRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
     file_name: str = Field(..., description="Uploaded file name")
+    document_type: DocumentType = Field(
+        DocumentType.UNKNOWN,
+        description="Uploaded source document type",
+    )
 
 
 class GenerationRequest(BaseModel):
