@@ -1,3 +1,6 @@
+# EN: Retrieval service boundary for project-scoped vector search.
+# KO: 프로젝트 범위 벡터 검색을 담당하는 Retrieval 서비스 경계입니다.
+
 from app.core.logger import get_logger
 from typing import Any
 

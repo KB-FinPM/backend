@@ -1,3 +1,6 @@
+<!-- EN: Backend project overview and local development guide. -->
+<!-- KO: 백엔드 프로젝트 개요와 로컬 개발 가이드 문서입니다. -->
+
 # PM-Agent
 
 AI 기반 프로젝트 관리(PM) 지원 플랫폼
