@@ -78,7 +78,11 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
     )
     request = GenerationRequest(
         project_id="PRJ-001",
-        document_ids=["DOC-001"],
+        source_document_ids=["DOC-001"],
+        source_document_type="CONSTRUCTION_REQUIREMENT_DEFINITION",
+        target_artifact_type="REQUIREMENT_SPEC",
+        template_id="TPL-REQ-SPEC-DEFAULT",
+        template_version="v1",
         query="Create a requirement spec",
     )
 
@@ -96,7 +100,14 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
         {"chunk_id": "CHUNK-001", "text": "Login is required."}
     ]
     assert requirement.received_request.context == {
+        "source_document_ids": ["DOC-001"],
         "document_ids": ["DOC-001"],
+        "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+        "target_artifact_type": "REQUIREMENT_SPEC",
+        "template": {
+            "template_id": "TPL-REQ-SPEC-DEFAULT",
+            "template_version": "v1",
+        },
         "query": "Create a requirement spec",
     }
     assert validator.received_result == {"requirements": [{"id": "RQ-001"}]}

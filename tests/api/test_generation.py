@@ -34,7 +34,10 @@ def test_generate_requirement_delegates_to_orchestrator(
         "/generate/requirement",
         json={
             "project_id": "PRJ-001",
-            "document_ids": ["DOC-001"],
+            "source_document_ids": ["DOC-001"],
+            "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+            "target_artifact_type": "REQUIREMENT_SPEC",
+            "template_id": "TPL-REQ-SPEC-DEFAULT",
             "query": "Create a requirement spec",
         },
     )
@@ -43,4 +46,6 @@ def test_generate_requirement_delegates_to_orchestrator(
     assert response.json()["project_id"] == "PRJ-001"
     assert response.json()["result"] == {"source": "stub-orchestrator"}
     assert stub_orchestrator.received_request is not None
+    assert stub_orchestrator.received_request.source_document_ids == ["DOC-001"]
     assert stub_orchestrator.received_request.document_ids == ["DOC-001"]
+    assert stub_orchestrator.received_request.template_id == "TPL-REQ-SPEC-DEFAULT"

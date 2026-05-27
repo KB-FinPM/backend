@@ -25,9 +25,11 @@ class GenerationOrchestrator:
         self.validator = validator
 
     async def generate_requirement(self, request: GenerationRequest) -> GenerationResponse:
+        generation_flow = request.generation_flow()
         logger.info(
             "[Orchestrator] generate_requirement start | "
-            f"project_id={request.project_id}"
+            f"project_id={request.project_id} | "
+            f"target_artifact_type={generation_flow.target_artifact_type}"
         )
 
         documents = await self.retrieval.search(
@@ -39,7 +41,15 @@ class GenerationOrchestrator:
             project_id=request.project_id,
             documents=documents,
             context={
+                "source_document_ids": request.source_document_ids,
                 "document_ids": request.document_ids,
+                "source_document_type": (
+                    generation_flow.source_document_type.value
+                    if generation_flow.source_document_type
+                    else None
+                ),
+                "target_artifact_type": generation_flow.target_artifact_type.value,
+                "template": generation_flow.template.model_dump(),
                 "query": request.query,
             },
         )

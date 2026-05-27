@@ -51,7 +51,14 @@ AgentRequest(
     project_id="PRJ-001",
     documents=[{"chunk_id": "CHUNK-001", "text": "..."}],
     context={
+        "source_document_ids": ["DOC-001"],
         "document_ids": ["DOC-001"],
+        "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+        "target_artifact_type": "REQUIREMENT_SPEC",
+        "template": {
+            "template_id": "TPL-REQ-SPEC-DEFAULT",
+            "template_version": "v1",
+        },
         "query": "Create a requirement spec",
         "user_scope": "...",
     },
@@ -60,6 +67,37 @@ AgentRequest(
 
 Agent-specific fields should live under `context` until a dedicated schema is
 introduced.
+
+## Confirmed Generation Paths
+
+The current product direction is source-document driven generation.
+
+Supported initial paths:
+
+- `CONSTRUCTION_REQUIREMENT_DEFINITION` -> `REQUIREMENT_SPEC`
+- `REQUIREMENT_SPEC` -> `SCREEN_DESIGN`
+- `REQUIREMENT_SPEC` -> `WBS`
+
+Agents should treat source documents as prior project artifacts and generate
+the requested target artifact according to the selected template.
+
+## Template Contract
+
+Templates may come from either an admin UI or a built-in code-level registry.
+Agents should not load templates directly from storage. The orchestrator should
+resolve the template and pass the selected template metadata through context.
+
+Minimum context shape:
+
+```python
+{
+    "target_artifact_type": "REQUIREMENT_SPEC",
+    "template": {
+        "template_id": "TPL-REQ-SPEC-DEFAULT",
+        "template_version": "v1",
+    },
+}
+```
 
 ## Output Contract
 
@@ -98,6 +136,8 @@ When adding a new agent, complete this checklist:
 - [ ] Define the agent responsibility in one sentence.
 - [ ] Define input data expected in `AgentRequest.context`.
 - [ ] Define output JSON shape under `AgentResponse.result`.
+- [ ] Document supported `source_document_type` -> `target_artifact_type` paths.
+- [ ] Document required template sections and placeholders.
 - [ ] Add rule validation requirements.
 - [ ] Add unit tests for success and failure cases.
 - [ ] Ensure the agent does not call DB, S3, or vector search directly.
