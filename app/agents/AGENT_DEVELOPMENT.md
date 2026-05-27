@@ -1,3 +1,6 @@
+<!-- EN: Development guide for FINPM agent implementers. -->
+<!-- KO: FINPM Agent 구현 개발자를 위한 개발 가이드입니다. -->
+
 # FINPM Agent Development Guide
 
 This guide is the working contract for future FINPM agent developers.

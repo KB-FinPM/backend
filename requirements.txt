@@ -1,3 +1,6 @@
+# EN: Python dependency pins for the FINPM backend.
+# KO: FINPM 백엔드 Python 의존성 고정 목록입니다.
+
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 pydantic==2.10.3

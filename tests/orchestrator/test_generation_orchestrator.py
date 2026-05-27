@@ -1,3 +1,6 @@
+# EN: Tests for generation orchestrator flow coordination.
+# KO: 산출물 생성 오케스트레이터의 흐름 제어를 검증하는 테스트입니다.
+
 import pytest
 
 from app.orchestrator.generation_orchestrator import GenerationOrchestrator

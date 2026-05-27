@@ -1,3 +1,6 @@
+# EN: FastAPI application entry point and router registration.
+# KO: FastAPI 앱 진입점이며 주요 라우터를 등록합니다.
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

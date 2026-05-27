@@ -1,3 +1,6 @@
+# EN: Orchestrates source-document based artifact generation flows.
+# KO: 선행 문서 기반 후행 산출물 생성 흐름을 제어합니다.
+
 from typing import Any
 
 from app.agents.core_agents.requirement_agent.agent import requirement_agent

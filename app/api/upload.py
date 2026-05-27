@@ -1,3 +1,6 @@
+# EN: Upload API route for project-scoped source documents.
+# KO: 프로젝트 단위 선행 문서 업로드를 처리하는 API 라우터입니다.
+
 from pathlib import PurePath
 from uuid import uuid4
 

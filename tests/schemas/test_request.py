@@ -1,3 +1,6 @@
+# EN: Tests for API request schema behavior.
+# KO: API 요청 스키마 동작을 검증하는 테스트입니다.
+
 from app.schemas.request import GenerationRequest
 
 

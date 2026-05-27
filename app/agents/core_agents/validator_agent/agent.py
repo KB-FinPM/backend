@@ -1,3 +1,6 @@
+# EN: Core agent for validating common generated artifact result rules.
+# KO: 생성된 산출물 결과의 공통 규칙을 검증하는 Core Agent입니다.
+
 from typing import Any
 
 from app.core.logger import get_logger

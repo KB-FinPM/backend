@@ -1,3 +1,6 @@
+# EN: Shared document, artifact, template, and generation flow schemas.
+# KO: 문서, 산출물, 템플릿, 생성 흐름에 대한 공통 스키마입니다.
+
 from enum import StrEnum
 from typing import Optional
 

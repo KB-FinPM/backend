@@ -1,3 +1,6 @@
+# EN: Health check API route for service availability checks.
+# KO: 서비스 상태 확인을 위한 Health Check API 라우터입니다.
+
 from fastapi import APIRouter
 from app.schemas.response import BaseResponse
 

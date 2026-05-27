@@ -1,3 +1,6 @@
+# EN: Common API response schemas.
+# KO: API 공통 응답 스키마입니다.
+
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field

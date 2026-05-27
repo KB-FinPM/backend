@@ -1,3 +1,6 @@
+# EN: Generation API routes delegate artifact generation requests to orchestrators.
+# KO: 산출물 생성 API 라우터이며 요청 처리를 오케스트레이터에 위임합니다.
+
 from fastapi import APIRouter
 
 from app.core.logger import get_logger

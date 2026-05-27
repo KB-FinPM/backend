@@ -1,3 +1,6 @@
+# EN: Request schemas for upload and artifact generation APIs.
+# KO: 업로드 및 산출물 생성 API 요청 스키마입니다.
+
 from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator

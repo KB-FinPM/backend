@@ -1,3 +1,6 @@
+# EN: Tests for document and artifact schema contracts.
+# KO: 문서 및 산출물 스키마 계약을 검증하는 테스트입니다.
+
 from app.schemas.artifact import ArtifactType, DocumentType, GenerationFlow
 
 

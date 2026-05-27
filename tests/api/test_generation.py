@@ -1,3 +1,6 @@
+# EN: Tests for generation API routing behavior.
+# KO: 산출물 생성 API 라우팅 동작을 검증하는 테스트입니다.
+
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 

@@ -1,3 +1,6 @@
+# EN: Tests for health check API behavior.
+# KO: Health Check API 동작을 검증하는 테스트입니다.
+
 from fastapi.testclient import TestClient
 
 

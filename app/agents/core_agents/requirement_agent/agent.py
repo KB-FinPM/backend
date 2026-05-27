@@ -1,3 +1,6 @@
+# EN: Core agent for generating requirement artifacts from structured context.
+# KO: 구조화된 컨텍스트를 기반으로 요구사항 산출물을 생성하는 Core Agent입니다.
+
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.core.llm import llm_service
 from app.core.logger import get_logger

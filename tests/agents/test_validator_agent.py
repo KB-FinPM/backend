@@ -1,3 +1,6 @@
+# EN: Tests for common ValidatorAgent rules.
+# KO: ValidatorAgent의 공통 검증 규칙을 확인하는 테스트입니다.
+
 import pytest
 
 from app.agents.core_agents.validator_agent.agent import ValidatorAgent

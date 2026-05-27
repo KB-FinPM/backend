@@ -1,3 +1,6 @@
+# EN: S3 storage service wrapper for document and artifact files.
+# KO: 문서와 산출물 파일을 다루는 S3 저장소 서비스 래퍼입니다.
+
 from app.core.config import settings
 from app.core.logger import get_logger
 

@@ -1,3 +1,6 @@
+# EN: Tests for source document upload API behavior.
+# KO: 선행 문서 업로드 API 동작을 검증하는 테스트입니다.
+
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 

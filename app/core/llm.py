@@ -1,3 +1,6 @@
+# EN: LLM service wrapper for Bedrock or future model providers.
+# KO: Bedrock 및 향후 모델 제공자를 감싸는 LLM 서비스 래퍼입니다.
+
 import boto3
 from app.core.config import settings
 from app.core.logger import get_logger
