@@ -49,7 +49,7 @@ jobs:
             pkill -f "uvicorn\|gunicorn" || true
             
             # Start FastAPI
-            nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > /var/log/fastapi.log 2>&1 &
+            nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &
             
             echo "FastAPI deployment complete"
           EOF
