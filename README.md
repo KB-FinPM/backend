@@ -3,6 +3,9 @@
 
 # PM-Agent
 
+Local setup, run, and test instructions are maintained in
+[docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md).
+
 AI 기반 프로젝트 관리(PM) 지원 플랫폼
 
 ---
