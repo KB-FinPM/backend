@@ -7,8 +7,7 @@ This guide explains how to set up, run, and test the FINPM backend locally.
 
 ## 1. Requirements
 
-- Python 3.11+ for the current local environment
-- Recommended target: Python 3.12+
+- Python 3.11+
 - PowerShell on Windows
 - AWS credentials when testing real S3, Bedrock, or Aurora integrations
 
