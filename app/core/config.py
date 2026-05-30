@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
 
     # S3
-    S3_BUCKET_NAME: str = ""
+    S3_BUCKET_NAME: str = "kbds-s3-finpm"
+    S3_UPLOAD_PREFIX: str = "storage/upload_files"
+    S3_TEMPLATE_PREFIX: str = "storage/template_files"
+    S3_GENERATED_PREFIX: str = "storage/generated_files"
 
     # Bedrock
     BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-4-5"

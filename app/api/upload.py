@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.dependencies import get_document_repository
 from app.repositories.document_repository import DocumentRepository
@@ -27,7 +28,9 @@ async def upload_document(
     """Upload a source document and return project-scoped document metadata."""
     safe_file_name = PurePath(file.filename or "uploaded-file").name
     document_id = f"DOC-{uuid4().hex[:12].upper()}"
-    storage_key = f"{project_id}/raw/{document_id}/{safe_file_name}"
+    storage_key = (
+        f"{settings.S3_UPLOAD_PREFIX}/{project_id}/raw/{document_id}/{safe_file_name}"
+    )
 
     logger.info(
         "upload | "

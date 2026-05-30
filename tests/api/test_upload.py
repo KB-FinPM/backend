@@ -86,7 +86,9 @@ def test_upload_document_returns_document_metadata(
     assert body["document"]["file_name"] == "construction-requirements.pdf"
     assert body["document"]["status"] == "UPLOADED"
     assert body["document"]["document_id"].startswith("DOC-")
-    assert body["document"]["storage_path"].startswith("s3://test-bucket/PRJ-001/raw/")
+    assert body["document"]["storage_path"].startswith(
+        "s3://test-bucket/storage/upload_files/PRJ-001/raw/"
+    )
     assert stub_s3.received_file_bytes == b"source document bytes"
     assert stub_s3.received_key is not None
     assert stub_s3.received_key.endswith("/construction-requirements.pdf")
