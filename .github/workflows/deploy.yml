@@ -1,0 +1,52 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_PRIVATE_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
+          EC2_PORT: ${{ secrets.EC2_PORT }}
+        run: |
+          # Create SSH key file
+          mkdir -p ~/.ssh
+          echo "$EC2_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Add EC2 host to known_hosts to avoid prompts
+          ssh-keyscan -p ${{ env.EC2_PORT }} ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          
+          # Deploy via SSH
+          ssh -i ~/.ssh/id_rsa -p ${{ env.EC2_PORT }} ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
+            # Navigate to project directory
+            cd ${{ secrets.APP_DIRECTORY }}
+            
+            # Pull latest code from main branch
+            git pull origin main
+            
+            # Activate virtual environment
+            source venv/bin/activate
+            
+            # Install dependencies
+            pip install -r requirements.txt
+            
+            # Stop existing FastAPI process
+            pkill -f "uvicorn\|gunicorn" || true
+            
+            # Start FastAPI with nohup
+            nohup uvicorn main:app --host 0.0.0.0 --port 8000 > /var/log/fastapi.log 2>&1 &
+            
+            echo "FastAPI deployment complete"
+          EOF
