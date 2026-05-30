@@ -19,33 +19,36 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_PRIVATE_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
           EC2_PORT: ${{ secrets.EC2_PORT }}
+          APP_DIRECTORY: ${{ secrets.APP_DIRECTORY }}
         run: |
           # Create SSH key file
           mkdir -p ~/.ssh
           echo "$EC2_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Add EC2 host to known_hosts to avoid prompts
-          ssh-keyscan -p ${{ env.EC2_PORT }} ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          # Add EC2 host to known_hosts
+          ssh-keyscan -p ${{ env.EC2_PORT }} ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
           
-          # Deploy via SSH
+          # Deploy via SSH with error handling
           ssh -i ~/.ssh/id_rsa -p ${{ env.EC2_PORT }} ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
-            # Navigate to project directory
-            cd ${{ secrets.APP_DIRECTORY }}
+            set -e  # Exit on error
             
-            # Pull latest code from main branch
-            git pull origin main
+            # Navigate to project directory
+            cd "${{ env.APP_DIRECTORY }}"
+            
+            # Pull latest code
+            git pull origin main || exit 1
             
             # Activate virtual environment
-            source venv/bin/activate
+            source venv/bin/activate || exit 1
             
             # Install dependencies
-            pip install -r requirements.txt
+            pip install -r requirements.txt || exit 1
             
             # Stop existing FastAPI process
             pkill -f "uvicorn\|gunicorn" || true
             
-            # Start FastAPI with nohup
+            # Start FastAPI
             nohup uvicorn main:app --host 0.0.0.0 --port 8000 > /var/log/fastapi.log 2>&1 &
             
             echo "FastAPI deployment complete"
