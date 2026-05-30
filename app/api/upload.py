@@ -4,10 +4,12 @@
 from pathlib import PurePath
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.core.logger import get_logger
-from app.schemas.artifact import DocumentMetadata, DocumentType
+from app.dependencies import get_document_repository
+from app.repositories.document_repository import DocumentRepository
+from app.schemas.artifact import DocumentType
 from app.schemas.response import DocumentUploadResponse
 from app.storage.s3 import s3_service
 
@@ -20,6 +22,7 @@ async def upload_document(
     project_id: str = Form(...),
     document_type: DocumentType = Form(DocumentType.UNKNOWN),
     file: UploadFile = File(...),
+    document_repository: DocumentRepository = Depends(get_document_repository),
 ) -> DocumentUploadResponse:
     """Upload a source document and return project-scoped document metadata."""
     safe_file_name = PurePath(file.filename or "uploaded-file").name
@@ -36,14 +39,15 @@ async def upload_document(
 
     file_bytes = await file.read()
     storage_path = await s3_service.upload(file_bytes=file_bytes, key=storage_key)
+    document = await document_repository.create_document(
+        document_id=document_id,
+        project_id=project_id,
+        document_type=document_type,
+        file_name=safe_file_name,
+        storage_path=storage_path,
+    )
 
     return DocumentUploadResponse(
         message="document uploaded",
-        document=DocumentMetadata(
-            document_id=document_id,
-            project_id=project_id,
-            document_type=document_type,
-            file_name=safe_file_name,
-            storage_path=storage_path,
-        ),
+        document=document,
     )

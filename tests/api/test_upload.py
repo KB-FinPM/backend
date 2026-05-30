@@ -4,6 +4,9 @@
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
+from app.dependencies import get_document_repository
+from app.schemas.artifact import DocumentMetadata, DocumentType
+
 
 class StubS3Service:
     def __init__(self) -> None:
@@ -16,27 +19,63 @@ class StubS3Service:
         return f"s3://test-bucket/{key}"
 
 
+class StubDocumentRepository:
+    def __init__(self) -> None:
+        self.received_document_id: str | None = None
+        self.received_project_id: str | None = None
+        self.received_document_type: DocumentType | None = None
+        self.received_file_name: str | None = None
+        self.received_storage_path: str | None = None
+
+    async def create_document(
+        self,
+        *,
+        document_id: str,
+        project_id: str,
+        document_type: DocumentType,
+        file_name: str,
+        storage_path: str,
+    ) -> DocumentMetadata:
+        self.received_document_id = document_id
+        self.received_project_id = project_id
+        self.received_document_type = document_type
+        self.received_file_name = file_name
+        self.received_storage_path = storage_path
+        return DocumentMetadata(
+            document_id=document_id,
+            project_id=project_id,
+            document_type=document_type,
+            file_name=file_name,
+            storage_path=storage_path,
+        )
+
+
 def test_upload_document_returns_document_metadata(
     client: TestClient,
     monkeypatch: MonkeyPatch,
 ) -> None:
     stub_s3 = StubS3Service()
+    stub_repository = StubDocumentRepository()
     monkeypatch.setattr("app.api.upload.s3_service", stub_s3)
+    client.app.dependency_overrides[get_document_repository] = lambda: stub_repository
 
-    response = client.post(
-        "/upload",
-        data={
-            "project_id": "PRJ-001",
-            "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
-        },
-        files={
-            "file": (
-                "construction-requirements.pdf",
-                b"source document bytes",
-                "application/pdf",
-            )
-        },
-    )
+    try:
+        response = client.post(
+            "/upload",
+            data={
+                "project_id": "PRJ-001",
+                "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+            },
+            files={
+                "file": (
+                    "construction-requirements.pdf",
+                    b"source document bytes",
+                    "application/pdf",
+                )
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
 
     assert response.status_code == 200
     body = response.json()
@@ -51,3 +90,8 @@ def test_upload_document_returns_document_metadata(
     assert stub_s3.received_file_bytes == b"source document bytes"
     assert stub_s3.received_key is not None
     assert stub_s3.received_key.endswith("/construction-requirements.pdf")
+    assert stub_repository.received_project_id == "PRJ-001"
+    assert stub_repository.received_document_type == (
+        DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION
+    )
+    assert stub_repository.received_storage_path == body["document"]["storage_path"]
