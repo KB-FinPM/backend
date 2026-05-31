@@ -17,9 +17,11 @@ class StubOrchestrator:
         self,
         request: GenerationRequest,
         artifact_service=None,
+        retrieval_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         self.received_artifact_service = artifact_service
+        self.received_retrieval_service = retrieval_service
         return GenerationResponse(
             project_id=request.project_id,
             result={"source": "stub-orchestrator"},
@@ -30,14 +32,17 @@ class StubOrchestrator:
 async def test_generation_service_delegates_requirement_flow() -> None:
     orchestrator = StubOrchestrator()
     artifact_service = object()
+    retrieval_service = object()
     service = GenerationService(orchestrator)
     request = GenerationRequest(project_id="PRJ-001")
 
     response = await service.generate_requirement(
         request,
         artifact_service=artifact_service,
+        retrieval_service=retrieval_service,
     )
 
     assert response.result == {"source": "stub-orchestrator"}
     assert orchestrator.received_request == request
     assert orchestrator.received_artifact_service is artifact_service
+    assert orchestrator.received_retrieval_service is retrieval_service

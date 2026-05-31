@@ -3,7 +3,11 @@
 
 from fastapi.testclient import TestClient
 
-from app.dependencies import get_artifact_service, get_generation_service
+from app.dependencies import (
+    get_artifact_service,
+    get_generation_service,
+    get_retrieval_service,
+)
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 
@@ -16,6 +20,7 @@ class StubGenerationOrchestrator:
         self,
         request: GenerationRequest,
         artifact_service=None,
+        retrieval_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         return GenerationResponse(
@@ -32,6 +37,7 @@ def test_generate_requirement_delegates_to_orchestrator(
         lambda: stub_generation_service
     )
     client.app.dependency_overrides[get_artifact_service] = lambda: object()
+    client.app.dependency_overrides[get_retrieval_service] = lambda: object()
 
     try:
         response = client.post(

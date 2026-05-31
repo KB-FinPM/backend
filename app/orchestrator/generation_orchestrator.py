@@ -32,6 +32,7 @@ class GenerationOrchestrator:
         self,
         request: GenerationRequest,
         artifact_service: Any = None,
+        retrieval_service: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         logger.info(
@@ -40,7 +41,8 @@ class GenerationOrchestrator:
             f"target_artifact_type={generation_flow.target_artifact_type}"
         )
 
-        documents = await self.retrieval.search(
+        retrieval = retrieval_service or self.retrieval
+        documents = await retrieval.search(
             project_id=request.project_id,
             permission_scope=request.permission_scope,
             query=request.query or "",

@@ -132,6 +132,25 @@ class DocumentRepository:
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
+    async def search_chunks_by_project(
+        self,
+        *,
+        project_id: str,
+        query: str,
+        limit: int = 5,
+    ) -> list[DocumentChunkModel]:
+        statement = (
+            select(DocumentChunkModel)
+            .where(DocumentChunkModel.project_id == project_id)
+            .order_by(DocumentChunkModel.created_at.desc())
+            .limit(limit)
+        )
+        if query:
+            statement = statement.where(DocumentChunkModel.text.ilike(f"%{query}%"))
+
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
     def _to_metadata(self, document: DocumentModel) -> DocumentMetadata:
         return DocumentMetadata(
             document_id=document.document_id,

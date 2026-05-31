@@ -110,3 +110,45 @@ async def test_document_repository_updates_status_and_lists_chunks(
     assert updated.status == DocumentStatus.INDEXED
     assert len(chunks) == 1
     assert chunks[0].chunk_id == "CHUNK-001"
+
+
+@pytest.mark.anyio
+async def test_document_repository_searches_project_chunks(session_factory) -> None:
+    async with session_factory() as session:
+        repository = DocumentRepository(session)
+        await repository.create_document(
+            document_id="DOC-001",
+            project_id="PRJ-001",
+            document_type=DocumentType.REQUIREMENT_SPEC,
+            file_name="requirement-spec.txt",
+            storage_path="s3://bucket/PRJ-001/raw/DOC-001/requirement-spec.txt",
+        )
+        await repository.create_document(
+            document_id="DOC-002",
+            project_id="PRJ-002",
+            document_type=DocumentType.REQUIREMENT_SPEC,
+            file_name="other.txt",
+            storage_path="s3://bucket/PRJ-002/raw/DOC-002/other.txt",
+        )
+        await repository.create_chunk(
+            chunk_id="CHUNK-001",
+            project_id="PRJ-001",
+            document_id="DOC-001",
+            chunk_index=0,
+            text="Login requirement",
+        )
+        await repository.create_chunk(
+            chunk_id="CHUNK-002",
+            project_id="PRJ-002",
+            document_id="DOC-002",
+            chunk_index=0,
+            text="Login requirement",
+        )
+
+        chunks = await repository.search_chunks_by_project(
+            project_id="PRJ-001",
+            query="login",
+        )
+
+    assert len(chunks) == 1
+    assert chunks[0].chunk_id == "CHUNK-001"

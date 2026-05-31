@@ -9,6 +9,7 @@ from app.repositories.artifact_repository import ArtifactRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.template_repository import TemplateRepository
 from app.orchestrator.generation_orchestrator import generation_orchestrator
+from app.rag.retrieval import RetrievalService
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
@@ -46,3 +47,9 @@ def get_artifact_service(
 
 def get_generation_service() -> GenerationService:
     return GenerationService(generation_orchestrator)
+
+
+def get_retrieval_service(
+    document_repository: DocumentRepository = Depends(get_document_repository),
+) -> RetrievalService:
+    return RetrievalService(document_repository)

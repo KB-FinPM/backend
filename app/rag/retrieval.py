@@ -1,16 +1,22 @@
 # EN: Retrieval service boundary for project-scoped vector search.
-# KO: 프로젝트 범위 벡터 검색을 담당하는 Retrieval 서비스 경계입니다.
+# KO: 프로젝트 범위 검색을 담당하는 Retrieval 서비스 경계입니다.
 
 from app.core.logger import get_logger
+from app.repositories.document_repository import DocumentRepository
 
 logger = get_logger(__name__)
 
 
 class RetrievalService:
     """
-    Vector 검색 전담 서비스.
-    항상 project_id와 permission scope를 포함해서 검색합니다.
+    Retrieves project-scoped context chunks for generation.
+
+    MVP uses keyword search over stored document chunks. A vector store can later
+    replace the repository query while keeping this service contract stable.
     """
+
+    def __init__(self, document_repository: DocumentRepository | None = None) -> None:
+        self.document_repository = document_repository
 
     async def search(
         self,
@@ -26,10 +32,29 @@ class RetrievalService:
             f"query={query[:50]}"
         )
 
-        # TODO: ChromaDB 또는 pgvector 검색 구현
-        # 반드시 project_id 필터 포함
+        if "project:read" not in permission_scope:
+            return []
 
-        return []  # Mock
+        if self.document_repository is None:
+            return []
+
+        chunks = await self.document_repository.search_chunks_by_project(
+            project_id=project_id,
+            query=query,
+            limit=top_k,
+        )
+        return [
+            {
+                "chunk_id": chunk.chunk_id,
+                "project_id": chunk.project_id,
+                "document_id": chunk.document_id,
+                "chunk_index": chunk.chunk_index,
+                "text": chunk.text,
+                "section_title": chunk.section_title,
+                "metadata": chunk.chunk_metadata or {},
+            }
+            for chunk in chunks
+        ]
 
 
 retrieval_service = RetrievalService()
