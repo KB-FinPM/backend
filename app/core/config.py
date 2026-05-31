@@ -1,11 +1,14 @@
 # EN: Application configuration loaded from environment variables.
 # KO: 환경 변수에서 로드되는 애플리케이션 설정입니다.
 
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
     # 앱
     APP_ENV: str = "development"
     DEBUG: bool = True
@@ -31,9 +34,17 @@ class Settings(BaseSettings):
     # Vector Store
     VECTOR_STORE_TYPE: str = "chroma"  # chroma | pgvector | opensearch
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_flag(cls, value: object) -> object:
+        if isinstance(value, str) and value.lower() in {
+            "release",
+            "prod",
+            "production",
+        }:
+            return False
+
+        return value
 
 
 settings = Settings()

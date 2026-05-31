@@ -5,6 +5,7 @@ from typing import Any
 
 from app.core.logger import get_logger
 from app.schemas.agent import AgentResponse
+from app.schemas.requirement import RequirementArtifact
 
 logger = get_logger(__name__)
 
@@ -17,7 +18,7 @@ class ValidatorAgent:
     async def validate(self, result: Any) -> AgentResponse:
         logger.info(f"[{self.AGENT_NAME}] validate start")
 
-        errors = self._validate_common_result(result)
+        validated_result, errors = self._validate_common_result(result)
         if errors:
             error_message = "; ".join(errors)
             logger.warning(f"[{self.AGENT_NAME}] validate failed | {error_message}")
@@ -30,41 +31,28 @@ class ValidatorAgent:
         logger.info(f"[{self.AGENT_NAME}] validate passed")
         return AgentResponse(
             agent_name=self.AGENT_NAME,
-            result=result,
+            result=validated_result,
         )
 
-    def _validate_common_result(self, result: Any) -> list[str]:
+    def _validate_common_result(self, result: Any) -> tuple[Any, list[str]]:
         if not isinstance(result, dict):
-            return ["result must be a JSON object"]
+            return result, ["result must be a JSON object"]
 
         if not result:
-            return ["result must not be empty"]
+            return result, ["result must not be empty"]
 
-        errors: list[str] = []
         if "requirements" in result:
-            errors.extend(self._validate_requirements(result["requirements"]))
+            return self._validate_requirement_artifact(result)
 
-        return errors
+        return result, []
 
-    def _validate_requirements(self, requirements: Any) -> list[str]:
-        if not isinstance(requirements, list):
-            return ["requirements must be a list"]
+    def _validate_requirement_artifact(self, result: dict) -> tuple[dict, list[str]]:
+        try:
+            artifact = RequirementArtifact.model_validate(result)
+        except ValueError as exc:
+            return result, [str(exc)]
 
-        if not requirements:
-            return ["requirements must not be empty"]
-
-        errors: list[str] = []
-        for index, requirement in enumerate(requirements):
-            item_path = f"requirements[{index}]"
-            if not isinstance(requirement, dict):
-                errors.append(f"{item_path} must be a JSON object")
-                continue
-
-            requirement_id = requirement.get("requirement_id") or requirement.get("id")
-            if not requirement_id:
-                errors.append(f"{item_path} must include requirement_id or id")
-
-        return errors
+        return artifact.model_dump(mode="json"), []
 
 
 validator_agent = ValidatorAgent()

@@ -4,7 +4,7 @@
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
-from app.dependencies import get_document_repository
+from app.dependencies import get_document_service
 from app.schemas.artifact import DocumentMetadata, DocumentType
 
 
@@ -27,7 +27,7 @@ class StubDocumentRepository:
         self.received_file_name: str | None = None
         self.received_storage_path: str | None = None
 
-    async def create_document(
+    async def ingest_uploaded_document(
         self,
         *,
         document_id: str,
@@ -35,12 +35,14 @@ class StubDocumentRepository:
         document_type: DocumentType,
         file_name: str,
         storage_path: str,
+        file_bytes: bytes,
     ) -> DocumentMetadata:
         self.received_document_id = document_id
         self.received_project_id = project_id
         self.received_document_type = document_type
         self.received_file_name = file_name
         self.received_storage_path = storage_path
+        self.received_file_bytes = file_bytes
         return DocumentMetadata(
             document_id=document_id,
             project_id=project_id,
@@ -57,7 +59,7 @@ def test_upload_document_returns_document_metadata(
     stub_s3 = StubS3Service()
     stub_repository = StubDocumentRepository()
     monkeypatch.setattr("app.api.upload.s3_service", stub_s3)
-    client.app.dependency_overrides[get_document_repository] = lambda: stub_repository
+    client.app.dependency_overrides[get_document_service] = lambda: stub_repository
 
     try:
         response = client.post(
