@@ -1,0 +1,86 @@
+# EN: Tests for generation service orchestration boundary.
+# KO: 생성 서비스의 오케스트레이터 위임 경계 테스트입니다.
+
+import pytest
+
+from app.schemas.request import GenerationRequest
+from app.schemas.response import GenerationResponse
+from app.services.generation_service import GenerationService
+
+
+class StubOrchestrator:
+    def __init__(self) -> None:
+        self.received_request: GenerationRequest | None = None
+        self.received_artifact_service = None
+
+    async def generate_requirement(
+        self,
+        request: GenerationRequest,
+        artifact_service=None,
+        retrieval_service=None,
+        template_service=None,
+    ) -> GenerationResponse:
+        self.received_request = request
+        self.received_artifact_service = artifact_service
+        self.received_retrieval_service = retrieval_service
+        self.received_template_service = template_service
+        return GenerationResponse(
+            project_id=request.project_id,
+            result={"source": "stub-orchestrator"},
+        )
+
+    async def generate_artifact(
+        self,
+        request: GenerationRequest,
+        artifact_service=None,
+        retrieval_service=None,
+        template_service=None,
+    ) -> GenerationResponse:
+        self.received_request = request
+        self.received_artifact_service = artifact_service
+        self.received_retrieval_service = retrieval_service
+        self.received_template_service = template_service
+        return GenerationResponse(
+            project_id=request.project_id,
+            result={"source": "stub-dispatch"},
+        )
+
+
+@pytest.mark.anyio
+async def test_generation_service_delegates_requirement_flow() -> None:
+    orchestrator = StubOrchestrator()
+    artifact_service = object()
+    retrieval_service = object()
+    template_service = object()
+    service = GenerationService(orchestrator)
+    request = GenerationRequest(project_id="PRJ-001")
+
+    response = await service.generate_requirement(
+        request,
+        artifact_service=artifact_service,
+        retrieval_service=retrieval_service,
+        template_service=template_service,
+    )
+
+    assert response.result == {"source": "stub-orchestrator"}
+    assert orchestrator.received_request == request
+    assert orchestrator.received_artifact_service is artifact_service
+    assert orchestrator.received_retrieval_service is retrieval_service
+    assert orchestrator.received_template_service is template_service
+
+
+@pytest.mark.anyio
+async def test_generation_service_delegates_artifact_dispatch() -> None:
+    orchestrator = StubOrchestrator()
+    artifact_service = object()
+    service = GenerationService(orchestrator)
+    request = GenerationRequest(project_id="PRJ-001", target_artifact_type="WBS")
+
+    response = await service.generate_artifact(
+        request,
+        artifact_service=artifact_service,
+    )
+
+    assert response.result == {"source": "stub-dispatch"}
+    assert orchestrator.received_request == request
+    assert orchestrator.received_artifact_service is artifact_service

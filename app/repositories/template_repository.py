@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.template import TemplateModel
+from app.schemas.artifact import ArtifactType
 
 
 class TemplateRepository:
@@ -29,3 +30,22 @@ class TemplateRepository:
 
         result = await self.session.execute(statement)
         return result.scalars().first()
+
+    async def list_templates(
+        self,
+        *,
+        artifact_type: ArtifactType | None = None,
+    ) -> list[TemplateModel]:
+        statement = select(TemplateModel)
+        if artifact_type is not None:
+            statement = statement.where(
+                TemplateModel.artifact_type == artifact_type.value
+            )
+
+        statement = statement.order_by(
+            TemplateModel.artifact_type.asc(),
+            TemplateModel.template_id.asc(),
+            TemplateModel.created_at.desc(),
+        )
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
