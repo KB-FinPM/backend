@@ -7,6 +7,7 @@ from app.dependencies import (
     get_artifact_service,
     get_generation_service,
     get_retrieval_service,
+    get_template_service,
 )
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
@@ -21,6 +22,7 @@ class StubGenerationOrchestrator:
         request: GenerationRequest,
         artifact_service=None,
         retrieval_service=None,
+        template_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         return GenerationResponse(
@@ -38,6 +40,7 @@ def test_generate_requirement_delegates_to_orchestrator(
     )
     client.app.dependency_overrides[get_artifact_service] = lambda: object()
     client.app.dependency_overrides[get_retrieval_service] = lambda: object()
+    client.app.dependency_overrides[get_template_service] = lambda: object()
 
     try:
         response = client.post(

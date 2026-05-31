@@ -8,12 +8,14 @@ from app.dependencies import (
     get_artifact_service,
     get_generation_service,
     get_retrieval_service,
+    get_template_service,
 )
 from app.rag.retrieval import RetrievalService
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 from app.services.artifact_service import ArtifactService
 from app.services.generation_service import GenerationService
+from app.services.template_service import TemplateService
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -25,6 +27,7 @@ async def generate_requirement(
     generation_service: GenerationService = Depends(get_generation_service),
     artifact_service: ArtifactService = Depends(get_artifact_service),
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
+    template_service: TemplateService = Depends(get_template_service),
 ) -> GenerationResponse:
     """Generate a requirement artifact through the PM agent orchestrator."""
     logger.info(f"generate_requirement | project_id={request.project_id}")
@@ -33,6 +36,7 @@ async def generate_requirement(
         request,
         artifact_service=artifact_service,
         retrieval_service=retrieval_service,
+        template_service=template_service,
     )
 
 

@@ -33,12 +33,35 @@ class GenerationOrchestrator:
         request: GenerationRequest,
         artifact_service: Any = None,
         retrieval_service: Any = None,
+        template_service: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         logger.info(
             "[Orchestrator] generate_requirement start | "
             f"project_id={request.project_id} | "
             f"target_artifact_type={generation_flow.target_artifact_type}"
+        )
+
+        resolved_template = None
+        if template_service is not None:
+            resolved_template = await template_service.resolve_template(
+                reference=generation_flow.template,
+                artifact_type=generation_flow.target_artifact_type,
+            )
+            if generation_flow.template.template_id and resolved_template is None:
+                return self._failed_response(
+                    request,
+                    AgentResponse(
+                        success=False,
+                        agent_name="TemplateService",
+                        error="template not found",
+                    ),
+                )
+
+        template_context = (
+            resolved_template.model_dump(mode="json")
+            if resolved_template is not None
+            else generation_flow.template.model_dump(mode="json")
         )
 
         retrieval = retrieval_service or self.retrieval
@@ -60,7 +83,7 @@ class GenerationOrchestrator:
                     else None
                 ),
                 "target_artifact_type": generation_flow.target_artifact_type.value,
-                "template": generation_flow.template.model_dump(),
+                "template": template_context,
                 "query": request.query,
                 "permission_scope": request.permission_scope,
             },
@@ -80,8 +103,16 @@ class GenerationOrchestrator:
                 artifact_type=generation_flow.target_artifact_type,
                 name=generation_flow.target_artifact_type.value,
                 source_document_ids=request.source_document_ids,
-                template_id=generation_flow.template.template_id,
-                template_version=generation_flow.template.template_version,
+                template_id=(
+                    resolved_template.template_id
+                    if resolved_template is not None
+                    else generation_flow.template.template_id
+                ),
+                template_version=(
+                    resolved_template.template_version
+                    if resolved_template is not None
+                    else generation_flow.template.template_version
+                ),
                 result_json=validated_response.result,
             )
             result = {

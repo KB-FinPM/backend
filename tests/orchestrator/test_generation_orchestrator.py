@@ -7,6 +7,7 @@ from app.orchestrator.generation_orchestrator import GenerationOrchestrator
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.artifact import ArtifactMetadata, ArtifactType
 from app.schemas.request import GenerationRequest
+from app.schemas.template import TemplateMetadata
 
 
 class StubRetrievalService:
@@ -107,6 +108,19 @@ class StubArtifactService:
         )
 
 
+class StubTemplateService:
+    def __init__(self, template: TemplateMetadata | None) -> None:
+        self.template = template
+
+    async def resolve_template(
+        self,
+        *,
+        reference,
+        artifact_type: ArtifactType,
+    ) -> TemplateMetadata | None:
+        return self.template
+
+
 @pytest.mark.anyio
 async def test_generate_requirement_calls_retrieval_agent_and_validator() -> None:
     calls: list[str] = []
@@ -159,6 +173,66 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
         "permission_scope": ["project:read", "artifact:generate"],
     }
     assert validator.received_result == {"requirements": [{"id": "RQ-001"}]}
+
+
+@pytest.mark.anyio
+async def test_generate_requirement_adds_resolved_template_to_agent_context() -> None:
+    calls: list[str] = []
+    requirement = StubRequirementAgent(calls)
+    template = TemplateMetadata(
+        template_id="TPL-REQ-SPEC-DEFAULT",
+        template_version="v1",
+        artifact_type=ArtifactType.REQUIREMENT_SPEC,
+        name="Default Requirement Specification",
+        content="Generate requirements.",
+        is_builtin=True,
+    )
+    orchestrator = GenerationOrchestrator(
+        retrieval=StubRetrievalService(calls),
+        requirement_generator=requirement,
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        target_artifact_type="REQUIREMENT_SPEC",
+    )
+
+    response = await orchestrator.generate_requirement(
+        request,
+        template_service=StubTemplateService(template),
+    )
+
+    assert response.success is True
+    assert requirement.received_request is not None
+    assert requirement.received_request.context["template"]["template_id"] == (
+        "TPL-REQ-SPEC-DEFAULT"
+    )
+    assert requirement.received_request.context["template"]["content"] == (
+        "Generate requirements."
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_requirement_fails_when_requested_template_is_missing() -> None:
+    calls: list[str] = []
+    orchestrator = GenerationOrchestrator(
+        retrieval=StubRetrievalService(calls),
+        requirement_generator=StubRequirementAgent(calls),
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        template_id="missing",
+    )
+
+    response = await orchestrator.generate_requirement(
+        request,
+        template_service=StubTemplateService(None),
+    )
+
+    assert response.success is False
+    assert response.message == "template not found"
+    assert calls == []
 
 
 @pytest.mark.anyio

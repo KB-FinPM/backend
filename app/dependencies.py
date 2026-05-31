@@ -13,6 +13,7 @@ from app.rag.retrieval import RetrievalService
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.template_service import TemplateService
 
 
 def get_document_repository(
@@ -53,3 +54,9 @@ def get_retrieval_service(
     document_repository: DocumentRepository = Depends(get_document_repository),
 ) -> RetrievalService:
     return RetrievalService(document_repository)
+
+
+def get_template_service(
+    template_repository: TemplateRepository = Depends(get_template_repository),
+) -> TemplateService:
+    return TemplateService(template_repository)
