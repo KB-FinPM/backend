@@ -28,3 +28,18 @@ class GenerationService:
             retrieval_service=retrieval_service,
             template_service=template_service,
         )
+
+    async def generate_artifact(
+        self,
+        request: GenerationRequest,
+        *,
+        artifact_service: Any,
+        retrieval_service: Any = None,
+        template_service: Any = None,
+    ) -> GenerationResponse:
+        return await self.orchestrator.generate_artifact(
+            request,
+            artifact_service=artifact_service,
+            retrieval_service=retrieval_service,
+            template_service=template_service,
+        )

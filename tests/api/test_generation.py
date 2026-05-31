@@ -17,7 +17,7 @@ class StubGenerationOrchestrator:
     def __init__(self) -> None:
         self.received_request: GenerationRequest | None = None
 
-    async def generate_requirement(
+    async def generate_artifact(
         self,
         request: GenerationRequest,
         artifact_service=None,
@@ -65,4 +65,56 @@ def test_generate_requirement_delegates_to_orchestrator(
     assert stub_generation_service.received_request.document_ids == ["DOC-001"]
     assert stub_generation_service.received_request.template_id == (
         "TPL-REQ-SPEC-DEFAULT"
+    )
+
+
+def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
+    stub_generation_service = StubGenerationOrchestrator()
+    client.app.dependency_overrides[get_generation_service] = (
+        lambda: stub_generation_service
+    )
+    client.app.dependency_overrides[get_artifact_service] = lambda: object()
+    client.app.dependency_overrides[get_retrieval_service] = lambda: object()
+    client.app.dependency_overrides[get_template_service] = lambda: object()
+
+    try:
+        response = client.post(
+            "/generate/wbs",
+            json={
+                "project_id": "PRJ-001",
+                "target_artifact_type": "REQUIREMENT_SPEC",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert stub_generation_service.received_request is not None
+    assert stub_generation_service.received_request.target_artifact_type == "WBS"
+
+
+def test_generate_screen_design_sets_target_artifact_type(client: TestClient) -> None:
+    stub_generation_service = StubGenerationOrchestrator()
+    client.app.dependency_overrides[get_generation_service] = (
+        lambda: stub_generation_service
+    )
+    client.app.dependency_overrides[get_artifact_service] = lambda: object()
+    client.app.dependency_overrides[get_retrieval_service] = lambda: object()
+    client.app.dependency_overrides[get_template_service] = lambda: object()
+
+    try:
+        response = client.post(
+            "/generate/screen-design",
+            json={
+                "project_id": "PRJ-001",
+                "target_artifact_type": "REQUIREMENT_SPEC",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert stub_generation_service.received_request is not None
+    assert stub_generation_service.received_request.target_artifact_type == (
+        "SCREEN_DESIGN"
     )

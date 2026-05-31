@@ -9,6 +9,7 @@ from app.agents.core_agents.validator_agent.agent import validator_agent
 from app.core.logger import get_logger
 from app.rag.retrieval import retrieval_service
 from app.schemas.agent import AgentRequest, AgentResponse
+from app.schemas.artifact import ArtifactType
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 
@@ -35,8 +36,43 @@ class GenerationOrchestrator:
         retrieval_service: Any = None,
         template_service: Any = None,
     ) -> GenerationResponse:
-        # TODO: Replace this requirement-specific method with artifact-type
-        # dispatch when WBS, Action Items, and Screen Design agents are added.
+        return await self.generate_artifact(
+            request,
+            artifact_service=artifact_service,
+            retrieval_service=retrieval_service,
+            template_service=template_service,
+        )
+
+    async def generate_artifact(
+        self,
+        request: GenerationRequest,
+        artifact_service: Any = None,
+        retrieval_service: Any = None,
+        template_service: Any = None,
+    ) -> GenerationResponse:
+        generation_flow = request.generation_flow()
+        if generation_flow.target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
+            return await self._generate_requirement_artifact(
+                request,
+                artifact_service=artifact_service,
+                retrieval_service=retrieval_service,
+                template_service=template_service,
+            )
+
+        # TODO: Wire WBS, Screen Design, and Action Items agents into this
+        # dispatch table as each agent source is delivered.
+        return self._not_implemented_response(
+            request,
+            generation_flow.target_artifact_type,
+        )
+
+    async def _generate_requirement_artifact(
+        self,
+        request: GenerationRequest,
+        artifact_service: Any = None,
+        retrieval_service: Any = None,
+        template_service: Any = None,
+    ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         logger.info(
             "[Orchestrator] generate_requirement start | "
@@ -132,6 +168,26 @@ class GenerationOrchestrator:
             project_id=request.project_id,
             message="artifact generated" if artifact_service is not None else "ok",
             result=result,
+        )
+
+    def _not_implemented_response(
+        self,
+        request: GenerationRequest,
+        artifact_type: ArtifactType,
+    ) -> GenerationResponse:
+        message = f"{artifact_type.value} generation is not implemented yet"
+        logger.warning(
+            "[Orchestrator] generation not implemented | "
+            f"project_id={request.project_id} | artifact_type={artifact_type.value}"
+        )
+        return GenerationResponse(
+            success=False,
+            message=message,
+            project_id=request.project_id,
+            result={
+                "artifact_type": artifact_type.value,
+                "error": message,
+            },
         )
 
     def _failed_response(

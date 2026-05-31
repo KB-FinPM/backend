@@ -11,6 +11,7 @@ from app.dependencies import (
     get_template_service,
 )
 from app.rag.retrieval import RetrievalService
+from app.schemas.artifact import ArtifactType
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 from app.services.artifact_service import ArtifactService
@@ -34,7 +35,47 @@ async def generate_requirement(
     # responses through OutputOrchestrator once all user-facing routes share IO agents.
     logger.info(f"generate_requirement | project_id={request.project_id}")
 
-    return await generation_service.generate_requirement(
+    return await generation_service.generate_artifact(
+        request,
+        artifact_service=artifact_service,
+        retrieval_service=retrieval_service,
+        template_service=template_service,
+    )
+
+
+@router.post("/wbs", response_model=GenerationResponse)
+async def generate_wbs(
+    request: GenerationRequest,
+    generation_service: GenerationService = Depends(get_generation_service),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+    retrieval_service: RetrievalService = Depends(get_retrieval_service),
+    template_service: TemplateService = Depends(get_template_service),
+) -> GenerationResponse:
+    """Generate a WBS artifact through the PM agent orchestrator."""
+    logger.info(f"generate_wbs | project_id={request.project_id}")
+    request.target_artifact_type = ArtifactType.WBS
+
+    return await generation_service.generate_artifact(
+        request,
+        artifact_service=artifact_service,
+        retrieval_service=retrieval_service,
+        template_service=template_service,
+    )
+
+
+@router.post("/screen-design", response_model=GenerationResponse)
+async def generate_screen_design(
+    request: GenerationRequest,
+    generation_service: GenerationService = Depends(get_generation_service),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+    retrieval_service: RetrievalService = Depends(get_retrieval_service),
+    template_service: TemplateService = Depends(get_template_service),
+) -> GenerationResponse:
+    """Generate a screen design artifact through the PM agent orchestrator."""
+    logger.info(f"generate_screen_design | project_id={request.project_id}")
+    request.target_artifact_type = ArtifactType.SCREEN_DESIGN
+
+    return await generation_service.generate_artifact(
         request,
         artifact_service=artifact_service,
         retrieval_service=retrieval_service,

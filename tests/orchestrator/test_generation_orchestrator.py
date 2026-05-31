@@ -176,6 +176,69 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
 
 
 @pytest.mark.anyio
+async def test_generate_artifact_dispatches_requirement_flow() -> None:
+    calls: list[str] = []
+    orchestrator = GenerationOrchestrator(
+        retrieval=StubRetrievalService(calls),
+        requirement_generator=StubRequirementAgent(calls),
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        target_artifact_type="REQUIREMENT_SPEC",
+    )
+
+    response = await orchestrator.generate_artifact(request)
+
+    assert response.success is True
+    assert calls == ["retrieval", "requirement", "validator"]
+
+
+@pytest.mark.anyio
+async def test_generate_artifact_returns_not_implemented_for_wbs() -> None:
+    calls: list[str] = []
+    orchestrator = GenerationOrchestrator(
+        retrieval=StubRetrievalService(calls),
+        requirement_generator=StubRequirementAgent(calls),
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        target_artifact_type="WBS",
+    )
+
+    response = await orchestrator.generate_artifact(request)
+
+    assert response.success is False
+    assert response.message == "WBS generation is not implemented yet"
+    assert response.result == {
+        "artifact_type": "WBS",
+        "error": "WBS generation is not implemented yet",
+    }
+    assert calls == []
+
+
+@pytest.mark.anyio
+async def test_generate_artifact_returns_not_implemented_for_screen_design() -> None:
+    calls: list[str] = []
+    orchestrator = GenerationOrchestrator(
+        retrieval=StubRetrievalService(calls),
+        requirement_generator=StubRequirementAgent(calls),
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        target_artifact_type="SCREEN_DESIGN",
+    )
+
+    response = await orchestrator.generate_artifact(request)
+
+    assert response.success is False
+    assert response.message == "SCREEN_DESIGN generation is not implemented yet"
+    assert calls == []
+
+
+@pytest.mark.anyio
 async def test_generate_requirement_adds_resolved_template_to_agent_context() -> None:
     calls: list[str] = []
     requirement = StubRequirementAgent(calls)
