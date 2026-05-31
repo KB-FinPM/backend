@@ -7,13 +7,13 @@ from app.agents.core_agents.validator_agent.agent import ValidatorAgent
 
 
 @pytest.mark.anyio
-async def test_validator_accepts_raw_agent_result() -> None:
+async def test_validator_accepts_non_requirement_object() -> None:
     validator = ValidatorAgent()
 
-    response = await validator.validate({"raw": "LLM mock response"})
+    response = await validator.validate({"summary": "non requirement result"})
 
     assert response.success is True
-    assert response.result == {"raw": "LLM mock response"}
+    assert response.result == {"summary": "non requirement result"}
 
 
 @pytest.mark.anyio
@@ -25,13 +25,18 @@ async def test_validator_accepts_requirement_list_with_ids() -> None:
             "requirements": [
                 {
                     "requirement_id": "RQ-001",
+                    "title": "Sign in",
                     "description": "The user can sign in.",
+                    "priority": "MUST",
+                    "source_chunk_ids": ["CHUNK-001"],
+                    "acceptance_criteria": ["The user can sign in."],
                 }
             ]
         }
     )
 
     assert response.success is True
+    assert response.result["artifact_type"] == "REQUIREMENT_SPEC"
 
 
 @pytest.mark.anyio
@@ -69,4 +74,5 @@ async def test_validator_rejects_requirement_without_id() -> None:
     )
 
     assert response.success is False
-    assert response.error == "requirements[0] must include requirement_id or id"
+    assert response.error is not None
+    assert "requirements.0.requirement_id" in response.error
