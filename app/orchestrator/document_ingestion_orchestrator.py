@@ -10,6 +10,7 @@ from app.agents.input_agents.document_parser_agent.agent import (
 from app.rag.chunking import split_text_into_chunks
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.artifact import DocumentMetadata, DocumentStatus, DocumentType
+from app.schemas.io_agent import InputAgentRequest
 
 
 class DocumentIngestionOrchestrator:
@@ -40,14 +41,24 @@ class DocumentIngestionOrchestrator:
             storage_path=storage_path,
         )
 
-        parsed_document = await self.parser.parse(
-            file_name=file_name,
-            file_bytes=file_bytes,
+        parsed_response = await self.parser.parse(
+            InputAgentRequest(
+                project_id=project_id,
+                file_name=file_name,
+                file_bytes=file_bytes,
+                context={
+                    "document_id": document_id,
+                    "document_type": document_type.value,
+                    "storage_path": storage_path,
+                },
+            )
         )
-        if parsed_document is None:
+        if not parsed_response.success or parsed_response.result is None:
             return document
 
-        chunks = split_text_into_chunks(parsed_document.text)
+        parsed_text = str(parsed_response.result.get("text", ""))
+        parsed_metadata = parsed_response.result.get("metadata", {})
+        chunks = split_text_into_chunks(parsed_text)
         if not chunks:
             return document
 
@@ -61,7 +72,8 @@ class DocumentIngestionOrchestrator:
                 section_title=chunk.section_title,
                 chunk_metadata={
                     **chunk.metadata,
-                    "parser_name": parsed_document.parser_name,
+                    **parsed_metadata,
+                    "parser_name": parsed_response.agent_name,
                     "source_file_name": file_name,
                 },
             )

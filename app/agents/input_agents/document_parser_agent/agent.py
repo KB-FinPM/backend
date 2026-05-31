@@ -3,13 +3,7 @@
 
 from pathlib import PurePath
 
-from pydantic import BaseModel, Field
-
-
-class ParsedDocument(BaseModel):
-    text: str = Field(..., description="Extracted plain text")
-    parser_name: str = Field(..., description="Parser implementation name")
-    metadata: dict = Field(default_factory=dict, description="Parser metadata")
+from app.schemas.io_agent import InputAgentRequest, InputAgentResponse
 
 
 class DocumentParserAgent:
@@ -18,22 +12,33 @@ class DocumentParserAgent:
     SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".log"}
     AGENT_NAME = "DocumentParserAgent"
 
-    async def parse(self, *, file_name: str, file_bytes: bytes) -> ParsedDocument | None:
-        extension = PurePath(file_name).suffix.lower()
+    async def parse(self, request: InputAgentRequest) -> InputAgentResponse:
+        extension = PurePath(request.file_name).suffix.lower()
         if extension not in self.SUPPORTED_EXTENSIONS:
-            return None
+            return InputAgentResponse(
+                success=False,
+                agent_name=self.AGENT_NAME,
+                error="unsupported file extension",
+            )
 
-        text = self._decode_text(file_bytes)
+        text = self._decode_text(request.file_bytes)
         if not text.strip():
-            return None
+            return InputAgentResponse(
+                success=False,
+                agent_name=self.AGENT_NAME,
+                error="empty parsed text",
+            )
 
-        return ParsedDocument(
-            text=text,
-            parser_name=self.AGENT_NAME,
-            metadata={
-                "file_name": file_name,
-                "extension": extension,
-                "byte_size": len(file_bytes),
+        return InputAgentResponse(
+            agent_name=self.AGENT_NAME,
+            result={
+                "text": text,
+                "metadata": {
+                    "file_name": request.file_name,
+                    "extension": extension,
+                    "byte_size": len(request.file_bytes),
+                    "content_type": request.content_type,
+                },
             },
         )
 
