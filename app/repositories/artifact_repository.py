@@ -55,3 +55,16 @@ class ArtifactRepository:
         )
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
+
+    async def list_artifacts_by_project(
+        self,
+        *,
+        project_id: str,
+    ) -> list[ArtifactModel]:
+        statement = (
+            select(ArtifactModel)
+            .where(ArtifactModel.project_id == project_id)
+            .order_by(ArtifactModel.created_at.desc())
+        )
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())

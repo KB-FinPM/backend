@@ -5,6 +5,7 @@ import pytest
 
 from app.orchestrator.generation_orchestrator import GenerationOrchestrator
 from app.schemas.agent import AgentRequest, AgentResponse
+from app.schemas.artifact import ArtifactMetadata, ArtifactType
 from app.schemas.request import GenerationRequest
 
 
@@ -68,6 +69,41 @@ class StubValidatorAgent:
         )
 
 
+class StubArtifactService:
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+        self.received_source_document_ids: list[str] | None = None
+        self.received_result_json: dict | None = None
+
+    async def create_artifact(
+        self,
+        *,
+        artifact_id: str,
+        project_id: str,
+        artifact_type: ArtifactType,
+        name: str,
+        source_document_ids: list[str],
+        result_json: dict,
+        template_id: str | None = None,
+        template_version: str | None = None,
+        storage_path: str | None = None,
+    ) -> ArtifactMetadata:
+        self.calls.append("artifact")
+        self.received_source_document_ids = source_document_ids
+        self.received_result_json = result_json
+        return ArtifactMetadata(
+            artifact_id=artifact_id,
+            project_id=project_id,
+            artifact_type=artifact_type,
+            name=name,
+            source_document_ids=source_document_ids,
+            template_id=template_id,
+            template_version=template_version,
+            result_json=result_json,
+            storage_path=storage_path,
+        )
+
+
 @pytest.mark.anyio
 async def test_generate_requirement_calls_retrieval_agent_and_validator() -> None:
     calls: list[str] = []
@@ -114,6 +150,36 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
         "query": "Create a requirement spec",
     }
     assert validator.received_result == {"requirements": [{"id": "RQ-001"}]}
+
+
+@pytest.mark.anyio
+async def test_generate_requirement_persists_validated_artifact() -> None:
+    calls: list[str] = []
+    artifact_service = StubArtifactService(calls)
+    orchestrator = GenerationOrchestrator(
+        retrieval=StubRetrievalService(calls),
+        requirement_generator=StubRequirementAgent(calls),
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        source_document_ids=["DOC-001"],
+        target_artifact_type="REQUIREMENT_SPEC",
+    )
+
+    response = await orchestrator.generate_requirement(
+        request,
+        artifact_service=artifact_service,
+    )
+
+    assert calls == ["retrieval", "requirement", "validator", "artifact"]
+    assert response.success is True
+    assert response.message == "artifact generated"
+    assert response.result["artifact"]["artifact_id"].startswith("ART-")
+    assert response.result["artifact"]["project_id"] == "PRJ-001"
+    assert response.result["generated"] == {"requirements": [{"id": "RQ-001"}]}
+    assert artifact_service.received_source_document_ids == ["DOC-001"]
+    assert artifact_service.received_result_json == {"requirements": [{"id": "RQ-001"}]}
 
 
 @pytest.mark.anyio

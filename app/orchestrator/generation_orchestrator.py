@@ -2,6 +2,7 @@
 # KO: 선행 문서 기반 후행 산출물 생성 흐름을 제어합니다.
 
 from typing import Any
+from uuid import uuid4
 
 from app.agents.core_agents.requirement_agent.agent import requirement_agent
 from app.agents.core_agents.validator_agent.agent import validator_agent
@@ -27,7 +28,11 @@ class GenerationOrchestrator:
         self.requirement_generator = requirement_generator
         self.validator = validator
 
-    async def generate_requirement(self, request: GenerationRequest) -> GenerationResponse:
+    async def generate_requirement(
+        self,
+        request: GenerationRequest,
+        artifact_service: Any = None,
+    ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         logger.info(
             "[Orchestrator] generate_requirement start | "
@@ -64,13 +69,32 @@ class GenerationOrchestrator:
         if not validated_response.success:
             return self._failed_response(request, validated_response)
 
+        if artifact_service is not None:
+            artifact = await artifact_service.create_artifact(
+                artifact_id=f"ART-{uuid4().hex[:12].upper()}",
+                project_id=request.project_id,
+                artifact_type=generation_flow.target_artifact_type,
+                name=generation_flow.target_artifact_type.value,
+                source_document_ids=request.source_document_ids,
+                template_id=generation_flow.template.template_id,
+                template_version=generation_flow.template.template_version,
+                result_json=validated_response.result,
+            )
+            result = {
+                "artifact": artifact.model_dump(mode="json"),
+                "generated": validated_response.result,
+            }
+        else:
+            result = validated_response.result
+
         logger.info(
             "[Orchestrator] generate_requirement done | "
             f"project_id={request.project_id}"
         )
         return GenerationResponse(
             project_id=request.project_id,
-            result=validated_response.result,
+            message="artifact generated" if artifact_service is not None else "ok",
+            result=result,
         )
 
     def _failed_response(

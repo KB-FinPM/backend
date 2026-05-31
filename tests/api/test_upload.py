@@ -4,7 +4,7 @@
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
-from app.dependencies import get_document_repository
+from app.dependencies import get_document_service
 from app.schemas.artifact import DocumentMetadata, DocumentType
 
 
@@ -57,7 +57,7 @@ def test_upload_document_returns_document_metadata(
     stub_s3 = StubS3Service()
     stub_repository = StubDocumentRepository()
     monkeypatch.setattr("app.api.upload.s3_service", stub_s3)
-    client.app.dependency_overrides[get_document_repository] = lambda: stub_repository
+    client.app.dependency_overrides[get_document_service] = lambda: stub_repository
 
     try:
         response = client.post(

@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.dependencies import get_document_repository
-from app.repositories.document_repository import DocumentRepository
+from app.dependencies import get_document_service
 from app.schemas.artifact import DocumentType
 from app.schemas.response import DocumentUploadResponse
+from app.services.document_service import DocumentService
 from app.storage.s3 import s3_service
 
 logger = get_logger(__name__)
@@ -23,7 +23,7 @@ async def upload_document(
     project_id: str = Form(...),
     document_type: DocumentType = Form(DocumentType.UNKNOWN),
     file: UploadFile = File(...),
-    document_repository: DocumentRepository = Depends(get_document_repository),
+    document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentUploadResponse:
     """Upload a source document and return project-scoped document metadata."""
     safe_file_name = PurePath(file.filename or "uploaded-file").name
@@ -42,7 +42,7 @@ async def upload_document(
 
     file_bytes = await file.read()
     storage_path = await s3_service.upload(file_bytes=file_bytes, key=storage_key)
-    document = await document_repository.create_document(
+    document = await document_service.create_document(
         document_id=document_id,
         project_id=project_id,
         document_type=document_type,

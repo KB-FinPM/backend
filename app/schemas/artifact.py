@@ -21,6 +21,13 @@ class DocumentStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ArtifactStatus(StrEnum):
+    CREATED = "CREATED"
+    VALIDATED = "VALIDATED"
+    EXPORTED = "EXPORTED"
+    FAILED = "FAILED"
+
+
 class ArtifactType(StrEnum):
     REQUIREMENT_SPEC = "REQUIREMENT_SPEC"
     SCREEN_DESIGN = "SCREEN_DESIGN"
@@ -63,4 +70,24 @@ class DocumentMetadata(BaseModel):
     status: DocumentStatus = Field(
         DocumentStatus.UPLOADED,
         description="Current document processing status",
+    )
+
+
+class ArtifactMetadata(BaseModel):
+    artifact_id: str = Field(..., description="Artifact ID")
+    project_id: str = Field(..., description="Project ID")
+    artifact_type: ArtifactType = Field(..., description="Generated artifact type")
+    name: str = Field(..., description="Artifact display name")
+    version: int = Field(1, description="Artifact version")
+    source_document_ids: list[str] = Field(
+        default_factory=list,
+        description="Source document IDs used to generate the artifact",
+    )
+    template_id: Optional[str] = Field(None, description="Template ID")
+    template_version: Optional[str] = Field(None, description="Template version")
+    result_json: dict = Field(default_factory=dict, description="Artifact result JSON")
+    storage_path: Optional[str] = Field(None, description="Exported artifact path")
+    status: ArtifactStatus = Field(
+        ArtifactStatus.CREATED,
+        description="Current artifact status",
     )

@@ -1,23 +1,31 @@
 # EN: Generation API routes delegate artifact generation requests to orchestrators.
 # KO: 산출물 생성 API 라우터이며 요청 처리를 오케스트레이터에 위임합니다.
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.core.logger import get_logger
+from app.dependencies import get_artifact_service
 from app.orchestrator.generation_orchestrator import generation_orchestrator
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
+from app.services.artifact_service import ArtifactService
 
 logger = get_logger(__name__)
 router = APIRouter()
 
 
 @router.post("/requirement", response_model=GenerationResponse)
-async def generate_requirement(request: GenerationRequest) -> GenerationResponse:
+async def generate_requirement(
+    request: GenerationRequest,
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> GenerationResponse:
     """Generate a requirement artifact through the PM agent orchestrator."""
     logger.info(f"generate_requirement | project_id={request.project_id}")
 
-    return await generation_orchestrator.generate_requirement(request)
+    return await generation_orchestrator.generate_requirement(
+        request,
+        artifact_service=artifact_service,
+    )
 
 
 @router.post("/action-items", response_model=GenerationResponse)

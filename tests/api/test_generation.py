@@ -4,6 +4,7 @@
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
+from app.dependencies import get_artifact_service
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 
@@ -15,6 +16,7 @@ class StubGenerationOrchestrator:
     async def generate_requirement(
         self,
         request: GenerationRequest,
+        artifact_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         return GenerationResponse(
@@ -32,18 +34,22 @@ def test_generate_requirement_delegates_to_orchestrator(
         "app.api.generation.generation_orchestrator",
         stub_orchestrator,
     )
+    client.app.dependency_overrides[get_artifact_service] = lambda: object()
 
-    response = client.post(
-        "/generate/requirement",
-        json={
-            "project_id": "PRJ-001",
-            "source_document_ids": ["DOC-001"],
-            "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
-            "target_artifact_type": "REQUIREMENT_SPEC",
-            "template_id": "TPL-REQ-SPEC-DEFAULT",
-            "query": "Create a requirement spec",
-        },
-    )
+    try:
+        response = client.post(
+            "/generate/requirement",
+            json={
+                "project_id": "PRJ-001",
+                "source_document_ids": ["DOC-001"],
+                "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+                "target_artifact_type": "REQUIREMENT_SPEC",
+                "template_id": "TPL-REQ-SPEC-DEFAULT",
+                "query": "Create a requirement spec",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
 
     assert response.status_code == 200
     assert response.json()["project_id"] == "PRJ-001"
