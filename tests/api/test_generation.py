@@ -2,9 +2,8 @@
 # KO: 산출물 생성 API 라우팅 동작을 검증하는 테스트입니다.
 
 from fastapi.testclient import TestClient
-from pytest import MonkeyPatch
 
-from app.dependencies import get_artifact_service
+from app.dependencies import get_artifact_service, get_generation_service
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 
@@ -27,12 +26,10 @@ class StubGenerationOrchestrator:
 
 def test_generate_requirement_delegates_to_orchestrator(
     client: TestClient,
-    monkeypatch: MonkeyPatch,
 ) -> None:
-    stub_orchestrator = StubGenerationOrchestrator()
-    monkeypatch.setattr(
-        "app.api.generation.generation_orchestrator",
-        stub_orchestrator,
+    stub_generation_service = StubGenerationOrchestrator()
+    client.app.dependency_overrides[get_generation_service] = (
+        lambda: stub_generation_service
     )
     client.app.dependency_overrides[get_artifact_service] = lambda: object()
 
@@ -54,7 +51,9 @@ def test_generate_requirement_delegates_to_orchestrator(
     assert response.status_code == 200
     assert response.json()["project_id"] == "PRJ-001"
     assert response.json()["result"] == {"source": "stub-orchestrator"}
-    assert stub_orchestrator.received_request is not None
-    assert stub_orchestrator.received_request.source_document_ids == ["DOC-001"]
-    assert stub_orchestrator.received_request.document_ids == ["DOC-001"]
-    assert stub_orchestrator.received_request.template_id == "TPL-REQ-SPEC-DEFAULT"
+    assert stub_generation_service.received_request is not None
+    assert stub_generation_service.received_request.source_document_ids == ["DOC-001"]
+    assert stub_generation_service.received_request.document_ids == ["DOC-001"]
+    assert stub_generation_service.received_request.template_id == (
+        "TPL-REQ-SPEC-DEFAULT"
+    )

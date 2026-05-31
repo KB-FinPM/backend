@@ -8,8 +8,10 @@ from app.db.session import get_session
 from app.repositories.artifact_repository import ArtifactRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.template_repository import TemplateRepository
+from app.orchestrator.generation_orchestrator import generation_orchestrator
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
+from app.services.generation_service import GenerationService
 
 
 def get_document_repository(
@@ -40,3 +42,7 @@ def get_artifact_service(
     artifact_repository: ArtifactRepository = Depends(get_artifact_repository),
 ) -> ArtifactService:
     return ArtifactService(artifact_repository)
+
+
+def get_generation_service() -> GenerationService:
+    return GenerationService(generation_orchestrator)

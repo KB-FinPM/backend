@@ -4,11 +4,11 @@
 from fastapi import APIRouter, Depends
 
 from app.core.logger import get_logger
-from app.dependencies import get_artifact_service
-from app.orchestrator.generation_orchestrator import generation_orchestrator
+from app.dependencies import get_artifact_service, get_generation_service
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 from app.services.artifact_service import ArtifactService
+from app.services.generation_service import GenerationService
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -17,12 +17,13 @@ router = APIRouter()
 @router.post("/requirement", response_model=GenerationResponse)
 async def generate_requirement(
     request: GenerationRequest,
+    generation_service: GenerationService = Depends(get_generation_service),
     artifact_service: ArtifactService = Depends(get_artifact_service),
 ) -> GenerationResponse:
     """Generate a requirement artifact through the PM agent orchestrator."""
     logger.info(f"generate_requirement | project_id={request.project_id}")
 
-    return await generation_orchestrator.generate_requirement(
+    return await generation_service.generate_requirement(
         request,
         artifact_service=artifact_service,
     )
