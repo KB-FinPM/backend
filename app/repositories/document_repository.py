@@ -66,6 +66,28 @@ class DocumentRepository:
         result = await self.session.execute(statement)
         return [self._to_metadata(document) for document in result.scalars().all()]
 
+    async def update_document_status(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        status: DocumentStatus,
+    ) -> Optional[DocumentMetadata]:
+        statement = select(DocumentModel).where(
+            DocumentModel.project_id == project_id,
+            DocumentModel.document_id == document_id,
+        )
+        result = await self.session.execute(statement)
+        document = result.scalar_one_or_none()
+        if document is None:
+            return None
+
+        document.status = status.value
+        await self.session.commit()
+        await self.session.refresh(document)
+
+        return self._to_metadata(document)
+
     async def create_chunk(
         self,
         *,
@@ -92,6 +114,23 @@ class DocumentRepository:
         await self.session.commit()
         await self.session.refresh(chunk)
         return chunk
+
+    async def list_chunks_by_document(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+    ) -> list[DocumentChunkModel]:
+        statement = (
+            select(DocumentChunkModel)
+            .where(
+                DocumentChunkModel.project_id == project_id,
+                DocumentChunkModel.document_id == document_id,
+            )
+            .order_by(DocumentChunkModel.chunk_index.asc())
+        )
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
 
     def _to_metadata(self, document: DocumentModel) -> DocumentMetadata:
         return DocumentMetadata(

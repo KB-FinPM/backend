@@ -42,12 +42,13 @@ async def upload_document(
 
     file_bytes = await file.read()
     storage_path = await s3_service.upload(file_bytes=file_bytes, key=storage_key)
-    document = await document_service.create_document(
+    document = await document_service.ingest_uploaded_document(
         document_id=document_id,
         project_id=project_id,
         document_type=document_type,
         file_name=safe_file_name,
         storage_path=storage_path,
+        file_bytes=file_bytes,
     )
 
     return DocumentUploadResponse(

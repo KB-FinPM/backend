@@ -27,7 +27,7 @@ class StubDocumentRepository:
         self.received_file_name: str | None = None
         self.received_storage_path: str | None = None
 
-    async def create_document(
+    async def ingest_uploaded_document(
         self,
         *,
         document_id: str,
@@ -35,12 +35,14 @@ class StubDocumentRepository:
         document_type: DocumentType,
         file_name: str,
         storage_path: str,
+        file_bytes: bytes,
     ) -> DocumentMetadata:
         self.received_document_id = document_id
         self.received_project_id = project_id
         self.received_document_type = document_type
         self.received_file_name = file_name
         self.received_storage_path = storage_path
+        self.received_file_bytes = file_bytes
         return DocumentMetadata(
             document_id=document_id,
             project_id=project_id,
