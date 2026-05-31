@@ -3,7 +3,11 @@
 
 from typing import Any
 
-from app.schemas.io_agent import OutputAgentRequest, OutputAgentResponse
+from app.schemas.io_agent import (
+    OutputAgentRequest,
+    OutputAgentResponse,
+    OutputResponseType,
+)
 
 
 class MarkdownOutputAgent:
@@ -12,22 +16,32 @@ class MarkdownOutputAgent:
     AGENT_NAME = "MarkdownOutputAgent"
 
     async def render(self, request: OutputAgentRequest) -> OutputAgentResponse:
+        if request.response_type != OutputResponseType.ARTIFACT_EXPORT:
+            return OutputAgentResponse(
+                success=False,
+                agent_name=self.AGENT_NAME,
+                message="unsupported response type",
+                error="unsupported response type",
+            )
+
         if request.output_format != "markdown":
             return OutputAgentResponse(
                 success=False,
                 agent_name=self.AGENT_NAME,
+                message="unsupported output format",
                 error="unsupported output format",
             )
 
         markdown = self._render_markdown(request.result_json)
         return OutputAgentResponse(
             agent_name=self.AGENT_NAME,
-            result={
+            message=request.message,
+            display_payload={
                 "format": "markdown",
                 "content": markdown,
-                "artifact_id": request.artifact_id,
-                "artifact_type": request.artifact_type,
             },
+            download_files=[],
+            artifact_refs=[request.artifact] if request.artifact else [],
         )
 
     def _render_markdown(self, result_json: dict[str, Any]) -> str:

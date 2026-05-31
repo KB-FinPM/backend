@@ -4,7 +4,7 @@
 import pytest
 
 from app.agents.output_agents.markdown_agent.agent import MarkdownOutputAgent
-from app.schemas.io_agent import OutputAgentRequest
+from app.schemas.io_agent import OutputAgentRequest, OutputResponseType
 
 
 @pytest.mark.anyio
@@ -14,8 +14,8 @@ async def test_markdown_output_agent_renders_requirement_artifact() -> None:
     response = await agent.render(
         OutputAgentRequest(
             project_id="PRJ-001",
-            artifact_id="ART-001",
-            artifact_type="REQUIREMENT_SPEC",
+            response_type=OutputResponseType.ARTIFACT_EXPORT,
+            artifact={"artifact_id": "ART-001", "artifact_type": "REQUIREMENT_SPEC"},
             result_json={
                 "artifact_type": "REQUIREMENT_SPEC",
                 "requirements": [
@@ -30,10 +30,12 @@ async def test_markdown_output_agent_renders_requirement_artifact() -> None:
     )
 
     assert response.success is True
-    assert response.result is not None
-    assert response.result["format"] == "markdown"
-    assert "# REQUIREMENT_SPEC" in response.result["content"]
-    assert "## Login" in response.result["content"]
+    assert response.display_payload["format"] == "markdown"
+    assert "# REQUIREMENT_SPEC" in response.display_payload["content"]
+    assert "## Login" in response.display_payload["content"]
+    assert response.artifact_refs == [
+        {"artifact_id": "ART-001", "artifact_type": "REQUIREMENT_SPEC"}
+    ]
 
 
 @pytest.mark.anyio
@@ -43,7 +45,7 @@ async def test_markdown_output_agent_rejects_unsupported_format() -> None:
     response = await agent.render(
         OutputAgentRequest(
             project_id="PRJ-001",
-            artifact_type="REQUIREMENT_SPEC",
+            response_type=OutputResponseType.ARTIFACT_EXPORT,
             result_json={"artifact_type": "REQUIREMENT_SPEC"},
             output_format="pdf",
         )
