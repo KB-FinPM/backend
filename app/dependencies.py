@@ -6,6 +6,7 @@ from fastapi import Depends
 
 from app.db.session import get_session
 from app.repositories.artifact_repository import ArtifactRepository
+from app.repositories.artifact_link_repository import ArtifactLinkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.template_repository import TemplateRepository
 from app.orchestrator.generation_orchestrator import generation_orchestrator
@@ -14,6 +15,7 @@ from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
 from app.services.template_service import TemplateService
+from app.services.traceability_service import TraceabilityService
 
 
 def get_document_repository(
@@ -26,6 +28,12 @@ def get_artifact_repository(
     session: AsyncSession = Depends(get_session),
 ) -> ArtifactRepository:
     return ArtifactRepository(session)
+
+
+def get_artifact_link_repository(
+    session: AsyncSession = Depends(get_session),
+) -> ArtifactLinkRepository:
+    return ArtifactLinkRepository(session)
 
 
 def get_template_repository(
@@ -60,3 +68,11 @@ def get_template_service(
     template_repository: TemplateRepository = Depends(get_template_repository),
 ) -> TemplateService:
     return TemplateService(template_repository)
+
+
+def get_traceability_service(
+    artifact_link_repository: ArtifactLinkRepository = Depends(
+        get_artifact_link_repository
+    ),
+) -> TraceabilityService:
+    return TraceabilityService(artifact_link_repository)
