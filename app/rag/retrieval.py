@@ -38,6 +38,8 @@ class RetrievalService:
         if self.document_repository is None:
             return []
 
+        # TODO: Replace keyword search with pgvector/OpenSearch similarity search
+        # while keeping project_id and permission_scope filters mandatory.
         chunks = await self.document_repository.search_chunks_by_project(
             project_id=project_id,
             query=query,

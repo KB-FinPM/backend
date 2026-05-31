@@ -26,6 +26,8 @@ async def upload_document(
     document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentUploadResponse:
     """Upload a source document and return project-scoped document metadata."""
+    # TODO: Route upload payloads through InputOrchestrator after upload and
+    # generation routes are unified behind the standard user-input envelope.
     safe_file_name = PurePath(file.filename or "uploaded-file").name
     document_id = f"DOC-{uuid4().hex[:12].upper()}"
     storage_key = (

@@ -30,6 +30,8 @@ async def generate_requirement(
     template_service: TemplateService = Depends(get_template_service),
 ) -> GenerationResponse:
     """Generate a requirement artifact through the PM agent orchestrator."""
+    # TODO: Normalize generation requests through InputOrchestrator and format
+    # responses through OutputOrchestrator once all user-facing routes share IO agents.
     logger.info(f"generate_requirement | project_id={request.project_id}")
 
     return await generation_service.generate_requirement(

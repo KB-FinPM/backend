@@ -33,6 +33,8 @@ class DocumentIngestionOrchestrator:
         storage_path: str,
         file_bytes: bytes,
     ) -> DocumentMetadata:
+        # TODO: Add PDF/DOCX parser agents and embedding/vector-store indexing after
+        # text ingestion is stable.
         document = await document_repository.create_document(
             document_id=document_id,
             project_id=project_id,

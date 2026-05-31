@@ -23,6 +23,8 @@ class InputOrchestrator:
         self.document_parser = document_parser
 
     async def normalize(self, request: InputAgentRequest) -> InputAgentResponse:
+        # TODO: Route TEXT, MEETING_NOTES, and ARTIFACT_REQUEST inputs to dedicated
+        # input agents once those agents are implemented.
         if request.input_type == InputType.FILE:
             return await self.document_parser.parse(request)
 

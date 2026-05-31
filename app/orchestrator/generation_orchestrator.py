@@ -35,6 +35,8 @@ class GenerationOrchestrator:
         retrieval_service: Any = None,
         template_service: Any = None,
     ) -> GenerationResponse:
+        # TODO: Replace this requirement-specific method with artifact-type
+        # dispatch when WBS, Action Items, and Screen Design agents are added.
         generation_flow = request.generation_flow()
         logger.info(
             "[Orchestrator] generate_requirement start | "
