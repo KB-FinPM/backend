@@ -49,6 +49,10 @@ class GenerationRequest(BaseModel):
         description="Template version to use for generation",
     )
     query: Optional[str] = Field(None, description="Additional generation request")
+    permission_scope: list[str] = Field(
+        default_factory=lambda: ["project:read"],
+        description="Permission scope used for project-scoped retrieval",
+    )
 
     @model_validator(mode="after")
     def sync_document_id_aliases(self) -> "GenerationRequest":

@@ -42,6 +42,7 @@ class GenerationOrchestrator:
 
         documents = await self.retrieval.search(
             project_id=request.project_id,
+            permission_scope=request.permission_scope,
             query=request.query or "",
         )
 
@@ -59,6 +60,7 @@ class GenerationOrchestrator:
                 "target_artifact_type": generation_flow.target_artifact_type.value,
                 "template": generation_flow.template.model_dump(),
                 "query": request.query,
+                "permission_scope": request.permission_scope,
             },
         )
         agent_response = await self.requirement_generator.generate(agent_request)

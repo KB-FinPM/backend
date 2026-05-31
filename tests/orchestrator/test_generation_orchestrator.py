@@ -13,16 +13,19 @@ class StubRetrievalService:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
         self.received_project_id: str | None = None
+        self.received_permission_scope: list[str] | None = None
         self.received_query: str | None = None
 
     async def search(
         self,
         project_id: str,
+        permission_scope: list[str],
         query: str,
         top_k: int = 5,
     ) -> list[dict]:
         self.calls.append("retrieval")
         self.received_project_id = project_id
+        self.received_permission_scope = permission_scope
         self.received_query = query
         return [{"chunk_id": "CHUNK-001", "text": "Login is required."}]
 
@@ -123,6 +126,7 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
         template_id="TPL-REQ-SPEC-DEFAULT",
         template_version="v1",
         query="Create a requirement spec",
+        permission_scope=["project:read", "artifact:generate"],
     )
 
     response = await orchestrator.generate_requirement(request)
@@ -132,6 +136,10 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
     assert response.project_id == "PRJ-001"
     assert response.result == {"requirements": [{"id": "RQ-001"}]}
     assert retrieval.received_project_id == "PRJ-001"
+    assert retrieval.received_permission_scope == [
+        "project:read",
+        "artifact:generate",
+    ]
     assert retrieval.received_query == "Create a requirement spec"
     assert requirement.received_request is not None
     assert requirement.received_request.project_id == "PRJ-001"
@@ -148,6 +156,7 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
             "template_version": "v1",
         },
         "query": "Create a requirement spec",
+        "permission_scope": ["project:read", "artifact:generate"],
     }
     assert validator.received_result == {"requirements": [{"id": "RQ-001"}]}
 

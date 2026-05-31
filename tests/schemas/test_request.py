@@ -9,9 +9,12 @@ def test_generation_request_uses_independent_document_id_lists() -> None:
     second_request = GenerationRequest(project_id="PRJ-002")
 
     first_request.document_ids.append("DOC-001")
+    first_request.permission_scope.append("artifact:generate")
 
     assert first_request.document_ids == ["DOC-001"]
     assert second_request.document_ids == []
+    assert first_request.permission_scope == ["project:read", "artifact:generate"]
+    assert second_request.permission_scope == ["project:read"]
 
 
 def test_generation_request_syncs_legacy_document_ids() -> None:
@@ -49,3 +52,12 @@ def test_generation_request_builds_generation_flow() -> None:
     assert flow.target_artifact_type == "SCREEN_DESIGN"
     assert flow.template.template_id == "TPL-SCREEN-DESIGN"
     assert flow.template.template_version == "v1"
+
+
+def test_generation_request_accepts_permission_scope() -> None:
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        permission_scope=["project:read", "artifact:generate"],
+    )
+
+    assert request.permission_scope == ["project:read", "artifact:generate"]
