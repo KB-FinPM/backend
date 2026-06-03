@@ -50,3 +50,54 @@ async def test_traceability_service_creates_link_with_generated_id(
 
     assert link.link_id.startswith("LINK-")
     assert link.relation_type == ArtifactRelationType.DESIGNED_BY
+
+
+def test_traceability_service_builds_wbs_links_from_generated_result() -> None:
+    service = TraceabilityService(artifact_link_repository=None)
+
+    links = service.build_links_from_generated_artifact(
+        project_id="PRJ-001",
+        source_artifact_id="ART-REQ-001",
+        target_artifact_id="ART-WBS-001",
+        generated_result={
+            "artifact_type": "WBS",
+            "tasks": [
+                {
+                    "task_id": "WBS-001",
+                    "name": "Login work",
+                    "source_requirement_ids": ["RQ-001", "RQ-002"],
+                }
+            ],
+        },
+    )
+
+    assert len(links) == 2
+    assert links[0].source_item_id == "RQ-001"
+    assert links[0].target_item_id == "WBS-001"
+    assert links[0].relation_type == ArtifactRelationType.DECOMPOSED_TO
+    assert links[0].metadata["auto_generated"] is True
+
+
+def test_traceability_service_builds_screen_links_from_generated_result() -> None:
+    service = TraceabilityService(artifact_link_repository=None)
+
+    links = service.build_links_from_generated_artifact(
+        project_id="PRJ-001",
+        source_artifact_id="ART-REQ-001",
+        target_artifact_id="ART-SCREEN-001",
+        generated_result={
+            "artifact_type": "SCREEN_DESIGN",
+            "screens": [
+                {
+                    "screen_id": "SCR-001",
+                    "name": "Login",
+                    "source_requirement_ids": ["RQ-001"],
+                }
+            ],
+        },
+    )
+
+    assert len(links) == 1
+    assert links[0].source_item_id == "RQ-001"
+    assert links[0].target_item_id == "SCR-001"
+    assert links[0].relation_type == ArtifactRelationType.DESIGNED_BY
