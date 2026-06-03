@@ -118,3 +118,24 @@ async def test_validator_accepts_minimal_screen_design_artifact() -> None:
 
     assert response.success is True
     assert response.result["artifact_type"] == "SCREEN_DESIGN"
+
+
+@pytest.mark.anyio
+async def test_validator_accepts_minimal_schedule_todo_list() -> None:
+    validator = ValidatorAgent()
+
+    response = await validator.validate(
+        {
+            "artifact_type": "SCHEDULE_TODO_LIST",
+            "todos": [
+                {
+                    "todo_id": "TODO-001",
+                    "title": "Confirm login scope",
+                    "source_chunk_ids": ["CHUNK-001"],
+                }
+            ],
+        }
+    )
+
+    assert response.success is True
+    assert response.result["artifact_type"] == "SCHEDULE_TODO_LIST"

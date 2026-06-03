@@ -276,6 +276,36 @@ Minimum result:
 }
 ```
 
+### Schedule Todo List
+
+Schema:
+
+- `app/schemas/schedule.py`
+
+Minimum result:
+
+```json
+{
+  "artifact_type": "SCHEDULE_TODO_LIST",
+  "todos": [
+    {
+      "todo_id": "TODO-001",
+      "title": "Confirm login scope",
+      "description": "Optional",
+      "assignee": "Optional",
+      "due_date": "Optional ISO-like date string",
+      "source_document_id": "DOC-001",
+      "source_chunk_ids": ["CHUNK-001"],
+      "metadata": {}
+    }
+  ],
+  "metadata": {}
+}
+```
+
+This is intentionally minimal. Do not add detailed schedule-planning fields
+until the schedule-management spec is finalized.
+
 ## Traceability Contract
 
 Artifact relationships are stored through:
