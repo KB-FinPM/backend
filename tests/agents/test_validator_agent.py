@@ -76,3 +76,45 @@ async def test_validator_rejects_requirement_without_id() -> None:
     assert response.success is False
     assert response.error is not None
     assert "requirements.0.requirement_id" in response.error
+
+
+@pytest.mark.anyio
+async def test_validator_accepts_minimal_wbs_artifact() -> None:
+    validator = ValidatorAgent()
+
+    response = await validator.validate(
+        {
+            "artifact_type": "WBS",
+            "tasks": [
+                {
+                    "task_id": "WBS-001",
+                    "name": "Build login",
+                    "source_requirement_ids": ["RQ-001"],
+                }
+            ],
+        }
+    )
+
+    assert response.success is True
+    assert response.result["artifact_type"] == "WBS"
+
+
+@pytest.mark.anyio
+async def test_validator_accepts_minimal_screen_design_artifact() -> None:
+    validator = ValidatorAgent()
+
+    response = await validator.validate(
+        {
+            "artifact_type": "SCREEN_DESIGN",
+            "screens": [
+                {
+                    "screen_id": "SCR-001",
+                    "name": "Login screen",
+                    "source_requirement_ids": ["RQ-001"],
+                }
+            ],
+        }
+    )
+
+    assert response.success is True
+    assert response.result["artifact_type"] == "SCREEN_DESIGN"

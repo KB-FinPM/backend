@@ -6,6 +6,8 @@ from typing import Any
 from app.core.logger import get_logger
 from app.schemas.agent import AgentResponse
 from app.schemas.requirement import RequirementArtifact
+from app.schemas.screen_design import ScreenDesignArtifact
+from app.schemas.wbs import WbsArtifact
 
 logger = get_logger(__name__)
 
@@ -44,11 +46,36 @@ class ValidatorAgent:
         if "requirements" in result:
             return self._validate_requirement_artifact(result)
 
+        if "tasks" in result:
+            return self._validate_wbs_artifact(result)
+
+        if "screens" in result:
+            return self._validate_screen_design_artifact(result)
+
         return result, []
 
     def _validate_requirement_artifact(self, result: dict) -> tuple[dict, list[str]]:
         try:
             artifact = RequirementArtifact.model_validate(result)
+        except ValueError as exc:
+            return result, [str(exc)]
+
+        return artifact.model_dump(mode="json"), []
+
+    def _validate_wbs_artifact(self, result: dict) -> tuple[dict, list[str]]:
+        try:
+            artifact = WbsArtifact.model_validate(result)
+        except ValueError as exc:
+            return result, [str(exc)]
+
+        return artifact.model_dump(mode="json"), []
+
+    def _validate_screen_design_artifact(
+        self,
+        result: dict,
+    ) -> tuple[dict, list[str]]:
+        try:
+            artifact = ScreenDesignArtifact.model_validate(result)
         except ValueError as exc:
             return result, [str(exc)]
 
