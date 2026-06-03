@@ -5,7 +5,9 @@ from typing import Any
 from uuid import uuid4
 
 from app.agents.core_agents.requirement_agent.agent import requirement_agent
+from app.agents.core_agents.screen_design_agent.agent import screen_design_agent
 from app.agents.core_agents.validator_agent.agent import validator_agent
+from app.agents.core_agents.wbs_agent.agent import wbs_agent
 from app.core.logger import get_logger
 from app.rag.retrieval import retrieval_service
 from app.schemas.agent import AgentRequest, AgentResponse
@@ -23,10 +25,14 @@ class GenerationOrchestrator:
         self,
         retrieval: Any = retrieval_service,
         requirement_generator: Any = requirement_agent,
+        wbs_generator: Any = wbs_agent,
+        screen_design_generator: Any = screen_design_agent,
         validator: Any = validator_agent,
     ) -> None:
         self.retrieval = retrieval
         self.requirement_generator = requirement_generator
+        self.wbs_generator = wbs_generator
+        self.screen_design_generator = screen_design_generator
         self.validator = validator
 
     async def generate_requirement(
@@ -52,30 +58,50 @@ class GenerationOrchestrator:
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         if generation_flow.target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
-            return await self._generate_requirement_artifact(
+            return await self._generate_agent_artifact(
                 request,
+                generator=self.requirement_generator,
                 artifact_service=artifact_service,
                 retrieval_service=retrieval_service,
                 template_service=template_service,
             )
 
-        # TODO: Wire WBS, Screen Design, and Action Items agents into this
-        # dispatch table as each agent source is delivered.
+        if generation_flow.target_artifact_type == ArtifactType.WBS:
+            return await self._generate_agent_artifact(
+                request,
+                generator=self.wbs_generator,
+                artifact_service=artifact_service,
+                retrieval_service=retrieval_service,
+                template_service=template_service,
+            )
+
+        if generation_flow.target_artifact_type == ArtifactType.SCREEN_DESIGN:
+            return await self._generate_agent_artifact(
+                request,
+                generator=self.screen_design_generator,
+                artifact_service=artifact_service,
+                retrieval_service=retrieval_service,
+                template_service=template_service,
+            )
+
+        # TODO: Wire Action Items agent into this dispatch table when it becomes
+        # part of the active product scope.
         return self._not_implemented_response(
             request,
             generation_flow.target_artifact_type,
         )
 
-    async def _generate_requirement_artifact(
+    async def _generate_agent_artifact(
         self,
         request: GenerationRequest,
+        generator: Any,
         artifact_service: Any = None,
         retrieval_service: Any = None,
         template_service: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         logger.info(
-            "[Orchestrator] generate_requirement start | "
+            "[Orchestrator] generate_artifact start | "
             f"project_id={request.project_id} | "
             f"target_artifact_type={generation_flow.target_artifact_type}"
         )
@@ -126,7 +152,7 @@ class GenerationOrchestrator:
                 "permission_scope": request.permission_scope,
             },
         )
-        agent_response = await self.requirement_generator.generate(agent_request)
+        agent_response = await generator.generate(agent_request)
         if not agent_response.success:
             return self._failed_response(request, agent_response)
 
@@ -161,7 +187,7 @@ class GenerationOrchestrator:
             result = validated_response.result
 
         logger.info(
-            "[Orchestrator] generate_requirement done | "
+            "[Orchestrator] generate_artifact done | "
             f"project_id={request.project_id}"
         )
         return GenerationResponse(
