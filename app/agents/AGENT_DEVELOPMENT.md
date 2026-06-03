@@ -1,157 +1,358 @@
-<!-- EN: Development guide for FINPM agent implementers. -->
-<!-- KO: FINPM Agent 구현 개발자를 위한 개발 가이드입니다. -->
+<!-- EN: Development contract for FINPM agent implementers. -->
+<!-- KO: FINPM Agent 구현/이식 개발자를 위한 계약 문서입니다. -->
 
 # FINPM Agent Development Guide
 
-This guide is the working contract for future FINPM agent developers.
-Each agent may define its own detailed payload schema, but all agents should
-follow the same orchestration and validation shape.
+This document is the working contract for agent developers and backend
+integration. Agent code must fit this backend boundary so it can be mounted
+without changing FastAPI routers, repositories, or storage code.
 
-## Layer Rules
+## Current Product Flow
+
+The active FINPM artifact flow is:
+
+```text
+CONSTRUCTION_REQUIREMENT_DEFINITION
+-> REQUIREMENT_SPEC
+-> WBS
+-> SCREEN_DESIGN
+```
+
+`ACTION_ITEMS` remains in code as a future extension candidate, but it is not
+part of the active artifact implementation scope.
+
+## Architecture Boundary
+
+```text
+Router
+-> Service
+-> Orchestrator
+-> Input/Core/Output Agent
+-> Validator
+-> Service/Repository/Storage
+```
+
+Rules:
 
 - Routers must not call LLMs directly.
-- Routers must not access databases, S3, or vector stores directly.
-- Agents must not create HTTP responses.
-- Core agents should only process structured JSON-like data.
-- Input agents convert external formats into JSON.
-- Output agents convert JSON into user-facing artifacts.
-- Orchestrators own flow control, context assembly, validation, and post-processing.
+- Routers must not access DB, S3, or vector stores directly.
+- Agents must not create FastAPI responses.
+- Agents must not access DB, S3, repositories, or vector stores directly.
+- Core Agents must process structured JSON-like input only.
+- LLM calls must go through `app.core.llm.llm_service`.
+- Orchestrators own flow control, context assembly, validation, and
+  post-processing.
 
-## Agent Responsibilities
+## Agent Types
 
-Each agent should have one clear job.
+### Input Agent
 
-Examples:
+Purpose:
 
-- `RequirementAgent`: generate requirement JSON from project context.
-- `ValidatorAgent`: validate schema and business rules.
-- `WbsAgent`: generate WBS JSON from requirement or project context.
-- `ActionItemAgent`: extract action item JSON from meeting context.
-- `TraceabilityAgent`: generate and validate artifact relationships.
+```text
+User/raw/file input
+-> normalized FINPM internal JSON
+```
 
-## Required Agent Shape
+Contract:
 
-Every agent should expose one primary async method.
+```python
+from app.schemas.io_agent import InputAgentRequest, InputAgentResponse
+
+async def parse(request: InputAgentRequest) -> InputAgentResponse:
+    ...
+```
+
+Current implementation:
+
+- `app/agents/input_agents/document_parser_agent/agent.py`
+- `DocumentParserAgent`
+- Handles `InputType.FILE` for text-like files.
+
+Do not add upload, S3, or DB logic to Input Agents.
+
+### Core Agent
+
+Purpose:
+
+```text
+Structured JSON/context
+-> PM artifact JSON
+```
+
+Contract:
+
+```python
+from app.schemas.agent import AgentRequest, AgentResponse
+
+async def generate(request: AgentRequest) -> AgentResponse:
+    ...
+```
+
+Current adapter slots:
+
+- `RequirementAgent`
+  - `app/agents/core_agents/requirement_agent/agent.py`
+  - Active implementation exists.
+- `WbsAgent`
+  - `app/agents/core_agents/wbs_agent/agent.py`
+  - Placeholder adapter. Replace only the inside of `generate`.
+- `ScreenDesignAgent`
+  - `app/agents/core_agents/screen_design_agent/agent.py`
+  - Placeholder adapter. Replace only the inside of `generate`.
+
+### Output Agent
+
+Purpose:
+
+```text
+Internal artifact/result JSON
+-> user-facing API/display/export payload
+```
+
+Contract:
+
+```python
+from app.schemas.io_agent import OutputAgentRequest, OutputAgentResponse
+
+async def render(request: OutputAgentRequest) -> OutputAgentResponse:
+    ...
+```
+
+Current implementation:
+
+- `app/agents/output_agents/markdown_agent/agent.py`
+- `MarkdownOutputAgent`
+- Handles `OutputResponseType.ARTIFACT_EXPORT` with `output_format="markdown"`.
+
+## Core Agent Input Shape
+
+Core Agents receive `AgentRequest`:
+
+```python
+AgentRequest(
+    project_id="PRJ-001",
+    documents=[
+        {
+            "chunk_id": "CHUNK-001",
+            "project_id": "PRJ-001",
+            "document_id": "DOC-001",
+            "chunk_index": 0,
+            "text": "...",
+            "section_title": None,
+            "metadata": {},
+        }
+    ],
+    context={
+        "source_document_ids": ["DOC-001"],
+        "document_ids": ["DOC-001"],
+        "source_document_type": "REQUIREMENT_SPEC",
+        "target_artifact_type": "WBS",
+        "template": {
+            "template_id": "TPL-REQ-SPEC-DEFAULT",
+            "template_version": "v1",
+            "content": "...",
+            "placeholders": {},
+        },
+        "query": "optional user request",
+        "permission_scope": ["project:read", "artifact:generate"],
+    },
+)
+```
+
+Agents may read `documents` and `context`, but must not call retrieval again.
+
+## Core Agent Output Shape
+
+Return `AgentResponse`.
+
+Success:
+
+```python
+AgentResponse(
+    success=True,
+    agent_name="WbsAgent",
+    result={...},
+)
+```
+
+Failure:
+
+```python
+AgentResponse(
+    success=False,
+    agent_name="WbsAgent",
+    error="reason",
+)
+```
+
+Never raise user-facing errors for expected validation/generation failures.
+Return `AgentResponse(success=False, error="...")` instead.
+
+## Minimal Artifact Schemas
+
+Backend currently enforces only the minimum needed for validation, storage, and
+traceability. Agent developers may put detailed fields under `metadata` until a
+more specific schema is agreed.
+
+### Requirement Artifact
+
+Schema:
+
+- `app/schemas/requirement.py`
+
+Minimum item fields:
+
+- `requirement_id`
+- `title`
+- `description`
+- `priority`
+- `source_document_id`
+- `source_chunk_ids`
+- `acceptance_criteria`
+- `rationale`
+
+### WBS Artifact
+
+Schema:
+
+- `app/schemas/wbs.py`
+
+Minimum result:
+
+```json
+{
+  "artifact_type": "WBS",
+  "tasks": [
+    {
+      "task_id": "WBS-001",
+      "name": "Build login",
+      "description": "Optional",
+      "source_requirement_ids": ["RQ-001"],
+      "metadata": {}
+    }
+  ],
+  "metadata": {}
+}
+```
+
+### Screen Design Artifact
+
+Schema:
+
+- `app/schemas/screen_design.py`
+
+Minimum result:
+
+```json
+{
+  "artifact_type": "SCREEN_DESIGN",
+  "screens": [
+    {
+      "screen_id": "SCR-001",
+      "name": "Login screen",
+      "description": "Optional",
+      "source_requirement_ids": ["RQ-001"],
+      "metadata": {}
+    }
+  ],
+  "metadata": {}
+}
+```
+
+## Traceability Contract
+
+Artifact relationships are stored through:
+
+- `app/models/artifact_link.py`
+- `app/schemas/traceability.py`
+- `app/services/traceability_service.py`
+
+Active relation types:
+
+```text
+CONSTRUCTION_REQUIREMENT_DEFINITION -> REQUIREMENT_SPEC
+DERIVED_FROM
+
+REQUIREMENT_SPEC -> WBS
+DECOMPOSED_TO
+
+REQUIREMENT_SPEC -> SCREEN_DESIGN
+DESIGNED_BY
+```
+
+Agent outputs should include stable item IDs so the backend can create links:
+
+- Requirement: `requirement_id`
+- WBS: `task_id`
+- Screen Design: `screen_id`
+
+## Template Contract
+
+Agents do not load templates. The orchestrator resolves templates and passes
+the resolved template under `AgentRequest.context["template"]`.
+
+Use this as read-only generation guidance.
+
+## Where To Put Agent Code
+
+WBS:
+
+```text
+app/agents/core_agents/wbs_agent/agent.py
+```
+
+Replace:
 
 ```python
 async def generate(self, request: AgentRequest) -> AgentResponse:
     ...
 ```
 
-Use a more specific method name only when it improves clarity, for example:
+Screen Design:
+
+```text
+app/agents/core_agents/screen_design_agent/agent.py
+```
+
+Replace:
 
 ```python
-async def validate(self, result: dict) -> AgentResponse:
+async def generate(self, request: AgentRequest) -> AgentResponse:
     ...
 ```
 
-## Input Contract
+Do not change router code for agent implementation.
 
-Use `AgentRequest` as the common envelope:
+## Tests Required From Agent Developers
 
-```python
-AgentRequest(
-    project_id="PRJ-001",
-    documents=[{"chunk_id": "CHUNK-001", "text": "..."}],
-    context={
-        "source_document_ids": ["DOC-001"],
-        "document_ids": ["DOC-001"],
-        "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
-        "target_artifact_type": "REQUIREMENT_SPEC",
-        "template": {
-            "template_id": "TPL-REQ-SPEC-DEFAULT",
-            "template_version": "v1",
-        },
-        "query": "Create a requirement spec",
-        "user_scope": "...",
-    },
-)
+Add tests under `tests/agents/`.
+
+Required cases:
+
+- Success with valid `AgentRequest`.
+- Failure with missing/empty required context.
+- Output matches the minimal schema.
+- LLM wrapper failure returns `AgentResponse(success=False)`.
+
+Recommended command:
+
+```bash
+python -m pytest tests/agents -q
 ```
 
-Agent-specific fields should live under `context` until a dedicated schema is
-introduced.
+Before handoff, full backend test should pass:
 
-## Confirmed Generation Paths
-
-The current product direction is source-document driven generation.
-
-Supported initial paths:
-
-- `CONSTRUCTION_REQUIREMENT_DEFINITION` -> `REQUIREMENT_SPEC`
-- `REQUIREMENT_SPEC` -> `SCREEN_DESIGN`
-- `REQUIREMENT_SPEC` -> `WBS`
-
-Agents should treat source documents as prior project artifacts and generate
-the requested target artifact according to the selected template.
-
-## Template Contract
-
-Templates may come from either an admin UI or a built-in code-level registry.
-Agents should not load templates directly from storage. The orchestrator should
-resolve the template and pass the selected template metadata through context.
-
-Minimum context shape:
-
-```python
-{
-    "target_artifact_type": "REQUIREMENT_SPEC",
-    "template": {
-        "template_id": "TPL-REQ-SPEC-DEFAULT",
-        "template_version": "v1",
-    },
-}
+```bash
+python -m pytest -q
 ```
 
-## Output Contract
+## Current TODOs
 
-Use `AgentResponse` as the common envelope:
-
-```python
-AgentResponse(
-    success=True,
-    agent_name="RequirementAgent",
-    result={
-        "requirements": [
-            {
-                "requirement_id": "RQ-001",
-                "description": "The user can sign in.",
-                "source": "RFP 3.1",
-            }
-        ]
-    },
-)
-```
-
-On failure:
-
-```python
-AgentResponse(
-    success=False,
-    agent_name="RequirementAgent",
-    error="Missing project_id",
-)
-```
-
-## TODO Template For New Agents
-
-When adding a new agent, complete this checklist:
-
-- [ ] Define the agent responsibility in one sentence.
-- [ ] Define input data expected in `AgentRequest.context`.
-- [ ] Define output JSON shape under `AgentResponse.result`.
-- [ ] Document supported `source_document_type` -> `target_artifact_type` paths.
-- [ ] Document required template sections and placeholders.
-- [ ] Add rule validation requirements.
-- [ ] Add unit tests for success and failure cases.
-- [ ] Ensure the agent does not call DB, S3, or vector search directly.
-- [ ] Ensure LLM calls go through `app.core.llm`.
-- [ ] Wire the agent through an orchestrator, not a router.
-
-## Test Expectations
-
-Place tests by layer:
-
-- `tests/agents/` for individual agent behavior.
-- `tests/orchestrator/` for flow and dependency coordination.
-- `tests/api/` for routing and response behavior.
-- `tests/schemas/` for shared schema contracts.
+- TODO: Replace `WbsAgent` placeholder with real agent source.
+- TODO: Replace `ScreenDesignAgent` placeholder with real agent source.
+- TODO: Create artifact links automatically after WBS/Screen generation.
+- TODO: Add PDF/DOCX Input Agents.
+- TODO: Add embedding/vector-store indexing.
+- TODO: Add DOCX/PDF/XLSX Output Agents.
+- TODO: Connect real Bedrock invocation in `app.core.llm`.
