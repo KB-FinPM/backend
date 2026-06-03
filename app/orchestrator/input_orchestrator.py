@@ -23,8 +23,8 @@ class InputOrchestrator:
         self.document_parser = document_parser
 
     async def normalize(self, request: InputAgentRequest) -> InputAgentResponse:
-        # TODO: Route TEXT, MEETING_NOTES, and ARTIFACT_REQUEST inputs to dedicated
-        # input agents once those agents are implemented.
+        # TODO: Route TEXT inputs to a dedicated input agent once that agent is
+        # implemented.
         if request.input_type == InputType.FILE:
             return await self.document_parser.parse(request)
 
@@ -37,6 +37,19 @@ class InputOrchestrator:
                     "context": request.context,
                     "permission_scope": request.permission_scope,
                     "user_id": request.user_id,
+                },
+            )
+
+        if request.input_type == InputType.MEETING_NOTES:
+            return InputAgentResponse(
+                agent_name="InputOrchestrator",
+                normalized_request_type=NormalizedRequestType.SCHEDULE_TODO_EXTRACTION,
+                structured_context={
+                    "raw_payload": request.raw_payload,
+                    "context": request.context,
+                    "permission_scope": request.permission_scope,
+                    "user_id": request.user_id,
+                    "meeting_notes": request.raw_payload.get("meeting_notes"),
                 },
             )
 

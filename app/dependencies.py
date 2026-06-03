@@ -19,6 +19,7 @@ from app.rag.retrieval import RetrievalService
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 from app.services.traceability_service import TraceabilityService
 
@@ -61,6 +62,10 @@ def get_artifact_service(
 
 def get_generation_service() -> GenerationService:
     return GenerationService(generation_orchestrator)
+
+
+def get_schedule_service() -> ScheduleService:
+    return ScheduleService()
 
 
 def get_retrieval_service(

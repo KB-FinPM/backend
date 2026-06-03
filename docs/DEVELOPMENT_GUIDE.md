@@ -1,43 +1,25 @@
-<!-- EN: Developer setup, run, and test guide for the FINPM backend. -->
-<!-- KO: FINPM 백엔드 개발 환경 설정, 실행, 테스트 가이드입니다. -->
-
 # FINPM Backend Development Guide
 
 This guide explains how to set up, run, and test the FINPM backend locally.
 
-## 1. Requirements
+## Requirements
 
-- Python 3.11+
+- Python 3.11+ for the current local environment
+- Python 3.12+ for the target backend stack
 - PowerShell on Windows
-- AWS credentials when testing real S3, Bedrock, or Aurora integrations
+- AWS credentials or IAM role when testing real S3, Bedrock, or Aurora
 
-## 2. Create Virtual Environment
+## Environment Variables
 
-From `C:\workspace\FINPM\backend`:
-
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-If script activation is blocked by PowerShell policy, run commands through the
-venv Python directly:
-
-```powershell
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-## 3. Environment Variables
-
-Copy `.env.example` to `.env`.
+Copy `.env.example` to `.env` under `C:\workspace\FINPM\backend`.
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Local default:
+Set DB, S3, AWS, and Bedrock values in that `.env` file.
+
+Local DB default:
 
 ```env
 DATABASE_URL=sqlite+aiosqlite:///./finpm.db
@@ -49,7 +31,7 @@ Aurora PostgreSQL example:
 DATABASE_URL=postgresql+asyncpg://finpm_user:CHANGE_ME@your-aurora-endpoint.ap-northeast-2.rds.amazonaws.com:5432/finpm
 ```
 
-Configured S3 layout:
+S3 settings:
 
 ```env
 S3_BUCKET_NAME=kbds-s3-finpm
@@ -58,21 +40,50 @@ S3_TEMPLATE_PREFIX=storage/template_files
 S3_GENERATED_PREFIX=storage/generated_files
 ```
 
-## 4. Initialize Database
+AWS/Bedrock settings:
 
-For local SQLite or a provisioned Aurora PostgreSQL database:
-
-```powershell
-.\venv\Scripts\python.exe -m app.db.init_schema
+```env
+AWS_REGION=ap-northeast-2
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-5
 ```
 
-This creates the current SQLAlchemy tables. In a later production stage, use
-Alembic migrations instead of direct metadata creation.
+If the backend runs on AWS with an IAM role, keep access keys empty and let the
+runtime credential provider resolve credentials.
 
-## 5. Run API Server
+## Create Virtual Environment
+
+From `C:\workspace\FINPM\backend`:
 
 ```powershell
-.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+## Check And Create Tables
+
+Print the registered SQLAlchemy tables without connecting to the DB:
+
+```powershell
+python -m app.db.describe_schema
+```
+
+Create tables against the configured `DATABASE_URL`:
+
+```powershell
+python -m app.db.init_schema
+```
+
+Use this only for local or freshly provisioned MVP environments. Add Alembic
+before production-style shared schema changes.
+
+## Run API Server
+
+```powershell
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Health check:
@@ -81,39 +92,66 @@ Health check:
 Invoke-RestMethod http://localhost:8000/health
 ```
 
-Expected response:
-
-```json
-{
-  "success": true,
-  "message": "FINPM API is running"
-}
-```
-
-## 6. Run Tests
+## Run Tests
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest
+python -m pytest
 ```
 
 Current expected result:
 
 ```text
-18 passed
+All tests pass
 ```
 
-One Pydantic v2 deprecation warning may remain until `Settings.Config` is
-migrated to `SettingsConfigDict`.
+## Current API Flow
 
-## 7. Useful API Checks
+Upload:
 
-Upload a source document:
+```text
+Upload API
+-> InputOrchestrator(FILE)
+-> S3Service
+-> DocumentService
+-> DocumentIngestionOrchestrator
+-> DocumentRepository
+-> OutputOrchestrator(API_RESPONSE)
+```
+
+Artifact generation:
+
+```text
+Generation API
+-> InputOrchestrator(ARTIFACT_REQUEST)
+-> GenerationService
+-> GenerationOrchestrator
+-> RetrievalService
+-> ArtifactAgent
+-> ValidatorAgent
+-> ArtifactService
+-> OutputOrchestrator(API_RESPONSE)
+```
+
+Schedule todo extraction:
+
+```text
+Schedule API
+-> InputOrchestrator(MEETING_NOTES)
+-> ScheduleService
+-> ScheduleOrchestrator
+-> ScheduleManagementAgent
+-> ValidatorAgent
+-> OutputOrchestrator(API_RESPONSE)
+```
+
+## Useful API Checks
+
+Generate schedule todos:
 
 ```powershell
-curl.exe -X POST http://localhost:8000/upload `
-  -F "project_id=PRJ-001" `
-  -F "document_type=CONSTRUCTION_REQUIREMENT_DEFINITION" `
-  -F "file=@C:\path\to\source.pdf"
+curl.exe -X POST http://localhost:8000/schedule/todos `
+  -H "Content-Type: application/json" `
+  -d "{\"project_id\":\"PRJ-001\",\"meeting_notes\":\"Discussed login scope and due date.\"}"
 ```
 
 Generate a requirement artifact:
@@ -124,59 +162,27 @@ curl.exe -X POST http://localhost:8000/generate/requirement `
   -d "{\"project_id\":\"PRJ-001\",\"source_document_ids\":[\"DOC-001\"],\"source_document_type\":\"CONSTRUCTION_REQUIREMENT_DEFINITION\",\"target_artifact_type\":\"REQUIREMENT_SPEC\",\"template_id\":\"TPL-REQ-SPEC-DEFAULT\",\"query\":\"Create a requirement spec\"}"
 ```
 
-## 8. Architecture Notes
+## Agent Import Rule
 
-Do not call LLMs, DB, S3, or vector stores directly from routers.
+Do not change routers for Agent implementation. Replace the internals of the
+adapter class under `app/agents/.../agent.py`, then add/adjust tests under
+`tests/agents`.
 
-Use this flow:
+Primary adapter slots:
 
-```text
-API Router
--> Service or Orchestrator
--> Repository / Storage / Retrieval boundary
--> External system
-```
+- `app/agents/core_agents/artifact_agent/agent.py`
+- `app/agents/core_agents/wbs_agent/agent.py`
+- `app/agents/core_agents/screen_design_agent/agent.py`
+- `app/agents/core_agents/schedule_management_agent/agent.py`
+- `app/agents/input_agents/document_parser_agent/agent.py`
+- `app/agents/output_agents/markdown_agent/agent.py`
 
-Current upload flow:
+## Commit Policy
 
-```text
-Upload API
--> S3Service.upload()
--> DocumentRepository.create_document()
--> DocumentUploadResponse
-```
+Keep commits small:
 
-Current generation flow:
-
-```text
-Generation API
--> GenerationOrchestrator
--> RetrievalService
--> RequirementAgent
--> ValidatorAgent
--> GenerationResponse
-```
-
-## 9. AWS Setup Checklist
-
-- Create Aurora PostgreSQL database.
-- Create DB user for the backend.
-- Allow network access from the backend runtime to Aurora.
-- Put Aurora connection string into `DATABASE_URL`.
-- Confirm S3 bucket exists: `kbds-s3-finpm`.
-- Confirm S3 prefixes:
-  - `storage/upload_files`
-  - `storage/template_files`
-  - `storage/generated_files`
-- Configure AWS credentials or runtime IAM role.
-- Confirm Bedrock model access in the target region.
-
-## 10. Commit Policy
-
-Keep commits small by step:
-
-- feature or schema change
+- source change
 - tests for that change
-- documentation-only updates separately when possible
+- docs/config changes when they clarify operation
 
 Do not push from local automation unless explicitly requested.

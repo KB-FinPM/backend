@@ -72,3 +72,27 @@ async def test_input_orchestrator_normalizes_artifact_request() -> None:
         "source_document_ids": ["DOC-001"]
     }
     assert response.structured_context["permission_scope"] == ["project:PRJ-001:write"]
+
+
+@pytest.mark.anyio
+async def test_input_orchestrator_normalizes_meeting_notes() -> None:
+    orchestrator = InputOrchestrator()
+
+    response = await orchestrator.normalize(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            permission_scope=["project:read"],
+            input_type=InputType.MEETING_NOTES,
+            raw_payload={"meeting_notes": "Discussed login scope."},
+            context={"source_document_ids": ["DOC-001"]},
+        )
+    )
+
+    assert response.success is True
+    assert response.normalized_request_type == (
+        NormalizedRequestType.SCHEDULE_TODO_EXTRACTION
+    )
+    assert response.structured_context["meeting_notes"] == "Discussed login scope."
+    assert response.structured_context["context"] == {
+        "source_document_ids": ["DOC-001"]
+    }

@@ -389,6 +389,16 @@ Keep the first implementation lightweight: meeting notes or text context in,
 todo-like schedule items out. Do not add detailed requirement elaboration here
 until the schedule-management spec is clarified.
 
+The backend route is already wired:
+
+```text
+POST /schedule/todos
+```
+
+This route passes through `InputOrchestrator(MEETING_NOTES)`,
+`ScheduleService`, `ScheduleOrchestrator`, `ScheduleManagementAgent`, validation,
+and `OutputOrchestrator(API_RESPONSE)`.
+
 ## Tests Required From Agent Developers
 
 Add tests under `tests/agents/`.
@@ -420,7 +430,8 @@ python -m pytest -q
   `ArtifactAgent` as one integrated agent or remains delegated by artifact type.
 - TODO: Replace `ScheduleManagementAgent` placeholder after meeting/todo scope
   is finalized.
-- TODO: Create artifact links automatically after WBS/Screen generation.
+- TODO: Connect automatic artifact-link persistence to GenerationOrchestrator
+  once source requirement artifact IDs are carried by requests or agent metadata.
 - TODO: Add PDF/DOCX Input Agents.
 - TODO: Add embedding/vector-store indexing.
 - TODO: Add DOCX/PDF/XLSX Output Agents.
