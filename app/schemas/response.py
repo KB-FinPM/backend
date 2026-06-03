@@ -24,5 +24,18 @@ class GenerationResponse(BaseResponse):
     result: Any = Field(None, description="Generated artifact result JSON")
 
 
+class ScheduleTodoResponse(BaseResponse):
+    project_id: str
+    result: Any = Field(None, description="Extracted schedule todo result JSON")
+    display: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Output-agent formatted API/UI display payload",
+    )
+
+
 class DocumentUploadResponse(BaseResponse):
     document: DocumentMetadata
+    display: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Output-agent formatted API/UI display payload",
+    )

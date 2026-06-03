@@ -73,3 +73,21 @@ class GenerationRequest(BaseModel):
                 template_version=self.template_version,
             ),
         )
+
+
+class ScheduleTodoRequest(BaseModel):
+    project_id: str = Field(..., description="Project ID")
+    meeting_notes: str = Field(
+        ...,
+        min_length=1,
+        description="Meeting notes or user-provided schedule context",
+    )
+    source_document_ids: list[str] = Field(
+        default_factory=list,
+        description="Optional meeting note/source document IDs",
+    )
+    user_id: Optional[str] = Field(None, description="Requesting user ID")
+    permission_scope: list[str] = Field(
+        default_factory=lambda: ["project:read"],
+        description="Permission scope used for schedule context retrieval",
+    )

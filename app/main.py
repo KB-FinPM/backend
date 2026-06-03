@@ -9,6 +9,7 @@ from app.api import (
     documents,
     generation,
     health,
+    schedule,
     templates,
     traceability,
     upload,
@@ -32,6 +33,7 @@ app.add_middleware(
 app.include_router(health.router, tags=["health"])
 app.include_router(upload.router, prefix="/upload", tags=["upload"])
 app.include_router(generation.router, prefix="/generate", tags=["generation"])
+app.include_router(schedule.router, prefix="/schedule", tags=["schedule"])
 app.include_router(documents.router, tags=["documents"])
 app.include_router(artifacts.router, tags=["artifacts"])
 app.include_router(templates.router, tags=["templates"])

@@ -83,3 +83,36 @@ async def test_document_ingestion_orchestrator_keeps_unsupported_file_uploaded(
 
     assert document.status == DocumentStatus.UPLOADED
     assert chunks == []
+
+
+@pytest.mark.anyio
+async def test_document_ingestion_orchestrator_uses_preparsed_context(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository = DocumentRepository(session)
+        orchestrator = DocumentIngestionOrchestrator()
+
+        document = await orchestrator.ingest_uploaded_document(
+            document_repository=repository,
+            document_id="DOC-001",
+            project_id="PRJ-001",
+            document_type=DocumentType.REQUIREMENT_SPEC,
+            file_name="requirements.pdf",
+            storage_path="s3://bucket/requirements.pdf",
+            file_bytes=b"%PDF",
+            parsed_context={
+                "text": "The system shall support login.",
+                "metadata": {"content_type": "application/pdf"},
+                "parser_name": "InputOrchestrator",
+            },
+        )
+        chunks = await repository.list_chunks_by_document(
+            project_id="PRJ-001",
+            document_id="DOC-001",
+        )
+
+    assert document.status == DocumentStatus.INDEXED
+    assert len(chunks) == 1
+    assert chunks[0].chunk_metadata["parser_name"] == "InputOrchestrator"
+    assert chunks[0].chunk_metadata["content_type"] == "application/pdf"

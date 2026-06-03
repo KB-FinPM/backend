@@ -5,6 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 
 from app.db.session import get_session
+from app.orchestrator.input_orchestrator import InputOrchestrator, input_orchestrator
+from app.orchestrator.output_orchestrator import (
+    OutputOrchestrator,
+    output_orchestrator,
+)
 from app.repositories.artifact_repository import ArtifactRepository
 from app.repositories.artifact_link_repository import ArtifactLinkRepository
 from app.repositories.document_repository import DocumentRepository
@@ -14,6 +19,7 @@ from app.rag.retrieval import RetrievalService
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 from app.services.traceability_service import TraceabilityService
 
@@ -58,6 +64,10 @@ def get_generation_service() -> GenerationService:
     return GenerationService(generation_orchestrator)
 
 
+def get_schedule_service() -> ScheduleService:
+    return ScheduleService()
+
+
 def get_retrieval_service(
     document_repository: DocumentRepository = Depends(get_document_repository),
 ) -> RetrievalService:
@@ -76,3 +86,11 @@ def get_traceability_service(
     ),
 ) -> TraceabilityService:
     return TraceabilityService(artifact_link_repository)
+
+
+def get_input_orchestrator() -> InputOrchestrator:
+    return input_orchestrator
+
+
+def get_output_orchestrator() -> OutputOrchestrator:
+    return output_orchestrator
