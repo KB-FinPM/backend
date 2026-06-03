@@ -4,6 +4,7 @@
 from typing import Any
 from uuid import uuid4
 
+from app.agents.core_agents.artifact_agent.agent import ArtifactAgent
 from app.agents.core_agents.requirement_agent.agent import requirement_agent
 from app.agents.core_agents.screen_design_agent.agent import screen_design_agent
 from app.agents.core_agents.validator_agent.agent import validator_agent
@@ -24,15 +25,18 @@ class GenerationOrchestrator:
     def __init__(
         self,
         retrieval: Any = retrieval_service,
+        artifact_generator: Any = None,
         requirement_generator: Any = requirement_agent,
         wbs_generator: Any = wbs_agent,
         screen_design_generator: Any = screen_design_agent,
         validator: Any = validator_agent,
     ) -> None:
         self.retrieval = retrieval
-        self.requirement_generator = requirement_generator
-        self.wbs_generator = wbs_generator
-        self.screen_design_generator = screen_design_generator
+        self.artifact_generator = artifact_generator or ArtifactAgent(
+            requirement_generator=requirement_generator,
+            wbs_generator=wbs_generator,
+            screen_design_generator=screen_design_generator,
+        )
         self.validator = validator
 
     async def generate_requirement(
@@ -57,28 +61,14 @@ class GenerationOrchestrator:
         template_service: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
-        if generation_flow.target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
+        if generation_flow.target_artifact_type in {
+            ArtifactType.REQUIREMENT_SPEC,
+            ArtifactType.WBS,
+            ArtifactType.SCREEN_DESIGN,
+        }:
             return await self._generate_agent_artifact(
                 request,
-                generator=self.requirement_generator,
-                artifact_service=artifact_service,
-                retrieval_service=retrieval_service,
-                template_service=template_service,
-            )
-
-        if generation_flow.target_artifact_type == ArtifactType.WBS:
-            return await self._generate_agent_artifact(
-                request,
-                generator=self.wbs_generator,
-                artifact_service=artifact_service,
-                retrieval_service=retrieval_service,
-                template_service=template_service,
-            )
-
-        if generation_flow.target_artifact_type == ArtifactType.SCREEN_DESIGN:
-            return await self._generate_agent_artifact(
-                request,
-                generator=self.screen_design_generator,
+                generator=self.artifact_generator,
                 artifact_service=artifact_service,
                 retrieval_service=retrieval_service,
                 template_service=template_service,

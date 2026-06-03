@@ -9,17 +9,20 @@ without changing FastAPI routers, repositories, or storage code.
 
 ## Current Product Flow
 
-The active FINPM artifact flow is:
+The active FINPM MVP scope is:
 
 ```text
-CONSTRUCTION_REQUIREMENT_DEFINITION
--> REQUIREMENT_SPEC
--> WBS
--> SCREEN_DESIGN
+Artifact generation:
+CONSTRUCTION_REQUIREMENT_DEFINITION -> REQUIREMENT_SPEC
+REQUIREMENT_SPEC -> WBS
+REQUIREMENT_SPEC -> SCREEN_DESIGN
+
+Schedule management:
+MEETING_NOTES -> lightweight todo list
 ```
 
-`ACTION_ITEMS` remains in code as a future extension candidate, but it is not
-part of the active artifact implementation scope.
+Detailed meeting/action-item requirements are not finalized yet. Keep schedule
+management minimal until the product spec is clarified.
 
 ## Architecture Boundary
 
@@ -91,6 +94,12 @@ async def generate(request: AgentRequest) -> AgentResponse:
 
 Current adapter slots:
 
+- `ArtifactAgent`
+  - `app/agents/core_agents/artifact_agent/agent.py`
+  - Unified artifact-generation boundary used by the backend.
+  - It currently delegates to Requirement/WBS/Screen adapters internally.
+  - If the delivered source is one integrated document-generation agent, replace
+    this class first.
 - `RequirementAgent`
   - `app/agents/core_agents/requirement_agent/agent.py`
   - Active implementation exists.
@@ -100,6 +109,13 @@ Current adapter slots:
 - `ScreenDesignAgent`
   - `app/agents/core_agents/screen_design_agent/agent.py`
   - Placeholder adapter. Replace only the inside of `generate`.
+- `ScheduleManagementAgent`
+  - `app/agents/core_agents/schedule_management_agent/agent.py`
+  - Placeholder adapter for meeting-notes-based todo extraction.
+
+The backend intentionally calls the unified `ArtifactAgent` boundary from the
+generation orchestrator. Specialized agents may remain internal delegates, or
+they may be folded into one integrated artifact-generation source later.
 
 ### Output Agent
 
@@ -296,6 +312,15 @@ Use this as read-only generation guidance.
 
 ## Where To Put Agent Code
 
+Integrated artifact-generation source:
+
+```text
+app/agents/core_agents/artifact_agent/agent.py
+```
+
+Use this path if the delivered source owns all artifact generation in one
+agent.
+
 WBS:
 
 ```text
@@ -324,6 +349,16 @@ async def generate(self, request: AgentRequest) -> AgentResponse:
 
 Do not change router code for agent implementation.
 
+Schedule management:
+
+```text
+app/agents/core_agents/schedule_management_agent/agent.py
+```
+
+Keep the first implementation lightweight: meeting notes or text context in,
+todo-like schedule items out. Do not add detailed requirement elaboration here
+until the schedule-management spec is clarified.
+
 ## Tests Required From Agent Developers
 
 Add tests under `tests/agents/`.
@@ -351,6 +386,10 @@ python -m pytest -q
 
 - TODO: Replace `WbsAgent` placeholder with real agent source.
 - TODO: Replace `ScreenDesignAgent` placeholder with real agent source.
+- TODO: Decide whether delivered artifact-generation code replaces
+  `ArtifactAgent` as one integrated agent or remains delegated by artifact type.
+- TODO: Replace `ScheduleManagementAgent` placeholder after meeting/todo scope
+  is finalized.
 - TODO: Create artifact links automatically after WBS/Screen generation.
 - TODO: Add PDF/DOCX Input Agents.
 - TODO: Add embedding/vector-store indexing.
