@@ -6,8 +6,15 @@ from fastapi.testclient import TestClient
 from app.dependencies import (
     get_artifact_service,
     get_generation_service,
+    get_input_orchestrator,
+    get_output_orchestrator,
     get_retrieval_service,
     get_template_service,
+)
+from app.schemas.io_agent import (
+    InputAgentResponse,
+    NormalizedRequestType,
+    OutputAgentResponse,
 )
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
@@ -31,16 +38,49 @@ class StubGenerationOrchestrator:
         )
 
 
+class StubInputOrchestrator:
+    def __init__(self) -> None:
+        self.received_input_type: str | None = None
+
+    async def normalize(self, request):
+        self.received_input_type = request.input_type
+        return InputAgentResponse(
+            agent_name="StubInputOrchestrator",
+            normalized_request_type=NormalizedRequestType.ARTIFACT_GENERATION,
+            structured_context={"normalized": True},
+        )
+
+
+class StubOutputOrchestrator:
+    def __init__(self) -> None:
+        self.received_response_type: str | None = None
+
+    async def format(self, request):
+        self.received_response_type = request.response_type
+        return OutputAgentResponse(
+            agent_name="StubOutputOrchestrator",
+            display_payload={"formatted": True},
+        )
+
+
 def test_generate_requirement_delegates_to_orchestrator(
     client: TestClient,
 ) -> None:
     stub_generation_service = StubGenerationOrchestrator()
+    stub_input_orchestrator = StubInputOrchestrator()
+    stub_output_orchestrator = StubOutputOrchestrator()
     client.app.dependency_overrides[get_generation_service] = (
         lambda: stub_generation_service
     )
     client.app.dependency_overrides[get_artifact_service] = lambda: object()
     client.app.dependency_overrides[get_retrieval_service] = lambda: object()
     client.app.dependency_overrides[get_template_service] = lambda: object()
+    client.app.dependency_overrides[get_input_orchestrator] = (
+        lambda: stub_input_orchestrator
+    )
+    client.app.dependency_overrides[get_output_orchestrator] = (
+        lambda: stub_output_orchestrator
+    )
 
     try:
         response = client.post(
@@ -59,7 +99,10 @@ def test_generate_requirement_delegates_to_orchestrator(
 
     assert response.status_code == 200
     assert response.json()["project_id"] == "PRJ-001"
-    assert response.json()["result"] == {"source": "stub-orchestrator"}
+    assert response.json()["result"]["source"] == "stub-orchestrator"
+    assert response.json()["result"]["display"] == {"formatted": True}
+    assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
+    assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
     assert stub_generation_service.received_request is not None
     assert stub_generation_service.received_request.source_document_ids == ["DOC-001"]
     assert stub_generation_service.received_request.document_ids == ["DOC-001"]
@@ -70,12 +113,20 @@ def test_generate_requirement_delegates_to_orchestrator(
 
 def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
     stub_generation_service = StubGenerationOrchestrator()
+    stub_input_orchestrator = StubInputOrchestrator()
+    stub_output_orchestrator = StubOutputOrchestrator()
     client.app.dependency_overrides[get_generation_service] = (
         lambda: stub_generation_service
     )
     client.app.dependency_overrides[get_artifact_service] = lambda: object()
     client.app.dependency_overrides[get_retrieval_service] = lambda: object()
     client.app.dependency_overrides[get_template_service] = lambda: object()
+    client.app.dependency_overrides[get_input_orchestrator] = (
+        lambda: stub_input_orchestrator
+    )
+    client.app.dependency_overrides[get_output_orchestrator] = (
+        lambda: stub_output_orchestrator
+    )
 
     try:
         response = client.post(
@@ -91,16 +142,26 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
     assert response.status_code == 200
     assert stub_generation_service.received_request is not None
     assert stub_generation_service.received_request.target_artifact_type == "WBS"
+    assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
+    assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
 
 
 def test_generate_screen_design_sets_target_artifact_type(client: TestClient) -> None:
     stub_generation_service = StubGenerationOrchestrator()
+    stub_input_orchestrator = StubInputOrchestrator()
+    stub_output_orchestrator = StubOutputOrchestrator()
     client.app.dependency_overrides[get_generation_service] = (
         lambda: stub_generation_service
     )
     client.app.dependency_overrides[get_artifact_service] = lambda: object()
     client.app.dependency_overrides[get_retrieval_service] = lambda: object()
     client.app.dependency_overrides[get_template_service] = lambda: object()
+    client.app.dependency_overrides[get_input_orchestrator] = (
+        lambda: stub_input_orchestrator
+    )
+    client.app.dependency_overrides[get_output_orchestrator] = (
+        lambda: stub_output_orchestrator
+    )
 
     try:
         response = client.post(
@@ -118,3 +179,5 @@ def test_generate_screen_design_sets_target_artifact_type(client: TestClient) ->
     assert stub_generation_service.received_request.target_artifact_type == (
         "SCREEN_DESIGN"
     )
+    assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
+    assert stub_output_orchestrator.received_response_type == "API_RESPONSE"

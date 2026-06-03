@@ -50,6 +50,7 @@ class DocumentService:
         file_name: str,
         storage_path: str,
         file_bytes: bytes,
+        parsed_context: dict | None = None,
     ) -> DocumentMetadata:
         return await self.ingestion_orchestrator.ingest_uploaded_document(
             document_repository=self.document_repository,
@@ -59,6 +60,7 @@ class DocumentService:
             file_name=file_name,
             storage_path=storage_path,
             file_bytes=file_bytes,
+            parsed_context=parsed_context,
         )
 
     async def get_document(

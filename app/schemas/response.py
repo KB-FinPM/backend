@@ -26,3 +26,7 @@ class GenerationResponse(BaseResponse):
 
 class DocumentUploadResponse(BaseResponse):
     document: DocumentMetadata
+    display: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Output-agent formatted API/UI display payload",
+    )

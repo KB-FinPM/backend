@@ -28,6 +28,18 @@ class InputOrchestrator:
         if request.input_type == InputType.FILE:
             return await self.document_parser.parse(request)
 
+        if request.input_type == InputType.ARTIFACT_REQUEST:
+            return InputAgentResponse(
+                agent_name="InputOrchestrator",
+                normalized_request_type=NormalizedRequestType.ARTIFACT_GENERATION,
+                structured_context={
+                    "raw_payload": request.raw_payload,
+                    "context": request.context,
+                    "permission_scope": request.permission_scope,
+                    "user_id": request.user_id,
+                },
+            )
+
         return InputAgentResponse(
             success=False,
             agent_name="InputOrchestrator",

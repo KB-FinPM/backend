@@ -32,6 +32,7 @@ class DocumentIngestionOrchestrator:
         file_name: str,
         storage_path: str,
         file_bytes: bytes,
+        parsed_context: dict | None = None,
     ) -> DocumentMetadata:
         # TODO: Add PDF/DOCX parser agents and embedding/vector-store indexing after
         # text ingestion is stable.
@@ -43,31 +44,38 @@ class DocumentIngestionOrchestrator:
             storage_path=storage_path,
         )
 
-        parsed_response = await self.parser.parse(
-            InputAgentRequest(
-                project_id=project_id,
-                input_type=InputType.FILE,
-                files=[
-                    InputFilePayload(
-                        file_name=file_name,
-                        file_bytes=file_bytes,
-                    )
-                ],
-                context={
-                    "document_id": document_id,
-                    "document_type": document_type.value,
-                    "storage_path": storage_path,
-                },
+        parsed_response = None
+        if parsed_context is None:
+            parsed_response = await self.parser.parse(
+                InputAgentRequest(
+                    project_id=project_id,
+                    input_type=InputType.FILE,
+                    files=[
+                        InputFilePayload(
+                            file_name=file_name,
+                            file_bytes=file_bytes,
+                        )
+                    ],
+                    context={
+                        "document_id": document_id,
+                        "document_type": document_type.value,
+                        "storage_path": storage_path,
+                    },
+                )
             )
-        )
-        if not parsed_response.success:
-            return document
+            if not parsed_response.success:
+                return document
+            parsed_context = parsed_response.structured_context
 
-        parsed_text = str(parsed_response.structured_context.get("text", ""))
-        parsed_metadata = parsed_response.structured_context.get("metadata", {})
+        parsed_text = str(parsed_context.get("text", ""))
+        parsed_metadata = parsed_context.get("metadata", {})
         chunks = split_text_into_chunks(parsed_text)
         if not chunks:
             return document
+
+        parser_name = parsed_context.get("parser_name")
+        if parsed_response is not None:
+            parser_name = parsed_response.agent_name
 
         for chunk in chunks:
             await document_repository.create_chunk(
@@ -80,7 +88,7 @@ class DocumentIngestionOrchestrator:
                 chunk_metadata={
                     **chunk.metadata,
                     **parsed_metadata,
-                    "parser_name": parsed_response.agent_name,
+                    "parser_name": parser_name or "InputOrchestrator",
                     "source_file_name": file_name,
                 },
             )

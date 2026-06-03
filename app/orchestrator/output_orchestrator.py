@@ -22,8 +22,18 @@ class OutputOrchestrator:
         self.markdown_agent = markdown_agent
 
     async def format(self, request: OutputAgentRequest) -> OutputAgentResponse:
-        # TODO: Add API_RESPONSE formatting and DOCX/PDF/XLSX export agents, then
-        # persist generated files through the storage service.
+        if request.response_type == OutputResponseType.API_RESPONSE:
+            return OutputAgentResponse(
+                success=not request.errors,
+                agent_name="OutputOrchestrator",
+                message=request.message,
+                display_payload=request.result_json,
+                artifact_refs=[request.artifact] if request.artifact else [],
+                error="; ".join(request.errors) if request.errors else None,
+            )
+
+        # TODO: Add DOCX/PDF/XLSX export agents, then persist generated files
+        # through the storage service.
         if (
             request.response_type == OutputResponseType.ARTIFACT_EXPORT
             and request.output_format == "markdown"
