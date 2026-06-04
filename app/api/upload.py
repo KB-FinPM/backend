@@ -26,7 +26,6 @@ from app.schemas.io_agent import (
 )
 from app.schemas.response import DocumentUploadResponse, ErrorResponse
 from app.services.document_service import DocumentService
-from app.storage.s3 import s3_service
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -55,9 +54,6 @@ async def upload_document(
     """Upload a source document and return project-scoped document metadata."""
     safe_file_name = PurePath(file.filename or "uploaded-file").name
     document_id = f"DOC-{uuid4().hex[:12].upper()}"
-    storage_key = (
-        f"{settings.S3_UPLOAD_PREFIX}/{project_id}/raw/{document_id}/{safe_file_name}"
-    )
 
     logger.info(
         "upload | "
@@ -76,7 +72,13 @@ async def upload_document(
             detail={"file_name": safe_file_name},
         )
 
-    storage_path = await s3_service.upload(file_bytes=file_bytes, key=storage_key)
+    storage_path = await document_service.upload_to_storage(
+        file_bytes=file_bytes,
+        project_id=project_id,
+        document_id=document_id,
+        file_name=safe_file_name,
+        upload_prefix=settings.S3_UPLOAD_PREFIX,
+    )
     input_response = await input_orchestrator.normalize(
         InputAgentRequest(
             project_id=project_id,
