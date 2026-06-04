@@ -4,9 +4,10 @@
 from pathlib import PurePath
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from app.core.config import settings
+from app.core.exceptions import ApiError
 from app.core.logger import get_logger
 from app.dependencies import (
     get_document_service,
@@ -23,15 +24,26 @@ from app.schemas.io_agent import (
     OutputAgentRequest,
     OutputResponseType,
 )
-from app.schemas.response import DocumentUploadResponse
+from app.schemas.response import DocumentUploadResponse, ErrorResponse
 from app.services.document_service import DocumentService
 from app.storage.s3 import s3_service
 
 logger = get_logger(__name__)
 router = APIRouter()
 
+UPLOAD_ERROR_RESPONSES = {
+    status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},
+    status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
+    status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": ErrorResponse},
+    status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorResponse},
+}
 
-@router.post("", response_model=DocumentUploadResponse)
+
+@router.post(
+    "",
+    response_model=DocumentUploadResponse,
+    responses=UPLOAD_ERROR_RESPONSES,
+)
 async def upload_document(
     project_id: str = Form(...),
     document_type: DocumentType = Form(DocumentType.UNKNOWN),
@@ -56,6 +68,14 @@ async def upload_document(
     )
 
     file_bytes = await file.read()
+    if not file_bytes:
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="EMPTY_UPLOAD_FILE",
+            message="uploaded file is empty",
+            detail={"file_name": safe_file_name},
+        )
+
     storage_path = await s3_service.upload(file_bytes=file_bytes, key=storage_key)
     input_response = await input_orchestrator.normalize(
         InputAgentRequest(
@@ -75,6 +95,14 @@ async def upload_document(
             },
         )
     )
+    if not input_response.success:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="DOCUMENT_INPUT_NORMALIZATION_FAILED",
+            message=input_response.error or "document input normalization failed",
+            detail={"errors": input_response.validation_errors},
+        )
+
     document = await document_service.ingest_uploaded_document(
         document_id=document_id,
         project_id=project_id,
@@ -83,7 +111,7 @@ async def upload_document(
         storage_path=storage_path,
         file_bytes=file_bytes,
         parsed_context=(
-            input_response.structured_context if input_response.success else None
+            input_response.structured_context
         ),
     )
     output_response = await output_orchestrator.format(
@@ -92,7 +120,7 @@ async def upload_document(
             response_type=OutputResponseType.API_RESPONSE,
             result_json={"document": document.model_dump(mode="json")},
             message="document uploaded",
-            errors=[] if input_response.success else input_response.validation_errors,
+            errors=[],
         )
     )
 

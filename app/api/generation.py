@@ -108,11 +108,11 @@ async def generate_requirement(
     )
     input_response = await _normalize_generation_input(request, input_orchestrator)
     if not input_response.success:
-        return GenerationResponse(
-            success=False,
-            message=input_response.error or "input normalization failed",
-            project_id=request.project_id,
-            result={"errors": input_response.validation_errors},
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="GENERATION_INPUT_NORMALIZATION_FAILED",
+            message=input_response.error or "generation input normalization failed",
+            detail={"errors": input_response.validation_errors},
         )
     response = await generation_service.generate_artifact(
         request,
@@ -152,11 +152,11 @@ async def generate_wbs(
     )
     input_response = await _normalize_generation_input(request, input_orchestrator)
     if not input_response.success:
-        return GenerationResponse(
-            success=False,
-            message=input_response.error or "input normalization failed",
-            project_id=request.project_id,
-            result={"errors": input_response.validation_errors},
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="GENERATION_INPUT_NORMALIZATION_FAILED",
+            message=input_response.error or "generation input normalization failed",
+            detail={"errors": input_response.validation_errors},
         )
     response = await generation_service.generate_artifact(
         request,
@@ -199,11 +199,11 @@ async def generate_screen_design(
     )
     input_response = await _normalize_generation_input(request, input_orchestrator)
     if not input_response.success:
-        return GenerationResponse(
-            success=False,
-            message=input_response.error or "input normalization failed",
-            project_id=request.project_id,
-            result={"errors": input_response.validation_errors},
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="GENERATION_INPUT_NORMALIZATION_FAILED",
+            message=input_response.error or "generation input normalization failed",
+            detail={"errors": input_response.validation_errors},
         )
     response = await generation_service.generate_artifact(
         request,
@@ -310,6 +310,14 @@ async def _format_generation_response(
     response: GenerationResponse,
     output_orchestrator: OutputOrchestrator,
 ) -> GenerationResponse:
+    if not response.success:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="GENERATION_FAILED",
+            message=response.message,
+            detail=response.result,
+        )
+
     output_response = await output_orchestrator.format(
         OutputAgentRequest(
             project_id=response.project_id,

@@ -65,4 +65,10 @@ def test_get_template_returns_404_when_missing(client: TestClient) -> None:
         client.app.dependency_overrides.clear()
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "template not found"
+    body = response.json()
+    assert body["success"] is False
+    assert body["error_code"] == "TEMPLATE_NOT_FOUND"
+    assert body["detail"] == {
+        "template_id": "missing",
+        "template_version": None,
+    }

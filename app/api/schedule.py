@@ -1,7 +1,8 @@
 # EN: Schedule-management API routes.
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 
+from app.core.exceptions import ApiError
 from app.core.logger import get_logger
 from app.dependencies import (
     get_input_orchestrator,
@@ -17,14 +18,24 @@ from app.schemas.io_agent import (
     OutputResponseType,
 )
 from app.schemas.request import ScheduleTodoRequest
-from app.schemas.response import ScheduleTodoResponse
+from app.schemas.response import ErrorResponse, ScheduleTodoResponse
 from app.services.schedule_service import ScheduleService
 
 logger = get_logger(__name__)
 router = APIRouter()
 
+SCHEDULE_ERROR_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
+    status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": ErrorResponse},
+    status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorResponse},
+}
 
-@router.post("/todos", response_model=ScheduleTodoResponse)
+
+@router.post(
+    "/todos",
+    response_model=ScheduleTodoResponse,
+    responses=SCHEDULE_ERROR_RESPONSES,
+)
 async def extract_schedule_todos(
     request: ScheduleTodoRequest,
     schedule_service: ScheduleService = Depends(get_schedule_service),
@@ -47,11 +58,11 @@ async def extract_schedule_todos(
         )
     )
     if not input_response.success:
-        return ScheduleTodoResponse(
-            success=False,
-            message=input_response.error or "input normalization failed",
-            project_id=request.project_id,
-            result={"errors": input_response.validation_errors},
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="SCHEDULE_INPUT_NORMALIZATION_FAILED",
+            message=input_response.error or "schedule input normalization failed",
+            detail={"errors": input_response.validation_errors},
         )
 
     response = await schedule_service.extract_todos(

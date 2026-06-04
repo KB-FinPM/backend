@@ -1,10 +1,12 @@
 # EN: FastAPI application entry point and router registration.
 # KO: FastAPI 앱 진입점이며 주요 라우터를 등록합니다.
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from app.api import (
     artifacts,
@@ -51,6 +53,40 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     )
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(
+    request: Request,
+    exc: HTTPException,
+) -> JSONResponse:
+    detail = exc.detail
+    message = detail if isinstance(detail, str) else "request failed"
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            success=False,
+            message=message,
+            error_code=f"HTTP_{exc.status_code}",
+            detail=jsonable_encoder(detail),
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content=ErrorResponse(
+            success=False,
+            message="request validation failed",
+            error_code="VALIDATION_ERROR",
+            detail=jsonable_encoder(exc.errors()),
+        ).model_dump(mode="json"),
+    )
+
+
 @app.exception_handler(SQLAlchemyError)
 async def sqlalchemy_error_handler(
     request: Request,
@@ -66,6 +102,26 @@ async def sqlalchemy_error_handler(
                 message="database schema is not initialized",
                 error_code="DB_SCHEMA_NOT_READY",
                 detail="Run `python -m app.db.init_schema` for the configured DATABASE_URL.",
+            ).model_dump(mode="json"),
+        )
+
+    if isinstance(exc, IntegrityError):
+        error_code = "DB_INTEGRITY_ERROR"
+        message = "database integrity constraint failed"
+        if "unique" in error_text or "duplicate" in error_text:
+            error_code = "DUPLICATE_RESOURCE"
+            message = "resource already exists"
+        if "foreign key" in error_text:
+            error_code = "RELATED_RESOURCE_NOT_FOUND"
+            message = "related resource not found"
+
+        return JSONResponse(
+            status_code=409,
+            content=ErrorResponse(
+                success=False,
+                message=message,
+                error_code=error_code,
+                detail=None,
             ).model_dump(mode="json"),
         )
 

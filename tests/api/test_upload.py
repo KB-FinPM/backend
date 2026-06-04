@@ -80,6 +80,17 @@ class StubInputOrchestrator:
         )
 
 
+class FailingInputOrchestrator:
+    async def normalize(self, request):
+        return InputAgentResponse(
+            success=False,
+            agent_name="FailingInputOrchestrator",
+            normalized_request_type=NormalizedRequestType.UNKNOWN,
+            error="input failed",
+            validation_errors=["unsupported file"],
+        )
+
+
 class StubOutputOrchestrator:
     def __init__(self) -> None:
         self.received_response_type: str | None = None
@@ -155,3 +166,50 @@ def test_upload_document_returns_document_metadata(
     }
     assert stub_input_orchestrator.received_file_name == "construction-requirements.pdf"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
+
+
+def test_upload_document_rejects_empty_file(
+    client: TestClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.api.upload.s3_service", StubS3Service())
+
+    response = client.post(
+        "/upload",
+        data={
+            "project_id": "PRJ-001",
+            "document_type": "REQUIREMENT_SPEC",
+        },
+        files={"file": ("empty.txt", b"", "text/plain")},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["success"] is False
+    assert body["error_code"] == "EMPTY_UPLOAD_FILE"
+
+
+def test_upload_document_returns_422_when_input_normalization_fails(
+    client: TestClient,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.api.upload.s3_service", StubS3Service())
+    client.app.dependency_overrides[get_input_orchestrator] = (
+        lambda: FailingInputOrchestrator()
+    )
+    try:
+        response = client.post(
+            "/upload",
+            data={
+                "project_id": "PRJ-001",
+                "document_type": "REQUIREMENT_SPEC",
+            },
+            files={"file": ("requirements.txt", b"requirements", "text/plain")},
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["success"] is False
+    assert body["error_code"] == "DOCUMENT_INPUT_NORMALIZATION_FAILED"
