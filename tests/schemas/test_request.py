@@ -74,3 +74,4 @@ def test_schedule_todo_request_accepts_meeting_notes() -> None:
     assert request.project_id == "PRJ-001"
     assert request.source_document_ids == ["DOC-001"]
     assert request.permission_scope == ["project:read"]
+    assert "Discussed login scope" in request.meeting_notes

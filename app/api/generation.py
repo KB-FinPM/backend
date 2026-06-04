@@ -214,17 +214,6 @@ async def generate_screen_design(
     return await _format_generation_response(response, output_orchestrator)
 
 
-@router.post("/action-items", response_model=GenerationResponse)
-async def generate_action_items(request: GenerationRequest) -> GenerationResponse:
-    """Extract action items from meeting context."""
-    logger.info(f"generate_action_items | project_id={request.project_id}")
-
-    return GenerationResponse(
-        project_id=request.project_id,
-        result={"mock": "Action item extraction result"},
-    )
-
-
 async def _normalize_generation_input(
     request: GenerationRequest,
     input_orchestrator: InputOrchestrator,

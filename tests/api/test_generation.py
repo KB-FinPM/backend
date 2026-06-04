@@ -273,3 +273,15 @@ def test_generate_screen_design_rejects_non_requirement_spec_source(
     body = response.json()
     assert body["success"] is False
     assert body["error_code"] == "INVALID_SOURCE_DOCUMENT_TYPE"
+
+
+def test_generate_action_items_route_is_not_exposed(client: TestClient) -> None:
+    response = client.post(
+        "/generate/action-items",
+        json={
+            "project_id": "PRJ-001",
+            "source_document_ids": ["DOC-001"],
+        },
+    )
+
+    assert response.status_code == 404

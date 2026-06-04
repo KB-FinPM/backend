@@ -1,4 +1,4 @@
-# EN: Minimal schedule-management/todo schema contract.
+# EN: Minimal meeting-action-item schema contract.
 # KO: 일정관리 todo 결과의 최소 JSON 계약입니다.
 
 from typing import Any
@@ -26,12 +26,12 @@ class ScheduleTodoItem(BaseModel):
 class ScheduleTodoList(BaseModel):
     artifact_type: str = Field(
         "SCHEDULE_TODO_LIST",
-        description="Schedule-management result type",
+        description="Meeting action-item extraction result type",
     )
     todos: list[ScheduleTodoItem] = Field(
         ...,
         min_length=1,
-        description="Todo items extracted from meeting notes or context",
+        description="Action items extracted from meeting notes",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,

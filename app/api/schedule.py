@@ -1,6 +1,6 @@
 # EN: Schedule-management API routes.
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 
 from app.core.exceptions import ApiError
 from app.core.logger import get_logger
@@ -30,6 +30,20 @@ SCHEDULE_ERROR_RESPONSES = {
     status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorResponse},
 }
 
+ACTION_ITEM_EXAMPLE = {
+    "summary": "Extract action items from weekly meeting notes",
+    "value": {
+        "project_id": "PRJ-001",
+        "meeting_notes": (
+            "2026-06-04 weekly meeting: Kim owns login scope review by "
+            "2026-06-07. Lee will confirm API exception policy."
+        ),
+        "source_document_ids": ["DOC-MEETING-001"],
+        "user_id": "USER-001",
+        "permission_scope": ["project:read"],
+    },
+}
+
 
 @router.post(
     "/todos",
@@ -37,12 +51,15 @@ SCHEDULE_ERROR_RESPONSES = {
     responses=SCHEDULE_ERROR_RESPONSES,
 )
 async def extract_schedule_todos(
-    request: ScheduleTodoRequest,
+    request: ScheduleTodoRequest = Body(
+        ...,
+        openapi_examples={"weekly_meeting_action_items": ACTION_ITEM_EXAMPLE},
+    ),
     schedule_service: ScheduleService = Depends(get_schedule_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> ScheduleTodoResponse:
-    """Extract lightweight todo items from meeting notes."""
+    """Extract action items from meeting notes."""
     logger.info(f"extract_schedule_todos | project_id={request.project_id}")
 
     input_response = await input_orchestrator.normalize(
@@ -70,6 +87,29 @@ async def extract_schedule_todos(
         structured_context=input_response.structured_context,
     )
     return await _format_schedule_response(response, output_orchestrator)
+
+
+@router.post(
+    "/action-items",
+    response_model=ScheduleTodoResponse,
+    responses=SCHEDULE_ERROR_RESPONSES,
+)
+async def extract_action_items(
+    request: ScheduleTodoRequest = Body(
+        ...,
+        openapi_examples={"weekly_meeting_action_items": ACTION_ITEM_EXAMPLE},
+    ),
+    schedule_service: ScheduleService = Depends(get_schedule_service),
+    input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
+    output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+) -> ScheduleTodoResponse:
+    """Extract action items from weekly meeting notes."""
+    return await extract_schedule_todos(
+        request=request,
+        schedule_service=schedule_service,
+        input_orchestrator=input_orchestrator,
+        output_orchestrator=output_orchestrator,
+    )
 
 
 async def _format_schedule_response(

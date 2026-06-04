@@ -102,6 +102,37 @@ def test_extract_schedule_todos_routes_through_io_orchestrators(
     assert output_orchestrator.received_response_type == "API_RESPONSE"
 
 
+def test_extract_action_items_uses_meeting_notes_route(
+    client: TestClient,
+) -> None:
+    schedule_service = StubScheduleService()
+    input_orchestrator = StubInputOrchestrator()
+    output_orchestrator = StubOutputOrchestrator()
+    client.app.dependency_overrides[get_schedule_service] = lambda: schedule_service
+    client.app.dependency_overrides[get_input_orchestrator] = lambda: input_orchestrator
+    client.app.dependency_overrides[get_output_orchestrator] = (
+        lambda: output_orchestrator
+    )
+
+    try:
+        response = client.post(
+            "/schedule/action-items",
+            json={
+                "project_id": "PRJ-001",
+                "meeting_notes": "Weekly meeting: confirm login scope by Friday.",
+                "source_document_ids": ["DOC-MEETING-001"],
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["result"]["artifact_type"] == "SCHEDULE_TODO_LIST"
+    assert input_orchestrator.received_input_type == "MEETING_NOTES"
+
+
 def test_extract_schedule_todos_returns_422_when_input_normalization_fails(
     client: TestClient,
 ) -> None:
