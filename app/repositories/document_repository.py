@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import DocumentChunkModel, DocumentModel
+from app.repositories.project_repository import ensure_project
 from app.schemas.artifact import DocumentMetadata, DocumentStatus, DocumentType
 
 
@@ -24,6 +25,7 @@ class DocumentRepository:
         storage_path: str,
         status: DocumentStatus = DocumentStatus.UPLOADED,
     ) -> DocumentMetadata:
+        await ensure_project(self.session, project_id=project_id)
         document = DocumentModel(
             document_id=document_id,
             project_id=project_id,
@@ -100,6 +102,7 @@ class DocumentRepository:
         chunk_metadata: Optional[dict[str, Any]] = None,
         embedding: Optional[list[float]] = None,
     ) -> DocumentChunkModel:
+        await ensure_project(self.session, project_id=project_id)
         chunk = DocumentChunkModel(
             chunk_id=chunk_id,
             project_id=project_id,

@@ -10,5 +10,9 @@ def test_describe_schema_includes_core_tables() -> None:
     assert "documents" in table_names
     assert "document_chunks" in table_names
     assert "artifacts" in table_names
+    assert "artifact_versions" in table_names
+    assert "artifact_documents" in table_names
     assert "artifact_links" in table_names
     assert "templates" in table_names
+    assert "projects" in table_names
+    assert "action_items" in table_names

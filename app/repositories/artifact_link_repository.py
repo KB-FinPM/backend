@@ -7,6 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifact_link import ArtifactLinkModel
+from app.repositories.project_repository import ensure_project
 from app.schemas.traceability import (
     ArtifactLinkCreate,
     ArtifactLinkMetadata,
@@ -30,6 +31,7 @@ class ArtifactLinkRepository:
         target_item_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ArtifactLinkMetadata:
+        await ensure_project(self.session, project_id=project_id)
         link = ArtifactLinkModel(
             link_id=link_id,
             project_id=project_id,
