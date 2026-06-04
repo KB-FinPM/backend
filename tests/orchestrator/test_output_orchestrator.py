@@ -33,7 +33,7 @@ async def test_output_orchestrator_routes_markdown_export() -> None:
 
 
 @pytest.mark.anyio
-async def test_output_orchestrator_rejects_unsupported_output_request() -> None:
+async def test_output_orchestrator_formats_api_response() -> None:
     orchestrator = OutputOrchestrator()
 
     response = await orchestrator.format(
@@ -41,8 +41,10 @@ async def test_output_orchestrator_rejects_unsupported_output_request() -> None:
             project_id="PRJ-001",
             response_type=OutputResponseType.API_RESPONSE,
             result_json={"ok": True},
+            message="done",
         )
     )
 
-    assert response.success is False
-    assert response.error == "unsupported output request"
+    assert response.success is True
+    assert response.message == "done"
+    assert response.display_payload == {"ok": True}

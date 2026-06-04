@@ -73,7 +73,7 @@ def test_create_artifact_link_uses_path_project_id(client: TestClient) -> None:
     finally:
         client.app.dependency_overrides.clear()
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     assert response.json()["project_id"] == "PRJ-001"
     assert response.json()["relation_type"] == "DECOMPOSED_TO"
 

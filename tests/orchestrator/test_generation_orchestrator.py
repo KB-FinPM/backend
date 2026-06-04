@@ -52,6 +52,23 @@ class StubRequirementAgent:
         )
 
 
+class StubPlaceholderAgent:
+    def __init__(self, calls: list[str], agent_name: str, error: str) -> None:
+        self.calls = calls
+        self.agent_name = agent_name
+        self.error = error
+        self.received_request: AgentRequest | None = None
+
+    async def generate(self, request: AgentRequest) -> AgentResponse:
+        self.calls.append(self.agent_name)
+        self.received_request = request
+        return AgentResponse(
+            success=False,
+            agent_name=self.agent_name,
+            error=self.error,
+        )
+
+
 class StubValidatorAgent:
     def __init__(self, calls: list[str], success: bool = True) -> None:
         self.calls = calls
@@ -195,11 +212,17 @@ async def test_generate_artifact_dispatches_requirement_flow() -> None:
 
 
 @pytest.mark.anyio
-async def test_generate_artifact_returns_not_implemented_for_wbs() -> None:
+async def test_generate_artifact_dispatches_wbs_agent_adapter() -> None:
     calls: list[str] = []
+    wbs_agent = StubPlaceholderAgent(
+        calls,
+        agent_name="WbsAgent",
+        error="WBS generation agent is not implemented yet",
+    )
     orchestrator = GenerationOrchestrator(
         retrieval=StubRetrievalService(calls),
         requirement_generator=StubRequirementAgent(calls),
+        wbs_generator=wbs_agent,
         validator=StubValidatorAgent(calls),
     )
     request = GenerationRequest(
@@ -210,20 +233,28 @@ async def test_generate_artifact_returns_not_implemented_for_wbs() -> None:
     response = await orchestrator.generate_artifact(request)
 
     assert response.success is False
-    assert response.message == "WBS generation is not implemented yet"
+    assert response.message == "WBS generation agent is not implemented yet"
     assert response.result == {
-        "artifact_type": "WBS",
-        "error": "WBS generation is not implemented yet",
+        "agent_name": "WbsAgent",
+        "error": "WBS generation agent is not implemented yet",
     }
-    assert calls == []
+    assert calls == ["retrieval", "WbsAgent"]
+    assert wbs_agent.received_request is not None
+    assert wbs_agent.received_request.context["target_artifact_type"] == "WBS"
 
 
 @pytest.mark.anyio
-async def test_generate_artifact_returns_not_implemented_for_screen_design() -> None:
+async def test_generate_artifact_dispatches_screen_design_agent_adapter() -> None:
     calls: list[str] = []
+    screen_design_agent = StubPlaceholderAgent(
+        calls,
+        agent_name="ScreenDesignAgent",
+        error="Screen design generation agent is not implemented yet",
+    )
     orchestrator = GenerationOrchestrator(
         retrieval=StubRetrievalService(calls),
         requirement_generator=StubRequirementAgent(calls),
+        screen_design_generator=screen_design_agent,
         validator=StubValidatorAgent(calls),
     )
     request = GenerationRequest(
@@ -234,8 +265,12 @@ async def test_generate_artifact_returns_not_implemented_for_screen_design() -> 
     response = await orchestrator.generate_artifact(request)
 
     assert response.success is False
-    assert response.message == "SCREEN_DESIGN generation is not implemented yet"
-    assert calls == []
+    assert response.message == "Screen design generation agent is not implemented yet"
+    assert calls == ["retrieval", "ScreenDesignAgent"]
+    assert screen_design_agent.received_request is not None
+    assert screen_design_agent.received_request.context["target_artifact_type"] == (
+        "SCREEN_DESIGN"
+    )
 
 
 @pytest.mark.anyio

@@ -1,7 +1,7 @@
 # EN: Tests for API request schema behavior.
 # KO: API 요청 스키마 동작을 검증하는 테스트입니다.
 
-from app.schemas.request import GenerationRequest
+from app.schemas.request import GenerationRequest, ScheduleTodoRequest
 
 
 def test_generation_request_uses_independent_document_id_lists() -> None:
@@ -61,3 +61,17 @@ def test_generation_request_accepts_permission_scope() -> None:
     )
 
     assert request.permission_scope == ["project:read", "artifact:generate"]
+
+
+def test_schedule_todo_request_accepts_meeting_notes() -> None:
+    request = ScheduleTodoRequest(
+        project_id="PRJ-001",
+        meeting_notes="Discussed login scope and due dates.",
+        source_document_ids=["DOC-001"],
+        user_id="USER-001",
+    )
+
+    assert request.project_id == "PRJ-001"
+    assert request.source_document_ids == ["DOC-001"]
+    assert request.permission_scope == ["project:read"]
+    assert "Discussed login scope" in request.meeting_notes
