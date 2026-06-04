@@ -22,6 +22,7 @@ from app.services.generation_service import GenerationService
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 from app.services.traceability_service import TraceabilityService
+from app.storage.s3 import s3_service
 
 
 def get_document_repository(
@@ -51,7 +52,7 @@ def get_template_repository(
 def get_document_service(
     document_repository: DocumentRepository = Depends(get_document_repository),
 ) -> DocumentService:
-    return DocumentService(document_repository)
+    return DocumentService(document_repository, s3_service)
 
 
 def get_artifact_service(

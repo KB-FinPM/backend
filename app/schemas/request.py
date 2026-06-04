@@ -80,11 +80,11 @@ class ScheduleTodoRequest(BaseModel):
     meeting_notes: str = Field(
         ...,
         min_length=1,
-        description="Meeting notes or user-provided schedule context",
+        description="Weekly meeting notes used to extract action items",
     )
     source_document_ids: list[str] = Field(
         default_factory=list,
-        description="Optional meeting note/source document IDs",
+        description="Optional meeting-note document IDs",
     )
     user_id: Optional[str] = Field(None, description="Requesting user ID")
     permission_scope: list[str] = Field(
