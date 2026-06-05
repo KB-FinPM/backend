@@ -20,6 +20,7 @@ from app.schemas.io_agent import (
 from app.schemas.artifact import DocumentMetadata, DocumentType
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
+from app.services.generation_service import GenerationSourceValidationResult
 
 
 class StubGenerationOrchestrator:
@@ -37,6 +38,19 @@ class StubGenerationOrchestrator:
         return GenerationResponse(
             project_id=request.project_id,
             result={"source": "stub-orchestrator"},
+        )
+
+    async def validate_source_documents(
+        self,
+        request: GenerationRequest,
+        *,
+        document_service,
+        required_source_type=None,
+    ) -> GenerationSourceValidationResult:
+        return GenerationSourceValidationResult(
+            project_id=request.project_id,
+            target_artifact_type=request.target_artifact_type,
+            required_source_type=required_source_type,
         )
 
 

@@ -3,19 +3,17 @@
 from typing import Any
 from uuid import uuid4
 
-from app.core.logger import get_logger
 from app.orchestrator.input_orchestrator import InputOrchestrator, input_orchestrator
 from app.orchestrator.output_orchestrator import (
     OutputOrchestrator,
     output_orchestrator,
 )
 from app.repositories.conversation_repository import ConversationRepository
-from app.schemas.artifact import ArtifactType, DocumentType
+from app.schemas.artifact import ArtifactType
 from app.schemas.chat import (
     ChatActionMetadata,
     ChatActionStatus,
     ChatActionType,
-    ChatCommandType,
     ChatMessageRequest,
     ChatResponse,
     ChatRole,
@@ -35,8 +33,6 @@ from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
-
-logger = get_logger(__name__)
 
 
 class ChatOrchestrator:
@@ -179,19 +175,26 @@ class ChatOrchestrator:
             )
 
         target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
-        validation_error = await self._validate_generation_documents(
+        validation_request = GenerationRequest(
             project_id=request.project_id,
             source_document_ids=source_document_ids,
+            source_document_type=structured_context.get("source_document_type"),
             target_artifact_type=target_artifact_type,
+            query=request.message,
+            permission_scope=request.permission_scope,
         )
-        if validation_error:
+        validation_result = await self.generation_service.validate_source_documents(
+            validation_request,
+            document_service=self.document_service,
+        )
+        if not validation_result.success:
             return await self._render_and_save_response(
                 conversation=conversation,
                 project_id=request.project_id,
                 result_json={
                     "event": "ACTION_FAILED",
-                    "error": validation_error,
-                    "result": {},
+                    "error": validation_result.message,
+                    "result": validation_result.detail or {},
                 },
             )
 
@@ -272,7 +275,7 @@ class ChatOrchestrator:
                 project_id=project_id,
                 result_json={
                     "event": "ACTION_FAILED",
-                    "error": "실행 대기 중인 작업이 없습니다.",
+                    "error": "No pending action is waiting for confirmation.",
                     "result": {},
                 },
             )
@@ -416,39 +419,6 @@ class ChatOrchestrator:
             schedule_request,
             structured_context={"source": "chat", "action_id": action.action_id},
         )
-
-    async def _validate_generation_documents(
-        self,
-        *,
-        project_id: str,
-        source_document_ids: list[str],
-        target_artifact_type: ArtifactType,
-    ) -> str | None:
-        required_type = None
-        if target_artifact_type in {ArtifactType.WBS, ArtifactType.SCREEN_DESIGN}:
-            required_type = DocumentType.REQUIREMENT_SPEC
-
-        missing_document_ids: list[str] = []
-        invalid_documents: list[str] = []
-        for document_id in source_document_ids:
-            document = await self.document_service.get_document(
-                project_id=project_id,
-                document_id=document_id,
-            )
-            if document is None:
-                missing_document_ids.append(document_id)
-                continue
-            if required_type is not None and document.document_type != required_type:
-                invalid_documents.append(document_id)
-
-        if missing_document_ids:
-            return f"문서를 찾을 수 없습니다: {', '.join(missing_document_ids)}"
-        if invalid_documents and required_type is not None:
-            return (
-                f"{target_artifact_type.value} 생성에는 {required_type.value} "
-                f"문서가 필요합니다: {', '.join(invalid_documents)}"
-            )
-        return None
 
     async def _render_and_save_response(
         self,

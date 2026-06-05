@@ -6,6 +6,7 @@ from app.orchestrator.chat_orchestrator import ChatOrchestrator
 from app.schemas.artifact import DocumentMetadata, DocumentType
 from app.schemas.chat import ChatMessageRequest
 from app.schemas.response import GenerationResponse
+from app.services.generation_service import GenerationSourceValidationResult
 
 
 class StubConversationRepository:
@@ -119,6 +120,19 @@ class StubGenerationService:
                 },
                 "generated": {"artifact_type": request.target_artifact_type.value},
             },
+        )
+
+    async def validate_source_documents(
+        self,
+        request,
+        *,
+        document_service,
+        required_source_type=None,
+    ):
+        return GenerationSourceValidationResult(
+            project_id=request.project_id,
+            target_artifact_type=request.target_artifact_type,
+            required_source_type=required_source_type,
         )
 
 

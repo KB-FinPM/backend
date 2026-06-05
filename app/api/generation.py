@@ -102,25 +102,16 @@ async def generate_requirement(
     """Generate a requirement artifact through the PM agent orchestrator."""
     logger.info(f"generate_requirement | project_id={request.project_id}")
 
-    await _validate_source_documents(
+    return await _generate_artifact_response(
         request=request,
-        document_service=document_service,
-    )
-    input_response = await _normalize_generation_input(request, input_orchestrator)
-    if not input_response.success:
-        raise ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            error_code="GENERATION_INPUT_NORMALIZATION_FAILED",
-            message=input_response.error or "generation input normalization failed",
-            detail={"errors": input_response.validation_errors},
-        )
-    response = await generation_service.generate_artifact(
-        request,
+        generation_service=generation_service,
         artifact_service=artifact_service,
+        document_service=document_service,
         retrieval_service=retrieval_service,
         template_service=template_service,
+        input_orchestrator=input_orchestrator,
+        output_orchestrator=output_orchestrator,
     )
-    return await _format_generation_response(response, output_orchestrator)
 
 
 @router.post(
@@ -145,26 +136,16 @@ async def generate_wbs(
         DocumentType.REQUIREMENT_SPEC
     )
 
-    await _validate_source_documents(
+    return await _generate_artifact_response(
         request=request,
-        document_service=document_service,
-        required_source_type=DocumentType.REQUIREMENT_SPEC,
-    )
-    input_response = await _normalize_generation_input(request, input_orchestrator)
-    if not input_response.success:
-        raise ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            error_code="GENERATION_INPUT_NORMALIZATION_FAILED",
-            message=input_response.error or "generation input normalization failed",
-            detail={"errors": input_response.validation_errors},
-        )
-    response = await generation_service.generate_artifact(
-        request,
+        generation_service=generation_service,
         artifact_service=artifact_service,
+        document_service=document_service,
         retrieval_service=retrieval_service,
         template_service=template_service,
+        input_orchestrator=input_orchestrator,
+        output_orchestrator=output_orchestrator,
     )
-    return await _format_generation_response(response, output_orchestrator)
 
 
 @router.post(
@@ -192,10 +173,33 @@ async def generate_screen_design(
         DocumentType.REQUIREMENT_SPEC
     )
 
+    return await _generate_artifact_response(
+        request=request,
+        generation_service=generation_service,
+        artifact_service=artifact_service,
+        document_service=document_service,
+        retrieval_service=retrieval_service,
+        template_service=template_service,
+        input_orchestrator=input_orchestrator,
+        output_orchestrator=output_orchestrator,
+    )
+
+
+async def _generate_artifact_response(
+    *,
+    request: GenerationRequest,
+    generation_service: GenerationService,
+    artifact_service: ArtifactService,
+    document_service: DocumentService,
+    retrieval_service: RetrievalService,
+    template_service: TemplateService,
+    input_orchestrator: InputOrchestrator,
+    output_orchestrator: OutputOrchestrator,
+) -> GenerationResponse:
     await _validate_source_documents(
         request=request,
+        generation_service=generation_service,
         document_service=document_service,
-        required_source_type=DocumentType.REQUIREMENT_SPEC,
     )
     input_response = await _normalize_generation_input(request, input_orchestrator)
     if not input_response.success:
@@ -236,62 +240,38 @@ async def _normalize_generation_input(
 async def _validate_source_documents(
     *,
     request: GenerationRequest,
+    generation_service: GenerationService,
     document_service: DocumentService,
-    required_source_type: DocumentType | None = None,
 ) -> None:
-    if not request.source_document_ids:
+    result = await generation_service.validate_source_documents(
+        request,
+        document_service=document_service,
+    )
+    if result.success:
+        return
+
+    if result.error_code == "SOURCE_DOCUMENT_REQUIRED":
         raise ApiError(
             status_code=status.HTTP_400_BAD_REQUEST,
-            error_code="SOURCE_DOCUMENT_REQUIRED",
-            message="source document is required",
-            detail={
-                "project_id": request.project_id,
-                "target_artifact_type": request.target_artifact_type.value,
-            },
+            error_code=result.error_code,
+            message=result.message,
+            detail=result.detail,
         )
 
-    missing_document_ids: list[str] = []
-    invalid_type_documents: list[dict] = []
-    for document_id in request.source_document_ids:
-        document = await document_service.get_document(
-            project_id=request.project_id,
-            document_id=document_id,
-        )
-        if document is None:
-            missing_document_ids.append(document_id)
-            continue
-
-        if required_source_type is not None and (
-            document.document_type != required_source_type
-        ):
-            invalid_type_documents.append(
-                {
-                    "document_id": document.document_id,
-                    "document_type": document.document_type.value,
-                    "required_document_type": required_source_type.value,
-                }
-            )
-
-    if missing_document_ids:
+    if result.error_code == "SOURCE_DOCUMENT_NOT_FOUND":
         raise ApiError(
             status_code=status.HTTP_404_NOT_FOUND,
-            error_code="SOURCE_DOCUMENT_NOT_FOUND",
-            message="source document not found",
-            detail={
-                "project_id": request.project_id,
-                "missing_document_ids": missing_document_ids,
-            },
+            error_code=result.error_code,
+            message=result.message,
+            detail=result.detail,
         )
 
-    if invalid_type_documents:
+    if result.error_code == "INVALID_SOURCE_DOCUMENT_TYPE":
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            error_code="INVALID_SOURCE_DOCUMENT_TYPE",
-            message=(
-                f"{request.target_artifact_type.value} must be generated from "
-                f"{required_source_type.value}"
-            ),
-            detail={"documents": invalid_type_documents},
+            error_code=result.error_code,
+            message=result.message,
+            detail=result.detail,
         )
 
 
