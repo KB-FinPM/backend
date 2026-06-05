@@ -13,7 +13,10 @@ class TemplateMetadata(BaseModel):
     template_version: str = Field(..., description="Template version")
     artifact_type: ArtifactType = Field(..., description="Target artifact type")
     name: str = Field(..., description="Template display name")
-    content: str = Field(..., description="Template body or instruction content")
+    content: str | dict[str, Any] = Field(
+        ...,
+        description="Template body or instruction content",
+    )
     placeholders: dict[str, Any] = Field(
         default_factory=dict,
         description="Template placeholders and default values",

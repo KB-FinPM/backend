@@ -4,10 +4,11 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.models.types import JSONBType
 
 
 class TemplateModel(Base):
@@ -18,6 +19,7 @@ class TemplateModel(Base):
             "template_version",
             name="uq_templates_template_version",
         ),
+        Index("ix_templates_artifact_type", "artifact_type"),
     )
 
     template_pk: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -25,8 +27,8 @@ class TemplateModel(Base):
     template_version: Mapped[str] = mapped_column(String(80), nullable=False)
     artifact_type: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    placeholders: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    content: Mapped[dict[str, Any]] = mapped_column(JSONBType, default=dict)
+    placeholders: Mapped[dict[str, Any]] = mapped_column(JSONBType, default=dict)
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

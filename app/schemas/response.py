@@ -16,7 +16,7 @@ class BaseResponse(BaseModel):
 class ErrorResponse(BaseResponse):
     success: bool = False
     error_code: Optional[str] = None
-    detail: Optional[str] = None
+    detail: Any = None
 
 
 class GenerationResponse(BaseResponse):

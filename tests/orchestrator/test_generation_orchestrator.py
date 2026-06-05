@@ -23,11 +23,13 @@ class StubRetrievalService:
         permission_scope: list[str],
         query: str,
         top_k: int = 5,
+        document_ids: list[str] | None = None,
     ) -> list[dict]:
         self.calls.append("retrieval")
         self.received_project_id = project_id
         self.received_permission_scope = permission_scope
         self.received_query = query
+        self.received_document_ids = document_ids
         return [{"chunk_id": "CHUNK-001", "text": "Login is required."}]
 
 
@@ -172,6 +174,7 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
         "artifact:generate",
     ]
     assert retrieval.received_query == "Create a requirement spec"
+    assert retrieval.received_document_ids == ["DOC-001"]
     assert requirement.received_request is not None
     assert requirement.received_request.project_id == "PRJ-001"
     assert requirement.received_request.documents == [

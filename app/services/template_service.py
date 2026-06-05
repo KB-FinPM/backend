@@ -114,12 +114,13 @@ class TemplateService:
         return None
 
     def _to_metadata(self, template: TemplateModel) -> TemplateMetadata:
+        content = template.content or {}
         return TemplateMetadata(
             template_id=template.template_id,
             template_version=template.template_version,
             artifact_type=ArtifactType(template.artifact_type),
             name=template.name,
-            content=template.content,
+            content=content,
             placeholders=template.placeholders or {},
             is_builtin=template.is_builtin,
         )

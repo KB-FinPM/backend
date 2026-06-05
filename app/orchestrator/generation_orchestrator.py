@@ -123,6 +123,7 @@ class GenerationOrchestrator:
             project_id=request.project_id,
             permission_scope=request.permission_scope,
             query=request.query or "",
+            document_ids=request.source_document_ids or None,
         )
 
         agent_request = AgentRequest(

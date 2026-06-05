@@ -48,3 +48,32 @@ async def test_output_orchestrator_formats_api_response() -> None:
     assert response.success is True
     assert response.message == "done"
     assert response.display_payload == {"ok": True}
+
+
+@pytest.mark.anyio
+async def test_output_orchestrator_routes_chat_response() -> None:
+    orchestrator = OutputOrchestrator()
+
+    response = await orchestrator.format(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "CONFIRMATION_REQUIRED",
+                "pending_action": {
+                    "action_id": "ACT-001",
+                    "action_type": "GENERATE_WBS",
+                    "payload": {
+                        "target_artifact_type": "WBS",
+                        "source_document_ids": ["DOC-REQ-001"],
+                    },
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.display_payload["state"] == "WAITING_CONFIRMATION"
+    assert response.display_payload["suggested_actions"][0]["type"] == (
+        "CONFIRM_PENDING_ACTION"
+    )
