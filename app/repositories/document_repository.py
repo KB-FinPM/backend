@@ -141,6 +141,7 @@ class DocumentRepository:
         project_id: str,
         query: str,
         limit: int = 5,
+        document_ids: list[str] | None = None,
     ) -> list[DocumentChunkModel]:
         statement = (
             select(DocumentChunkModel)
@@ -148,6 +149,9 @@ class DocumentRepository:
             .order_by(DocumentChunkModel.created_at.desc())
             .limit(limit)
         )
+        if document_ids:
+            statement = statement.where(DocumentChunkModel.document_id.in_(document_ids))
+
         if query:
             statement = statement.where(DocumentChunkModel.text.ilike(f"%{query}%"))
 
