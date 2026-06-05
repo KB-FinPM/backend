@@ -11,6 +11,10 @@ class StubDocumentRepository:
     pass
 
 
+class StubStorageService:
+    pass
+
+
 class StubIngestionOrchestrator:
     def __init__(self) -> None:
         self.received_document_repository = None
@@ -45,7 +49,11 @@ class StubIngestionOrchestrator:
 async def test_document_service_delegates_ingestion_to_orchestrator() -> None:
     repository = StubDocumentRepository()
     orchestrator = StubIngestionOrchestrator()
-    service = DocumentService(repository, ingestion_orchestrator=orchestrator)
+    service = DocumentService(
+        repository,
+        StubStorageService(),
+        ingestion_orchestrator=orchestrator,
+    )
 
     document = await service.ingest_uploaded_document(
         document_id="DOC-001",

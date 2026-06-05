@@ -5,6 +5,10 @@ from app.agents.output_agents.markdown_agent.agent import (
     MarkdownOutputAgent,
     markdown_output_agent,
 )
+from app.agents.output_agents.chat_agent.agent import (
+    ChatOutputAgent,
+    chat_output_agent,
+)
 from app.schemas.io_agent import (
     OutputAgentRequest,
     OutputAgentResponse,
@@ -18,10 +22,15 @@ class OutputOrchestrator:
     def __init__(
         self,
         markdown_agent: MarkdownOutputAgent = markdown_output_agent,
+        chat_agent: ChatOutputAgent = chat_output_agent,
     ) -> None:
         self.markdown_agent = markdown_agent
+        self.chat_agent = chat_agent
 
     async def format(self, request: OutputAgentRequest) -> OutputAgentResponse:
+        if request.response_type == OutputResponseType.CHAT_RESPONSE:
+            return await self.chat_agent.render(request)
+
         if request.response_type == OutputResponseType.API_RESPONSE:
             return OutputAgentResponse(
                 success=not request.errors,

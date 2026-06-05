@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from app.api import (
     artifacts,
+    chat,
     documents,
     generation,
     health,
@@ -139,6 +140,7 @@ app.include_router(health.router, tags=["health"])
 app.include_router(upload.router, prefix="/upload", tags=["upload"])
 app.include_router(generation.router, prefix="/generate", tags=["generation"])
 app.include_router(schedule.router, prefix="/schedule", tags=["schedule"])
+app.include_router(chat.router, prefix="/chat", tags=["chat"])
 app.include_router(documents.router, tags=["documents"])
 app.include_router(artifacts.router, tags=["artifacts"])
 app.include_router(templates.router, tags=["templates"])

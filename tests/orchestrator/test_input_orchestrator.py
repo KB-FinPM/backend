@@ -34,19 +34,23 @@ async def test_input_orchestrator_routes_file_input_to_document_parser() -> None
 
 
 @pytest.mark.anyio
-async def test_input_orchestrator_rejects_unsupported_input_type() -> None:
+async def test_input_orchestrator_routes_text_input_to_chat_agent() -> None:
     orchestrator = InputOrchestrator()
 
     response = await orchestrator.normalize(
         InputAgentRequest(
             project_id="PRJ-001",
             input_type=InputType.TEXT,
-            raw_payload={"text": "hello"},
+            raw_payload={"message": "이 요구사항으로 WBS 만들어줘"},
+            context={"selected_document_ids": ["DOC-REQ-001"]},
         )
     )
 
-    assert response.success is False
-    assert response.error == "unsupported input type"
+    assert response.success is True
+    assert response.normalized_request_type == NormalizedRequestType.CHAT_MESSAGE
+    assert response.structured_context["intent"] == "GENERATE_ARTIFACT"
+    assert response.structured_context["target_artifact_type"] == "WBS"
+    assert response.structured_context["source_document_ids"] == ["DOC-REQ-001"]
 
 
 @pytest.mark.anyio

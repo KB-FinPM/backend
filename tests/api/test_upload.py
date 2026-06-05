@@ -2,7 +2,6 @@
 # KO: 선행 문서 업로드 API 동작을 검증하는 테스트입니다.
 
 from fastapi.testclient import TestClient
-from pytest import MonkeyPatch
 
 from app.dependencies import (
     get_document_service,
@@ -17,17 +16,6 @@ from app.schemas.io_agent import (
 )
 
 
-class StubS3Service:
-    def __init__(self) -> None:
-        self.received_file_bytes: bytes | None = None
-        self.received_key: str | None = None
-
-    async def upload(self, file_bytes: bytes, key: str) -> str:
-        self.received_file_bytes = file_bytes
-        self.received_key = key
-        return f"s3://test-bucket/{key}"
-
-
 class StubDocumentRepository:
     def __init__(self) -> None:
         self.received_document_id: str | None = None
@@ -35,6 +23,22 @@ class StubDocumentRepository:
         self.received_document_type: DocumentType | None = None
         self.received_file_name: str | None = None
         self.received_storage_path: str | None = None
+
+    async def upload_to_storage(
+        self,
+        *,
+        file_bytes: bytes,
+        project_id: str,
+        document_id: str,
+        file_name: str,
+        upload_prefix: str,
+    ) -> str:
+        self.received_upload_file_bytes = file_bytes
+        self.received_upload_prefix = upload_prefix
+        return (
+            f"s3://test-bucket/{upload_prefix}/{project_id}/raw/"
+            f"{document_id}/{file_name}"
+        )
 
     async def ingest_uploaded_document(
         self,
@@ -105,13 +109,10 @@ class StubOutputOrchestrator:
 
 def test_upload_document_returns_document_metadata(
     client: TestClient,
-    monkeypatch: MonkeyPatch,
 ) -> None:
-    stub_s3 = StubS3Service()
     stub_repository = StubDocumentRepository()
     stub_input_orchestrator = StubInputOrchestrator()
     stub_output_orchestrator = StubOutputOrchestrator()
-    monkeypatch.setattr("app.api.upload.s3_service", stub_s3)
     client.app.dependency_overrides[get_document_service] = lambda: stub_repository
     client.app.dependency_overrides[get_input_orchestrator] = (
         lambda: stub_input_orchestrator
@@ -151,9 +152,8 @@ def test_upload_document_returns_document_metadata(
     assert body["document"]["storage_path"].startswith(
         "s3://test-bucket/storage/upload_files/PRJ-001/raw/"
     )
-    assert stub_s3.received_file_bytes == b"source document bytes"
-    assert stub_s3.received_key is not None
-    assert stub_s3.received_key.endswith("/construction-requirements.pdf")
+    assert stub_repository.received_upload_file_bytes == b"source document bytes"
+    assert stub_repository.received_upload_prefix == "storage/upload_files"
     assert stub_repository.received_project_id == "PRJ-001"
     assert stub_repository.received_document_type == (
         DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION
@@ -170,10 +170,7 @@ def test_upload_document_returns_document_metadata(
 
 def test_upload_document_rejects_empty_file(
     client: TestClient,
-    monkeypatch: MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.api.upload.s3_service", StubS3Service())
-
     response = client.post(
         "/upload",
         data={
@@ -191,9 +188,7 @@ def test_upload_document_rejects_empty_file(
 
 def test_upload_document_returns_422_when_input_normalization_fails(
     client: TestClient,
-    monkeypatch: MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.api.upload.s3_service", StubS3Service())
     client.app.dependency_overrides[get_input_orchestrator] = (
         lambda: FailingInputOrchestrator()
     )
