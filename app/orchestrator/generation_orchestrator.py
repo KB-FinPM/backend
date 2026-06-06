@@ -9,10 +9,12 @@ from app.agents.core_agents.requirement_agent.agent import requirement_agent
 from app.agents.core_agents.screen_design_agent.agent import screen_design_agent
 from app.agents.core_agents.validator_agent.agent import validator_agent
 from app.agents.core_agents.wbs_agent.agent import wbs_agent
+from app.core.llm import llm_service
 from app.core.logger import get_logger
 from app.rag.retrieval import retrieval_service
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.artifact import ArtifactType
+from app.services.artifact_export_service import artifact_export_service
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 
@@ -45,12 +47,14 @@ class GenerationOrchestrator:
         artifact_service: Any = None,
         retrieval_service: Any = None,
         template_service: Any = None,
+        document_service: Any = None,
     ) -> GenerationResponse:
         return await self.generate_artifact(
             request,
             artifact_service=artifact_service,
             retrieval_service=retrieval_service,
             template_service=template_service,
+            document_service=document_service,
         )
 
     async def generate_artifact(
@@ -59,6 +63,7 @@ class GenerationOrchestrator:
         artifact_service: Any = None,
         retrieval_service: Any = None,
         template_service: Any = None,
+        document_service: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         if generation_flow.target_artifact_type in {
@@ -72,6 +77,7 @@ class GenerationOrchestrator:
                 artifact_service=artifact_service,
                 retrieval_service=retrieval_service,
                 template_service=template_service,
+                document_service=document_service,
             )
 
         # TODO: Wire Action Items agent into this dispatch table when it becomes
@@ -88,6 +94,7 @@ class GenerationOrchestrator:
         artifact_service: Any = None,
         retrieval_service: Any = None,
         template_service: Any = None,
+        document_service: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         logger.info(
@@ -119,10 +126,16 @@ class GenerationOrchestrator:
         )
 
         retrieval = retrieval_service or self.retrieval
+        # For artifact generation, especially requirement extraction, load all
+        # chunks from the selected source document. Passing user-facing commands
+        # like "요구사항명세서를 생성해줘" as keyword filters can reduce context
+        # to one irrelevant chunk and degrade output quality.
+        retrieval_query = ""
         documents = await retrieval.search(
             project_id=request.project_id,
             permission_scope=request.permission_scope,
-            query=request.query or "",
+            query=retrieval_query,
+            top_k=200,
             document_ids=request.source_document_ids or None,
         )
 
@@ -141,6 +154,7 @@ class GenerationOrchestrator:
                 "template": template_context,
                 "query": request.query,
                 "permission_scope": request.permission_scope,
+                "generation_orchestrator": self,
             },
         )
         agent_response = await generator.generate(agent_request)
@@ -152,8 +166,22 @@ class GenerationOrchestrator:
             return self._failed_response(request, validated_response)
 
         if artifact_service is not None:
+            artifact_id = f"ART-{uuid4().hex[:12].upper()}"
+            export_result = await artifact_export_service.export_artifact(
+                project_id=request.project_id,
+                artifact_id=artifact_id,
+                artifact_type=generation_flow.target_artifact_type,
+                result_json=validated_response.result,
+                document_service=document_service,
+                storage_service=(
+                    document_service.storage_service
+                    if document_service is not None
+                    else None
+                ),
+            )
+            storage_path = export_result.storage_path if export_result else None
             artifact = await artifact_service.create_artifact(
-                artifact_id=f"ART-{uuid4().hex[:12].upper()}",
+                artifact_id=artifact_id,
                 project_id=request.project_id,
                 artifact_type=generation_flow.target_artifact_type,
                 name=generation_flow.target_artifact_type.value,
@@ -169,11 +197,20 @@ class GenerationOrchestrator:
                     else generation_flow.template.template_version
                 ),
                 result_json=validated_response.result,
+                storage_path=storage_path,
             )
             result = {
                 "artifact": artifact.model_dump(mode="json"),
                 "generated": validated_response.result,
             }
+            if export_result is not None:
+                result["exported_file"] = {
+                    "file_name": export_result.file_name,
+                    "content_type": export_result.content_type,
+                    "storage_path": export_result.storage_path,
+                }
+                if export_result.document is not None:
+                    result["exported_document"] = export_result.document.model_dump(mode="json")
         else:
             result = validated_response.result
 
@@ -185,6 +222,43 @@ class GenerationOrchestrator:
             project_id=request.project_id,
             message="artifact generated" if artifact_service is not None else "ok",
             result=result,
+        )
+
+
+    async def invoke_agent_llm(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 4000,
+    ) -> str:
+        """Delegates agent LLM execution through the orchestrator boundary.
+
+        Core agents must not instantiate Bedrock or other model clients directly.
+        The current backend LLM service accepts a single prompt, so the system
+        and user prompts are composed here. max_tokens is kept for future LLM
+        adapters and caller intent, but the active service may ignore it.
+        """
+        prompt = (
+            f"System instruction:\n{system_prompt.strip()}\n\n"
+            f"User input:\n{user_prompt.strip()}"
+        )
+        return await llm_service.invoke(prompt)
+
+    async def search_agent_context(
+        self,
+        project_id: str,
+        permission_scope: list[str],
+        query: str = "",
+        document_ids: list[str] | None = None,
+        retrieval_service: Any = None,
+    ) -> list[dict]:
+        """Delegates RAG/vector lookup through the orchestrator boundary."""
+        retrieval = retrieval_service or self.retrieval
+        return await retrieval.search(
+            project_id=project_id,
+            permission_scope=permission_scope,
+            query=query,
+            document_ids=document_ids,
         )
 
     def _not_implemented_response(

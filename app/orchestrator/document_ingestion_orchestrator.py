@@ -69,29 +69,65 @@ class DocumentIngestionOrchestrator:
 
         parsed_text = str(parsed_context.get("text", ""))
         parsed_metadata = parsed_context.get("metadata", {})
-        chunks = split_text_into_chunks(parsed_text)
-        if not chunks:
-            return document
-
         parser_name = parsed_context.get("parser_name")
         if parsed_response is not None:
             parser_name = parsed_response.agent_name
 
-        for chunk in chunks:
-            await document_repository.create_chunk(
-                chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                project_id=project_id,
-                document_id=document_id,
-                chunk_index=chunk.chunk_index,
-                text=chunk.text,
-                section_title=chunk.section_title,
-                chunk_metadata={
-                    **chunk.metadata,
-                    **parsed_metadata,
-                    "parser_name": parser_name or "InputOrchestrator",
-                    "source_file_name": file_name,
-                },
-            )
+        generated_requirements = parsed_context.get("requirements")
+        if (
+            parsed_metadata.get("artifact_type") == "REQUIREMENT_SPEC"
+            and isinstance(generated_requirements, list)
+            and generated_requirements
+        ):
+            for index, requirement in enumerate(generated_requirements):
+                if not isinstance(requirement, dict):
+                    continue
+                metadata = requirement.get("metadata") or {}
+                text = "\n".join(
+                    str(value)
+                    for value in [
+                        requirement.get("requirement_id"),
+                        metadata.get("biz_requirement_name"),
+                        metadata.get("domain"),
+                        requirement.get("title"),
+                        requirement.get("description"),
+                    ]
+                    if value
+                )
+                await document_repository.create_chunk(
+                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
+                    project_id=project_id,
+                    document_id=document_id,
+                    chunk_index=index,
+                    text=text,
+                    section_title=str(metadata.get("biz_requirement_name") or "요구사항"),
+                    chunk_metadata={
+                        **parsed_metadata,
+                        "parser_name": parser_name or "ArtifactExportService",
+                        "source_file_name": file_name,
+                        "requirement": requirement,
+                    },
+                )
+        else:
+            chunks = split_text_into_chunks(parsed_text)
+            if not chunks:
+                return document
+
+            for chunk in chunks:
+                await document_repository.create_chunk(
+                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
+                    project_id=project_id,
+                    document_id=document_id,
+                    chunk_index=chunk.chunk_index,
+                    text=chunk.text,
+                    section_title=chunk.section_title,
+                    chunk_metadata={
+                        **chunk.metadata,
+                        **parsed_metadata,
+                        "parser_name": parser_name or "InputOrchestrator",
+                        "source_file_name": file_name,
+                    },
+                )
 
         indexed_document = await document_repository.update_document_status(
             project_id=project_id,

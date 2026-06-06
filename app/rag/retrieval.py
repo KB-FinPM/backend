@@ -23,7 +23,7 @@ class RetrievalService:
         project_id: str,
         permission_scope: list[str],
         query: str,
-        top_k: int = 5,
+        top_k: int = 200,
         document_ids: list[str] | None = None,
     ) -> list[dict]:
         logger.info(

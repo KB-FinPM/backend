@@ -214,6 +214,7 @@ async def _generate_artifact_response(
         artifact_service=artifact_service,
         retrieval_service=retrieval_service,
         template_service=template_service,
+        document_service=document_service,
     )
     return await _format_generation_response(response, output_orchestrator)
 

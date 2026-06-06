@@ -32,8 +32,8 @@ class S3Service:
 
         return settings.AWS_VERIFY_SSL
 
-    async def upload(self, file_bytes: bytes, key: str) -> str:
-        logger.info(f"[S3] upload | backend={self.backend} | key={key}")
+    async def upload(self, file_bytes: bytes, key: str, content_type: str | None = None) -> str:
+        logger.info(f"[S3] upload | backend={self.backend} | bucket={self.bucket} | key={key}")
         if self.client is None:
             return f"s3://{self.bucket}/{key}"
 
@@ -43,10 +43,11 @@ class S3Service:
                 Bucket=self.bucket,
                 Key=key,
                 Body=file_bytes,
+                **({"ContentType": content_type} if content_type else {}),
             )
         except (BotoCoreError, ClientError) as exc:
             logger.exception("S3 upload failed")
-            raise RuntimeError("S3 upload failed") from exc
+            raise RuntimeError(f"S3 upload failed: {type(exc).__name__}: {exc}") from exc
 
         return f"s3://{self.bucket}/{key}"
 

@@ -1,0 +1,305 @@
+{
+  "version": "1.0",
+  "input_document": {
+    "input_dir": "input",
+    "base_name": "구축요건정의서",
+    "version_pattern": "{base_name}.v.{version}.docx",
+    "version_type": "integer_highest"
+  },
+  "common_values": {
+    "project_name": "프로젝트명",
+    "author": "작성자",
+    "today": "YYYY-MM-DD"
+  },
+  "output_files": {
+    "initial_major": 0,
+    "initial_minor": 1,
+    "space_replacement": "_",
+    "documents": {
+      "requirement_spec": {
+        "document_name": "요구사항명세서",
+        "extension": ".xlsx"
+      },
+      "wbs": {
+        "document_name": "WBS",
+        "extension": ".xlsx"
+      },
+      "screen_plan": {
+        "document_name": "화면기획서",
+        "extension": ".pptx"
+      }
+    }
+  },
+  "requirement_spec": {
+    "template_path": "template/탬플릿_요구사항명세서.xlsx",
+    "placeholder_sheets": [
+      {
+        "sheet_name": "표지",
+        "placeholders": {
+          "{프로젝트명}": "project_name",
+          "{작성자명}": "author",
+          "{작성자}": "author"
+        }
+      },
+      {
+        "sheet_name": "개정이력",
+        "placeholders": {
+          "{작성일}": "today",
+          "{작성자명}": "author",
+          "{작성자}": "author"
+        }
+      }
+    ],
+    "data_sheet": {
+      "sheet_name": "요구사항명세서",
+      "header_row": 1,
+      "start_row": 2,
+      "clear_existing_rows": true,
+      "columns": [
+        {
+          "field": "biz_requirement_id",
+          "header_names": [
+            "Biz요건ID",
+            "Biz 요건 ID"
+          ],
+          "default_column": 1
+        },
+        {
+          "field": "biz_requirement_name|domain",
+          "header_names": [
+            "Biz요건명",
+            "업무",
+            "업무명"
+          ],
+          "default_column": 2
+        },
+        {
+          "field": "category",
+          "header_names": [
+            "요구사항구분",
+            "구분"
+          ],
+          "default_column": 3
+        },
+        {
+          "field": "creation_stage",
+          "header_names": [
+            "생성단계"
+          ],
+          "optional": true,
+          "default_column": 4
+        },
+        {
+          "field": "status",
+          "header_names": [
+            "상태구분",
+            "상태"
+          ],
+          "optional": true,
+          "default_column": 5
+        },
+        {
+          "field": "source",
+          "header_names": [
+            "출처"
+          ],
+          "optional": true,
+          "default_column": 6
+        },
+        {
+          "field": "requirement_id",
+          "header_names": [
+            "요구사항ID"
+          ],
+          "default_column": 7
+        },
+        {
+          "field": "requirement_name",
+          "header_names": [
+            "요구사항명"
+          ],
+          "default_column": 8
+        },
+        {
+          "field": "description",
+          "header_names": [
+            "기능/비기능요구사항",
+            "기능/비기능요구사항(취합정리 5/25)",
+            "요구사항내용"
+          ],
+          "default_column": 9
+        },
+        {
+          "field": "user_auth_requirement",
+          "header_names": [
+            "사용자권한요구사항"
+          ],
+          "optional": true,
+          "default_column": 10
+        },
+        {
+          "field": "request_dept",
+          "header_names": [
+            "의뢰부서"
+          ],
+          "optional": true,
+          "default_column": 11
+        },
+        {
+          "field": "owner_team",
+          "header_names": [
+            "요구사항처리담당팀"
+          ],
+          "optional": true,
+          "default_column": 12
+        },
+        {
+          "field": "review_status",
+          "header_names": [
+            "검토 상태",
+            "검토상태"
+          ],
+          "optional": true,
+          "default_column": 13
+        },
+        {
+          "field": "note",
+          "header_names": [
+            "검토의견"
+          ],
+          "optional": true,
+          "default_column": 14
+        },
+        {
+          "field": "change_requirement_id",
+          "header_names": [
+            "변경요구사항ID"
+          ],
+          "optional": true,
+          "default_column": 15
+        },
+        {
+          "field": "change_date",
+          "header_names": [
+            "변경일"
+          ],
+          "optional": true,
+          "default_column": 16
+        },
+        {
+          "field": "source_doc",
+          "header_names": [
+            "근기문서",
+            "근거문서"
+          ],
+          "optional": true,
+          "default_column": 17
+        },
+        {
+          "field": "ace",
+          "header_names": [
+            "ACE"
+          ],
+          "optional": true,
+          "default_column": 18
+        },
+        {
+          "field": "requirement_type",
+          "header_names": [
+            "기능/비기능요구사항 유형",
+            "요구사항유형"
+          ],
+          "optional": true
+        }
+      ]
+    }
+  },
+  "wbs": {
+    "template_path": "template/탬플릿_WBS.xlsx",
+    "data_sheet": {
+      "sheet_name": "WBS",
+      "header_row": 1,
+      "start_row": 2,
+      "clear_existing_rows": true,
+      "columns": [
+        {
+          "field": "row_number",
+          "header_names": [
+            "NO",
+            "No",
+            "번호"
+          ],
+          "optional": true
+        },
+        {
+          "field": "level",
+          "header_names": [
+            "레벨"
+          ],
+          "default_column": 2
+        },
+        {
+          "field": "id",
+          "header_names": [
+            "ID"
+          ],
+          "default_column": 3
+        },
+        {
+          "field": "wbs_name",
+          "header_names": [
+            "WBS명"
+          ],
+          "default_column": 4
+        },
+        {
+          "field": "deliverable",
+          "header_names": [
+            "산출물"
+          ],
+          "default_column": 8
+        }
+      ]
+    },
+    "common_template_path": "template/wbs_template.json",
+    "deliverable_mapper_path": "template/deliverable_mapper.json"
+  },
+  "screen_plan": {
+    "template_path": "template/탬플릿_화면설계서.pptx",
+    "common_slide_indices": [
+      0,
+      1
+    ],
+    "template_slide_index": 2,
+    "placeholder_slides": {
+      "common": {
+        "{프로젝트명}": "project_name",
+        "{작성자명}": "author",
+        "{작성자}": "author",
+        "{작성일}": "today"
+      },
+      "screen_item": {
+        "{요구사항ID}": "requirement_id",
+        "{화면ID}": "screen_id|screen_no",
+        "{화면번호}": "screen_no",
+        "{화면명}": "screen_name",
+        "{서브시스템명}": "",
+        "{메뉴위치}": ""
+      }
+    },
+    "description_table": {
+      "header_text": "Description",
+      "min_rows": 11,
+      "min_columns": 2,
+      "start_row": 1,
+      "target_column": 1,
+      "max_items": 10,
+      "clear_rows_before_fill": true,
+      "display_items_field": "display_items",
+      "text_format": "{item_name}: {description}"
+    }
+  },
+  "project_profile": {
+    "project_type": "auto"
+  }
+}

@@ -6,7 +6,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
 from app.api import (
     artifacts,
@@ -95,7 +95,16 @@ async def sqlalchemy_error_handler(
 ) -> JSONResponse:
     logger.exception("Database error while handling request")
     error_text = str(exc).lower()
-    if isinstance(exc, OperationalError) and "no such table" in error_text:
+    schema_not_ready_markers = (
+        "no such table",
+        "undefinedtable",
+        "relation",
+        "does not exist",
+    )
+    if (
+        isinstance(exc, (OperationalError, ProgrammingError))
+        and any(marker in error_text for marker in schema_not_ready_markers)
+    ):
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -103,6 +112,17 @@ async def sqlalchemy_error_handler(
                 message="database schema is not initialized",
                 error_code="DB_SCHEMA_NOT_READY",
                 detail="Run `python -m app.db.init_schema` for the configured DATABASE_URL.",
+            ).model_dump(mode="json"),
+        )
+
+    if "type \"vector\" does not exist" in error_text or "extension" in error_text and "vector" in error_text:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                success=False,
+                message="pgvector extension is not initialized",
+                error_code="DB_VECTOR_EXTENSION_NOT_READY",
+                detail="Enable pgvector first, for example: CREATE EXTENSION IF NOT EXISTS vector; then run python -m app.db.init_schema.",
             ).model_dump(mode="json"),
         )
 

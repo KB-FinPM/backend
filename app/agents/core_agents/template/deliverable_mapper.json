@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "description": "Biz요건명/단계 키워드 기반 산출물 매핑. 불명확하면 빈 값으로 둔다.",
+  "default_by_phase": {
+    "분석": "요구사항정의서",
+    "설계": "설계서",
+    "개발": "개발결과서",
+    "구축": "구축결과서",
+    "스테이징": "스테이징검증결과서",
+    "운영": "운영전환계획서",
+    "테스트": "테스트결과서"
+  },
+  "keyword_rules": [
+    {"keywords":["OCP","OpenShift","PaaS","클러스터"],"deliverables":["아키텍처설계서","클러스터구성도","설치가이드","구축결과서"]},
+    {"keywords":["Kafka","KRaft","메시지"],"deliverables":["Kafka구성도","설치가이드","운영가이드"]},
+    {"keywords":["EFK","Elastic","Kibana","로그"],"deliverables":["로그구성도","로그설계서","운영가이드"]},
+    {"keywords":["CDC","DB동기화","동기화"],"deliverables":["데이터동기화설계서","동기화검증결과서"]},
+    {"keywords":["API","Gateway","인터페이스"],"deliverables":["인터페이스설계서","API명세서"]},
+    {"keywords":["화면","UI","UX","프론트"],"deliverables":["화면설계서","UI정의서"]},
+    {"keywords":["배치","Control-M"],"deliverables":["배치설계서","배치운영가이드"]},
+    {"keywords":["보안","권한","인증"],"deliverables":["보안설계서","권한정의서"]},
+    {"keywords":["DB","데이터","테이블"],"deliverables":["DB설계서","테이블정의서"]}
+  ]
+}

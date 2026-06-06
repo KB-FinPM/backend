@@ -3,17 +3,18 @@
 
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 
-from app.core.config import settings
+from app.core.config import normalize_async_database_url, settings
 from app.db.base import Base
 
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    normalize_async_database_url(settings.DATABASE_URL),
     echo=settings.DEBUG,
     pool_pre_ping=True,
 )
@@ -32,6 +33,8 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     async with engine.begin() as connection:
+        if connection.dialect.name == "postgresql":
+            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await connection.run_sync(Base.metadata.create_all)
 
 
