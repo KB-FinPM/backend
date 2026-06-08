@@ -72,7 +72,7 @@ class ScreenDesignAgent:
                         "generated_by": self.AGENT_NAME,
                         "source_requirement_count": len(atoms),
                         "screen_requirement_count": len(screen_atoms),
-                        "process_rule": "Create one screen-design page per requirement ID and write the work description from each requirement",
+                        "process_rule": "Create one screen-design page per requirement ID and write only the requirement description into the template Description area",
                     },
                 },
             )
@@ -127,11 +127,10 @@ class ScreenDesignAgent:
         return truncate_text(atom.description or requirement_name, 700)
 
     def _display_items(self, atom):
-        requirement_desc = self._work_description(atom)
         return [
             {
                 "item_name": "Description",
-                "description": truncate_text(requirement_desc, 300),
+                "description": truncate_text(self._work_description(atom), 300),
             }
         ]
 

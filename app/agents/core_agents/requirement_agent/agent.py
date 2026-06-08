@@ -82,6 +82,7 @@ class RequirementAgent:
                     project_id=request.project_id,
                     generated_by=self.AGENT_NAME,
                 )
+                self._apply_request_metadata(result, request)
 
             logger.info(f"[{self.AGENT_NAME}] generate done")
             return AgentResponse(agent_name=self.AGENT_NAME, result=result)
@@ -108,11 +109,13 @@ class RequirementAgent:
         table_atoms = extract_requirement_atoms_from_pipe_tables(documents)
         if table_atoms:
             atoms = assign_requirement_ids(deduplicate_requirement_atoms(table_atoms))
-            return atoms_to_requirement_artifact(
+            result = atoms_to_requirement_artifact(
                 atoms,
                 project_id=request.project_id,
                 generated_by=self.AGENT_NAME,
             )
+            self._apply_request_metadata(result, request)
+            return result
 
         # 2) Fallback to sample_0605 chunk-by-chunk LLM extraction when no
         # source requirement table is detected.
@@ -144,11 +147,42 @@ class RequirementAgent:
         atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
         if not atoms:
             return None
-        return atoms_to_requirement_artifact(
+        result = atoms_to_requirement_artifact(
             atoms,
             project_id=request.project_id,
             generated_by=self.AGENT_NAME,
         )
+        self._apply_request_metadata(result, request)
+        return result
+
+    def _apply_request_metadata(
+        self,
+        result: dict[str, Any],
+        request: AgentRequest,
+    ) -> None:
+        result["metadata"] = self._metadata_with_request_context(
+            result.get("metadata") or {},
+            request,
+        )
+
+    def _metadata_with_request_context(
+        self,
+        metadata: dict[str, Any],
+        request: AgentRequest,
+    ) -> dict[str, Any]:
+        context = request.context or {}
+        author = (
+            context.get("author")
+            or context.get("writer")
+            or context.get("created_by")
+            or context.get("user_id")
+        )
+        if not author:
+            return metadata
+        return {
+            **metadata,
+            "author": str(author),
+        }
 
     def _build_chunk_prompt(
         self,

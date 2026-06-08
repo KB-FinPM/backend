@@ -222,7 +222,6 @@ class ArtifactExportService:
         return self._save_workbook(wb)
 
     def _build_screen_design_pptx(self, result_json: dict[str, Any]) -> bytes:
-        from copy import deepcopy
         from pptx import Presentation
         from pptx.util import Inches, Pt
 
@@ -897,17 +896,45 @@ class ArtifactExportService:
         from copy import deepcopy
 
         source = prs.slides[template_slide_index]
-        dest = prs.slides.add_slide(self._get_blank_slide_layout(prs))
+        dest = prs.slides.add_slide(source.slide_layout)
+        self._clear_slide_shapes(dest)
+        self._copy_slide_background(source, dest)
 
         for shape in source.shapes:
             dest.shapes._spTree.insert_element_before(deepcopy(shape.element), "p:extLst")
 
-        # Do not copy slide relationships with python-pptx private APIs.
-        # Template slide duplication here only needs editable shapes/tables/text.
-        # Copying rels can fail on python-pptx versions where _Relationships
-        # has no add_relationship() method, and can also duplicate rIds.
+        self._copy_slide_relationships(source, dest)
         return dest
 
+    def _copy_slide_background(self, source_slide: Any, dest_slide: Any) -> None:
+        from copy import deepcopy
+
+        source_bg = getattr(getattr(source_slide, "_element", None), "cSld", None)
+        source_bg = getattr(source_bg, "bg", None)
+        if source_bg is None:
+            return
+        dest_c_sld = getattr(getattr(dest_slide, "_element", None), "cSld", None)
+        if dest_c_sld is None:
+            return
+        dest_bg = getattr(dest_c_sld, "bg", None)
+        if dest_bg is not None:
+            dest_c_sld.remove(dest_bg)
+        dest_c_sld.insert(0, deepcopy(source_bg))
+
+    def _copy_slide_relationships(self, source_slide: Any, dest_slide: Any) -> None:
+        skip_reltypes = {
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide",
+        }
+        for rel in getattr(source_slide.part.rels, "_rels", {}).values():
+            if rel.reltype in skip_reltypes:
+                continue
+            target = rel.target_ref if rel.is_external else rel.target_part
+            dest_slide.part.relate_to(target, rel.reltype, is_external=rel.is_external)
+
+    def _clear_slide_shapes(self, slide: Any) -> None:
+        for shape in list(slide.shapes):
+            shape.element.getparent().remove(shape.element)
 
     def _delete_slide(self, prs: Any, slide_index: int) -> None:
         xml_slides = prs.slides._sldIdLst
