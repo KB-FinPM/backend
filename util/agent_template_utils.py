@@ -142,10 +142,18 @@ def get_nested(config: dict[str, Any], *keys: str, default: Any = None) -> Any:
 
 def build_template_context(project_id: str = "", context: dict[str, Any] | None = None) -> dict[str, str]:
     context = context or {}
+    author = (
+        context.get("author")
+        or context.get("writer")
+        or context.get("created_by")
+        or context.get("user_id")
+        or context.get("requester")
+        or "작성자"
+    )
     return {
         "project_id": str(project_id or ""),
         "project_name": str(context.get("project_name") or context.get("project_id") or project_id or "프로젝트명"),
-        "author": str(context.get("author") or ""),
+        "author": str(author),
         "today": datetime.today().strftime("%Y-%m-%d"),
     }
 

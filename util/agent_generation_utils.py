@@ -374,6 +374,12 @@ def _clean_cell_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").replace("\\n", "\n")).strip()
 
 
+def _clean_description_cell_text(value: str) -> str:
+    text = str(value or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
 def _looks_like_requirement_detail(text: str) -> bool:
     value = str(text or "").strip()
     if not value:
@@ -383,6 +389,124 @@ def _looks_like_requirement_detail(text: str) -> bool:
         "모니터링", "로그", "백업", "보안", "API", "화면", "조회", "등록", "수정", "삭제", "검색",
     ]
     return any(keyword.lower() in value.lower() for keyword in keywords)
+
+
+EXCLUDED_REQUIREMENT_SECTION_KEYWORDS = [
+    "개요",
+    "범위",
+    "배경",
+    "일정",
+    "조직도",
+    "별첨",
+]
+
+TARGET_REQUIREMENT_SECTION_KEYWORDS = [
+    "개정이력",
+    "목차",
+    "기간",
+    "상세요건",
+    "상세 요건",
+    "수립방안",
+    "수립 방안",
+    "개발상세",
+    "개발 상세",
+    "요건내용",
+    "요건 내용",
+    "요구사항",
+    "상세",
+]
+
+
+def _normalize_section_title(value: Any) -> str:
+    title = str(value or "").strip()
+    title = re.sub(r"^#{1,6}\s*", "", title)
+    title = re.sub(r"^\d+(?:\.\d+)*\s*", "", title)
+    title = title.rstrip(":：>").strip()
+    return title
+
+
+def _is_excluded_requirement_section(title: Any) -> bool:
+    normalized = _normalize_section_title(title)
+    if not normalized:
+        return False
+    return any(keyword in normalized for keyword in EXCLUDED_REQUIREMENT_SECTION_KEYWORDS)
+
+
+def _is_target_requirement_section(title: Any) -> bool:
+    normalized = _normalize_section_title(title)
+    if not normalized:
+        return False
+    return any(keyword in normalized for keyword in TARGET_REQUIREMENT_SECTION_KEYWORDS)
+
+
+def _looks_like_heading_line(line: str) -> bool:
+    value = str(line or "").strip()
+    if not value or "|" in value:
+        return False
+    if _looks_like_note_line(value):
+        return False
+    if len(value) > 80:
+        return False
+    return bool(
+        re.match(r"^(?:#{1,6}\s*)?(?:\d+(?:\.\d+)*\s*)?[가-힣A-Za-z0-9][가-힣A-Za-z0-9\s/_()·.-]*(?:[:：>])?$", value)
+    )
+
+
+def _looks_like_note_line(value: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(re.match(r"^(?:주|주석|note)\s*\d+\s*[\).:：]", text, flags=re.IGNORECASE))
+
+
+def _looks_like_table_title_line(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text or "|" in text or _looks_like_note_line(text):
+        return False
+    text = text.lstrip("-•ㅇ○· ").strip()
+    return bool(text) and len(text) <= 100
+
+
+def _is_table_divider_row(cells: list[str]) -> bool:
+    values = [cell.strip() for cell in cells if cell.strip()]
+    return bool(values) and all(re.fullmatch(r"[-: ]{2,}", value) for value in values)
+
+
+def _is_generic_table_header(cells: list[str]) -> bool:
+    normalized = {_normalize_header_name(cell) for cell in cells if cell.strip()}
+    header_tokens = {
+        "구분",
+        "업무",
+        "업무명",
+        "기능구분",
+        "주요내용",
+        "상세",
+        "상세내용",
+        "내용",
+        "요건명",
+        "요건내용",
+        "요구사항명",
+        "요구사항내용",
+    }
+    return bool(normalized) and len(normalized.intersection(header_tokens)) >= min(2, len(normalized))
+
+
+def _compact_non_empty_cells(cells: list[str]) -> list[str]:
+    return [cell.strip() for cell in cells if cell and cell.strip()]
+
+
+def _compact_generic_cells(raw_cells: list[str]) -> list[str]:
+    indices = [idx for idx, cell in enumerate(raw_cells) if _clean_cell_text(cell)]
+    if len(indices) >= 3:
+        return [
+            _clean_cell_text(raw_cells[indices[0]]),
+            _clean_cell_text(raw_cells[indices[1]]),
+            _clean_description_cell_text(raw_cells[indices[2]]),
+        ]
+    if len(indices) == 2:
+        return [
+            _clean_cell_text(raw_cells[indices[0]]),
+            _clean_description_cell_text(raw_cells[indices[1]]),
+        ]
+    return []
 
 
 def split_requirement_detail_items(text: str) -> list[str]:
@@ -432,6 +556,9 @@ def _make_atom_from_table_row(
     category = category or _classify_category(f"{biz_requirement_name} {requirement_name} {description}")
     req_type = "비기능요구사항" if category in {"비기능", "인프라", "보안", "운영"} else "기능요구사항"
     title = truncate_text(requirement_name or description or biz_requirement_name or requirement_id, 120)
+    source_file_name = (document.get("metadata") or {}).get("source_file_name")
+    work = metadata.get("work") or metadata.get("section_title") or metadata.get("domain") or ""
+    section_category = metadata.get("section_category") or metadata.get("section_title") or metadata.get("domain") or ""
     return RequirementAtom(
         requirement_id=requirement_id,
         title=title,
@@ -453,11 +580,17 @@ def _make_atom_from_table_row(
             "category": category,
             "biz_requirement_id": biz_requirement_id,
             "biz_requirement_name": biz_requirement_name,
+            "work": work,
+            "section_category": section_category,
             "requirement_id": requirement_id,
             "requirement_name": title,
             "requirement_type": req_type,
             "description": description or title,
-            "source_file_name": (document.get("metadata") or {}).get("source_file_name"),
+            "creation_stage": metadata.get("creation_stage") or "요구사항정의",
+            "status": metadata.get("status") or "신규",
+            "source": metadata.get("source") or "구축요건정의서",
+            "source_file_name": source_file_name,
+            "source_doc": metadata.get("source_doc") or source_file_name,
         },
     )
 
@@ -526,11 +659,51 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
     for document in documents or []:
         metadata = document.get("metadata") or {}
         chunk_id = document.get("chunk_id")
+        section_title = _normalize_section_title(document.get("section_title") or "")
+        current_table_title = section_title if section_title and section_title != "ROOT" else ""
+        section_is_excluded = _is_excluded_requirement_section(section_title)
+        has_target_section = _is_target_requirement_section(section_title)
         for raw_line in str(document.get("text") or "").splitlines():
+            stripped_line = str(raw_line or "").strip()
+            if not stripped_line:
+                continue
+            if _looks_like_note_line(stripped_line):
+                continue
+            if "|" not in raw_line:
+                if _looks_like_table_title_line(stripped_line):
+                    current_table_title = _normalize_section_title(
+                        stripped_line.lstrip("-•ㅇ○· ").strip()
+                    )
+                    section_is_excluded = _is_excluded_requirement_section(current_table_title)
+                    has_target_section = (
+                        has_target_section
+                        or _is_target_requirement_section(current_table_title)
+                    )
+                    header_indices = {}
+                    generic_table_mode = False
+                    generic_indices = {}
+                    continue
+                if _looks_like_heading_line(stripped_line):
+                    current_table_title = _normalize_section_title(stripped_line)
+                    section_is_excluded = _is_excluded_requirement_section(current_table_title)
+                    has_target_section = (
+                        has_target_section
+                        or _is_target_requirement_section(current_table_title)
+                    )
+                    header_indices = {}
+                    generic_table_mode = False
+                    generic_indices = {}
+                continue
+            if section_is_excluded:
+                continue
             if "|" not in raw_line:
                 continue
-            cells = [_clean_cell_text(cell) for cell in _split_pipe_row(raw_line)]
-            if not cells:
+            raw_cells = _split_pipe_row(raw_line)
+            cells = [_clean_cell_text(cell) for cell in raw_cells]
+            description_cells = [_clean_description_cell_text(cell) for cell in raw_cells]
+            if not cells or _is_table_divider_row(cells):
+                continue
+            if cells and _looks_like_note_line(cells[0]):
                 continue
 
             normalized_cells = [_normalize_header_name(cell) for cell in cells]
@@ -546,45 +719,135 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
             if {"기능구분", "주요내용", "상세"}.issubset(set(normalized_cells)):
                 generic_table_mode = True
                 generic_indices = {
-                    "category": normalized_cells.index("기능구분"),
+                    "biz_requirement_name": normalized_cells.index("기능구분"),
                     "requirement_name": normalized_cells.index("주요내용"),
                     "description": normalized_cells.index("상세"),
                 }
                 header_indices = {}
                 continue
+            if _is_generic_table_header(cells):
+                compact_header = _compact_generic_cells(raw_cells)
+                if len(compact_header) == 3:
+                    generic_table_mode = True
+                    generic_indices = {
+                        "biz_requirement_name": 0,
+                        "requirement_name": 1,
+                        "description": 2,
+                    }
+                    header_indices = {}
+                elif len(compact_header) == 2:
+                    generic_table_mode = True
+                    generic_indices = {
+                        "biz_requirement_name": 0,
+                        "requirement_name": 0,
+                        "description": 1,
+                    }
+                    header_indices = {}
+                continue
 
             if generic_table_mode and generic_indices:
+                compact_cells = _compact_generic_cells(raw_cells)
+                if len(compact_cells) >= 3:
+                    generic_cells = compact_cells[:3]
+                    generic_indices = {
+                        "biz_requirement_name": 0,
+                        "requirement_name": 1,
+                        "description": 2,
+                    }
+                elif len(compact_cells) == 2:
+                    generic_cells = compact_cells[:2]
+                    generic_indices = {
+                        "biz_requirement_name": 0,
+                        "requirement_name": 0,
+                        "description": 1,
+                    }
+                else:
+                    continue
+
                 def g(field: str) -> str:
                     idx = generic_indices.get(field)
-                    if idx is None or idx >= len(cells):
+                    if idx is None or idx >= len(generic_cells):
                         return ""
-                    return cells[idx].strip()
-                biz_name = g("category") or "공통"
+                    return generic_cells[idx].strip()
+
+                biz_name = g("biz_requirement_name") or "공통"
                 req_name = g("requirement_name")
                 detail = g("description")
+                table_title = current_table_title or document.get("section_title") or "공통"
                 if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
                     continue
-                detail_items = split_requirement_detail_items(detail)
-                for detail_index, detail_item in enumerate(detail_items, start=1):
-                    atomic_name = req_name
-                    if len(detail_items) > 1:
-                        atomic_name = truncate_text(f"{req_name} - {detail_item}", 120)
-                    atoms.append(_make_atom_from_table_row(
-                        document=document,
-                        chunk_id=chunk_id,
-                        category=_classify_category(f"{biz_name} {req_name} {detail_item}"),
-                        biz_requirement_id="",
-                        biz_requirement_name=biz_name,
-                        requirement_id="",
-                        requirement_name=atomic_name,
-                        description=detail_item,
-                        metadata={
-                            "source": "구축요건정의서",
-                            "source_doc": metadata.get("source_file_name"),
-                            "raw_table_category": biz_name,
-                            "raw_table_title": req_name,
-                        },
-                    ))
+                atom = _make_atom_from_table_row(
+                    document=document,
+                    chunk_id=chunk_id,
+                    category="기능",
+                    biz_requirement_id="",
+                    biz_requirement_name=biz_name,
+                    requirement_id="",
+                    requirement_name=req_name,
+                    description=detail,
+                    metadata={
+                        "source": "구축요건정의서",
+                        "source_doc": metadata.get("source_file_name"),
+                        "raw_table_category": biz_name,
+                        "raw_table_title": req_name,
+                        "section_title": _normalize_section_title(table_title),
+                        "work": _normalize_section_title(table_title),
+                        "section_category": _normalize_section_title(table_title),
+                    },
+                )
+                if table_title:
+                    atom.domain = _normalize_section_title(table_title)
+                    atom.metadata["domain"] = atom.domain
+                atoms.append(atom)
+                continue
+
+            compact_cells = _compact_generic_cells(raw_cells)
+            if not header_indices and len(compact_cells) in {2, 3} and (
+                has_target_section or current_table_title
+            ):
+                generic_table_mode = True
+                if len(compact_cells) == 3:
+                    generic_indices = {
+                        "biz_requirement_name": 0,
+                        "requirement_name": 1,
+                        "description": 2,
+                    }
+                else:
+                    generic_indices = {
+                        "biz_requirement_name": 0,
+                        "requirement_name": 0,
+                        "description": 1,
+                    }
+                # Re-process this row now that generic mode is established.
+                biz_name = compact_cells[generic_indices["biz_requirement_name"]]
+                req_name = compact_cells[generic_indices["requirement_name"]]
+                detail = compact_cells[generic_indices["description"]]
+                table_title = current_table_title or document.get("section_title") or "공통"
+                if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
+                    continue
+                atom = _make_atom_from_table_row(
+                    document=document,
+                    chunk_id=chunk_id,
+                    category="기능",
+                    biz_requirement_id="",
+                    biz_requirement_name=biz_name or "공통",
+                    requirement_id="",
+                    requirement_name=req_name or detail,
+                    description=detail,
+                    metadata={
+                        "source": "구축요건정의서",
+                        "source_doc": metadata.get("source_file_name"),
+                        "raw_table_category": biz_name,
+                        "raw_table_title": req_name,
+                        "section_title": _normalize_section_title(table_title),
+                        "work": _normalize_section_title(table_title),
+                        "section_category": _normalize_section_title(table_title),
+                    },
+                )
+                if table_title:
+                    atom.domain = _normalize_section_title(table_title)
+                    atom.metadata["domain"] = atom.domain
+                atoms.append(atom)
                 continue
 
             if not header_indices:
@@ -594,6 +857,8 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                 idx = header_indices.get(field)
                 if idx is None or idx >= len(cells):
                     return ""
+                if field in {"description", "note"}:
+                    return description_cells[idx].strip()
                 return cells[idx].strip()
 
             requirement_name = get("requirement_name")
@@ -656,7 +921,7 @@ def deduplicate_requirement_atoms(atoms: Iterable[RequirementAtom]) -> list[Requ
 
 
 def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[RequirementAtom]:
-    """Assign Biz/REQ IDs in sample-compatible BIZ-001 / REQ-0001 format."""
+    """Assign Biz/BSR IDs in reference-compatible Biz-0001 / BSR-00001 format."""
     biz_seq: dict[str, int] = {}
     result: list[RequirementAtom] = []
     for idx, atom in enumerate(list(atoms or []), start=1):
@@ -667,7 +932,7 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
         if not atom.domain:
             atom.domain = biz_name
         if not atom.biz_requirement_id:
-            atom.biz_requirement_id = f"BIZ-{biz_seq[biz_name]:03d}"
+            atom.biz_requirement_id = f"Biz-{biz_seq[biz_name]:04d}"
         # Preserve source requirement IDs such as BFE-21000 from existing
         # requirement tables. Only assign REQ-0001 style IDs when the source did
         # not provide one or when it is a generated placeholder.
@@ -677,7 +942,7 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             or current_id.startswith(('RQ-', 'Requirement'))
             or re.fullmatch(r'REQ-?\d+', current_id or '', flags=re.IGNORECASE)
         ):
-            atom.requirement_id = f"REQ-{idx:04d}"
+            atom.requirement_id = f"BSR-{idx:05d}"
         else:
             atom.requirement_id = current_id
         if not atom.requirement_name:
@@ -694,6 +959,11 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             'requirement_type': atom.requirement_type,
             'domain': atom.domain,
             'feature': atom.feature,
+            'work': atom.metadata.get('work') or atom.domain,
+            'section_category': atom.metadata.get('section_category') or atom.domain,
+            'creation_stage': atom.metadata.get('creation_stage') or '요구사항정의',
+            'status': atom.metadata.get('status') or '신규',
+            'source': atom.metadata.get('source') or '구축요건정의서',
             'note': atom.metadata.get('note') if atom.metadata.get('note') not in (None, '') else '',
         }
         result.append(atom)

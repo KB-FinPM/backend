@@ -5,6 +5,9 @@ import json
 from typing import Any
 
 from app.core.logger import get_logger
+from app.agents.core_agents.requirement_agent.document_preprocessor import (
+    normalize_requirement_documents,
+)
 from app.schemas.agent import AgentRequest, AgentResponse
 from util.agent_generation_utils import (
     assign_requirement_ids,
@@ -65,7 +68,8 @@ class RequirementAgent:
         try:
             result = await self._generate_with_orchestrator(request)
             if result is None:
-                atoms = normalize_requirement_atoms(None, documents=request.documents)
+                documents = normalize_requirement_documents(request.documents)
+                atoms = normalize_requirement_atoms(None, documents=documents)
                 atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
                 if not atoms:
                     return AgentResponse(
@@ -94,10 +98,7 @@ class RequirementAgent:
         if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
             return None
 
-        documents = sorted(
-            request.documents or [],
-            key=lambda item: int(item.get("chunk_index") or 0),
-        )
+        documents = normalize_requirement_documents(request.documents)
         if not documents:
             return None
 

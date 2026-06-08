@@ -167,6 +167,11 @@ class ArtifactExportService:
                     continue
                 ws = wb[sheet_name]
                 self._write_mapped_rows(ws, result_json.get("requirements", []), sheet_cfg, columns, context, self._requirement_source)
+                self._write_requirement_reference_fields(
+                    ws,
+                    result_json.get("requirements", []),
+                    sheet_cfg,
+                )
             return self._save_workbook(wb)
 
         wb = Workbook()
@@ -177,8 +182,13 @@ class ArtifactExportService:
         for row_number, item in enumerate(result_json.get("requirements", []), start=1):
             source = self._requirement_source(item)
             ws.append([get_value(source, column.get("field"), context=context, row_number=row_number) for column in columns] if columns else [
-                source.get("category", ""), source.get("biz_requirement_id", ""), source.get("biz_requirement_name") or source.get("domain", ""), source.get("requirement_id", ""), source.get("requirement_name", ""), source.get("requirement_type", ""), source.get("note") or source.get("description", ""),
+                source.get("category", ""), source.get("biz_requirement_id", ""), source.get("biz_requirement_name") or source.get("domain", ""), source.get("requirement_id", ""), source.get("requirement_name", ""), source.get("requirement_type", ""), source.get("note", ""),
             ])
+        self._write_requirement_reference_fields(
+            ws,
+            result_json.get("requirements", []),
+            sheet_cfg,
+        )
         self._style_sheet(ws, widths=[18, 18, 24, 18, 36, 22, 60, 20, 20, 20, 20, 20, 20, 20, 20, 60])
         return self._save_workbook(wb)
 
@@ -197,6 +207,7 @@ class ArtifactExportService:
             wb = load_workbook(resolve_template_path(template_path))
             ws = wb[sheet_cfg.get("sheet_name", "WBS")]
             self._write_mapped_rows(ws, tasks, sheet_cfg, columns, context, self._wbs_source)
+            self._write_wbs_display_ids(ws, tasks, sheet_cfg, columns)
             return self._save_workbook(wb)
 
         wb = Workbook()
@@ -308,8 +319,19 @@ class ArtifactExportService:
         ]
         merged = list(columns or [])
         seen_fields = {str(column.get("field")) for column in merged if isinstance(column, dict)}
+        seen_field_parts = {
+            part.strip()
+            for field in seen_fields
+            for part in field.split("|")
+            if part.strip()
+        }
         for column in legacy_columns:
-            if column["field"] not in seen_fields:
+            field_parts = {
+                part.strip()
+                for part in str(column["field"]).split("|")
+                if part.strip()
+            }
+            if column["field"] not in seen_fields and not field_parts.intersection(seen_field_parts):
                 merged.append(column)
         return merged
 
@@ -318,10 +340,12 @@ class ArtifactExportService:
         return {
             **metadata,
             **item,
+            "work": metadata.get("work") or metadata.get("domain") or "",
+            "section_category": metadata.get("section_category") or metadata.get("domain") or "",
             "requirement_id": item.get("requirement_id") or metadata.get("requirement_id", ""),
             "requirement_name": metadata.get("requirement_name") or item.get("title", ""),
             "description": metadata.get("description") or item.get("description", ""),
-            "note": metadata.get("note") or item.get("description", ""),
+            "note": metadata.get("note") or "",
         }
 
     def _normalize_wbs_hierarchy(self, tasks: list[dict[str, Any]], project_name: str = "프로젝트명") -> list[dict[str, Any]]:
@@ -358,8 +382,10 @@ class ArtifactExportService:
                 wbs_id = ".".join(str(counters[idx]) for idx in range(1, level + 1))
             metadata["level"] = str(level)
             metadata["wbs_id"] = wbs_id
+            metadata["id"] = wbs_id
             task["level"] = str(level)
             task["wbs_id"] = wbs_id
+            task["id"] = wbs_id
             normalized.append(task)
         return normalized
 
@@ -524,6 +550,87 @@ class ArtifactExportService:
                     continue
                 cell.value = get_value(source, column_mapper.get("field", ""), context=context, row_number=row_number)
 
+    def _write_requirement_reference_fields(
+        self,
+        ws: Any,
+        items: list[dict[str, Any]],
+        data_mapper: dict[str, Any],
+    ) -> None:
+        """Force reference-specific requirement columns after mapper writes.
+
+        Runtime can prefer an S3-hosted output_mapper.json. This final pass uses
+        the actual template headers so stale mapper aliases cannot overwrite
+        업무/구분 with Biz요건명 or copy description into 검토의견.
+        """
+        from openpyxl.cell.cell import MergedCell
+
+        header_row = int(data_mapper.get("header_row", 1))
+        start_row = int(data_mapper.get("start_row", 2))
+        headers = self._header_map(ws, header_row=header_row)
+        column_by_header = {
+            str(header).replace("\n", "").strip(): column
+            for header, column in headers.items()
+        }
+        default_requirement_columns = (
+            {
+                "업무": 1,
+                "구분": 2,
+                "요구사항구분": 5,
+                "기능/비기능요구사항": 11,
+                "검토의견": 16,
+            }
+            if ws.title == "요구사항명세서"
+            else {}
+        )
+        forced_fields = [
+            ("업무", "work|domain"),
+            ("구분", "section_category|domain"),
+            ("요구사항구분", "category"),
+            ("기능/비기능요구사항", "description"),
+            ("검토의견", "note"),
+        ]
+        for row_offset, item in enumerate(items or []):
+            source = self._requirement_source(item)
+            excel_row = start_row + row_offset
+            for header, field_expr in forced_fields:
+                column = default_requirement_columns.get(header) or column_by_header.get(header)
+                if column is None:
+                    continue
+                cell = ws.cell(row=excel_row, column=column)
+                if isinstance(cell, MergedCell):
+                    continue
+                cell.value = get_value(source, field_expr) if header != "검토의견" else ""
+
+    def _write_wbs_display_ids(
+        self,
+        ws: Any,
+        tasks: list[dict[str, Any]],
+        data_mapper: dict[str, Any],
+        columns: list[dict[str, Any]],
+    ) -> None:
+        """Force-fill the WBS display ID column after template mapping."""
+        from openpyxl.cell.cell import MergedCell
+
+        header_row = int(data_mapper.get("header_row", 1))
+        start_row = int(data_mapper.get("start_row", 2))
+        headers = self._header_map(ws, header_row=header_row)
+        id_column = None
+        for column_mapper in columns:
+            if column_mapper.get("field") in {"id", "wbs_id"}:
+                id_column = self._find_column(headers, column_mapper)
+                break
+        if id_column is None:
+            id_column = 3
+
+        for row_offset, task in enumerate(tasks):
+            source = self._wbs_source(task)
+            display_id = source.get("id") or source.get("wbs_id")
+            if display_id in (None, ""):
+                continue
+            cell = ws.cell(row=start_row + row_offset, column=id_column)
+            if not isinstance(cell, MergedCell):
+                cell.value = display_id
+
     def _replace_common_slide_placeholders(self, prs: Any, mapper: dict[str, Any], context: dict[str, str]) -> None:
         common_values = build_placeholder_values(get_nested(mapper, "placeholder_slides", "common", default={}) or {}, context=context)
         for slide_index in mapper.get("common_slide_indices", [0, 1]):
@@ -539,75 +646,225 @@ class ArtifactExportService:
 
         for shape in slide.shapes:
             if getattr(shape, "has_text_frame", False):
-                original = shape.text or ""
-                replaced = replace_text(original)
-                # python-pptx may split a placeholder across multiple runs. If
-                # the full text changed, assign the whole text frame so split
-                # placeholders like {프로젝트명}, {요구사항ID}, {화면ID} are also mapped.
-                if replaced != original:
-                    shape.text = replaced
-                else:
-                    for paragraph in shape.text_frame.paragraphs:
-                        for run in paragraph.runs:
-                            run.text = replace_text(run.text)
+                self._replace_text_frame_preserving_style(
+                    shape.text_frame,
+                    replace_text,
+                )
             if getattr(shape, "has_table", False):
                 for row in shape.table.rows:
                     for cell in row.cells:
-                        original = cell.text or ""
-                        replaced = replace_text(original)
-                        if replaced != original:
-                            cell.text = replaced
-                        else:
-                            for paragraph in cell.text_frame.paragraphs:
-                                for run in paragraph.runs:
-                                    run.text = replace_text(run.text)
+                        self._replace_text_frame_preserving_style(
+                            cell.text_frame,
+                            replace_text,
+                        )
+
+    def _replace_text_frame_preserving_style(self, text_frame: Any, replace_text: Any) -> None:
+        for paragraph in text_frame.paragraphs:
+            runs = list(paragraph.runs)
+            if runs:
+                original = "".join(run.text or "" for run in runs)
+                replaced = replace_text(original)
+                if replaced != original:
+                    runs[0].text = replaced
+                    for run in runs[1:]:
+                        run.text = ""
+                    continue
+                for run in runs:
+                    run.text = replace_text(run.text)
+                continue
+
+            original = paragraph.text or ""
+            replaced = replace_text(original)
+            if replaced != original:
+                paragraph.text = replaced
+
+    def _set_text_frame_text_preserving_style(
+        self,
+        text_frame: Any,
+        text: str,
+        style_source_text_frame: Any = None,
+    ) -> None:
+        paragraphs = list(text_frame.paragraphs)
+        if not paragraphs:
+            text_frame.text = text
+            return
+        paragraph = paragraphs[0]
+        runs = list(paragraph.runs)
+        source_run = self._first_run(style_source_text_frame)
+        if runs:
+            if source_run is not None:
+                self._copy_run_font(source_run, runs[0])
+            runs[0].text = text
+            for run in runs[1:]:
+                run.text = ""
+        else:
+            run = paragraph.add_run()
+            if source_run is not None:
+                self._copy_run_font(source_run, run)
+            run.text = text
+        for extra_paragraph in paragraphs[1:]:
+            for run in extra_paragraph.runs:
+                run.text = ""
+
+    def _first_paragraph_with_run(self, text_frame: Any) -> Any:
+        if text_frame is None:
+            return None
+        for paragraph in text_frame.paragraphs:
+            if list(paragraph.runs):
+                return paragraph
+        return None
+
+    def _first_run(self, text_frame: Any) -> Any:
+        if text_frame is None:
+            return None
+        for paragraph in text_frame.paragraphs:
+            runs = list(paragraph.runs)
+            if runs:
+                return runs[0]
+        return None
+
+    def _copy_run_font(self, source_run: Any, target_run: Any) -> None:
+        source_font = source_run.font
+        target_font = target_run.font
+        target_font.name = source_font.name
+        target_font.size = source_font.size
+        target_font.bold = source_font.bold
+        target_font.italic = source_font.italic
+        target_font.underline = source_font.underline
+        if source_font.color is not None:
+            try:
+                if source_font.color.rgb is not None:
+                    target_font.color.rgb = source_font.color.rgb
+            except AttributeError:
+                pass
 
     def _fill_description_table(self, slide: Any, source: dict[str, Any], table_mapper: dict[str, Any]) -> bool:
-        display_items = list(source.get(table_mapper.get("display_items_field", "display_items"), []) or [])
-        if not display_items:
-            display_items = [
-                {"item_name": "요구사항ID", "description": source.get("requirement_id", "")},
-                {"item_name": "요구사항명", "description": source.get("requirement_name") or source.get("screen_name", "")},
-                {"item_name": "Description", "description": source.get("description", "")},
-            ]
-        else:
-            # Ensure the requirement-spec content appears in the description area
-            # even when the agent also provides UI display items.
-            mandatory = [
-                {"item_name": "요구사항ID", "description": source.get("requirement_id", "")},
-                {"item_name": "요구사항명", "description": source.get("requirement_name") or source.get("screen_name", "")},
-                {"item_name": "Description", "description": source.get("description", "")},
-            ]
-            seen_names = {str(item.get("item_name", "")).strip() for item in display_items}
-            display_items = [item for item in mandatory if str(item.get("item_name", "")).strip() not in seen_names] + display_items
-
         start_row = int(table_mapper.get("start_row", 1))
         target_column = int(table_mapper.get("target_column", 1))
         max_items = int(table_mapper.get("max_items", 10))
-        text_format = table_mapper.get("text_format", "{item_name}: {description}")
         clear_rows = bool(table_mapper.get("clear_rows_before_fill", True))
+        header_text = str(table_mapper.get("header_text") or "").strip()
+        min_rows = int(table_mapper.get("min_rows", 0))
+        min_columns = int(table_mapper.get("min_columns", 0))
+        description_lines = self._screen_description_lines(source, max_items=max_items)
         for shape in slide.shapes:
             if not getattr(shape, "has_table", False):
                 continue
             table = shape.table
+            if min_rows and len(table.rows) < min_rows:
+                continue
+            if min_columns and len(table.columns) < min_columns:
+                continue
             if len(table.columns) <= target_column:
                 continue
+            if header_text and not self._table_contains_text(table, header_text):
+                continue
+            default_style_cell = self._description_table_style_cell(
+                table,
+                start_row=start_row,
+                target_column=target_column,
+            )
             if clear_rows:
                 for row_idx in range(start_row, len(table.rows)):
                     try:
-                        table.cell(row_idx, target_column).text = ""
+                        style_cell = self._row_style_cell(
+                            table,
+                            row_idx=row_idx,
+                            target_column=target_column,
+                            default_style_cell=default_style_cell,
+                        )
+                        self._set_text_frame_text_preserving_style(
+                            table.cell(row_idx, target_column).text_frame,
+                            "",
+                            style_cell.text_frame if style_cell is not None else None,
+                        )
                     except Exception:
                         pass
-            for offset, display_item in enumerate(display_items[:max_items]):
+            for offset, description in enumerate(description_lines):
                 row_idx = start_row + offset
                 if row_idx >= len(table.rows):
                     break
-                text = text_format.format(
-                    item_name=display_item.get("item_name", ""),
-                    description=display_item.get("description", ""),
+                style_cell = self._row_style_cell(
+                    table,
+                    row_idx=row_idx,
+                    target_column=target_column,
+                    default_style_cell=default_style_cell,
                 )
-                table.cell(row_idx, target_column).text = text
+                self._set_text_frame_text_preserving_style(
+                    table.cell(row_idx, target_column).text_frame,
+                    description,
+                    style_cell.text_frame if style_cell is not None else None,
+                )
             return True
+        return False
+
+    def _screen_description_lines(self, source: dict[str, Any], max_items: int) -> list[str]:
+        description = str(source.get("description") or "").strip()
+        if not description:
+            return []
+        lines = [
+            line.strip()
+            for line in description.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if line.strip()
+        ]
+        if not lines:
+            return []
+        if len(lines) <= max_items:
+            return lines
+        return lines[: max_items - 1] + ["\n".join(lines[max_items - 1:])]
+
+    def _description_table_style_cell(
+        self,
+        table: Any,
+        *,
+        start_row: int,
+        target_column: int,
+    ) -> Any:
+        for row_idx in range(start_row, len(table.rows)):
+            cell = table.cell(row_idx, target_column)
+            if self._first_run(cell.text_frame) is not None:
+                return cell
+        for row_idx in range(start_row, len(table.rows)):
+            for col_idx in range(len(table.columns)):
+                if col_idx == target_column:
+                    continue
+                cell = table.cell(row_idx, col_idx)
+                if self._first_run(cell.text_frame) is not None:
+                    return cell
+        for row in table.rows:
+            for cell in row.cells:
+                if self._first_run(cell.text_frame) is not None:
+                    return cell
+        return None
+
+    def _row_style_cell(
+        self,
+        table: Any,
+        *,
+        row_idx: int,
+        target_column: int,
+        default_style_cell: Any,
+    ) -> Any:
+        target_cell = table.cell(row_idx, target_column)
+        if self._first_run(target_cell.text_frame) is not None:
+            return target_cell
+        for col_idx in range(len(table.columns)):
+            if col_idx == target_column:
+                continue
+            cell = table.cell(row_idx, col_idx)
+            if self._first_run(cell.text_frame) is not None:
+                return cell
+        return default_style_cell
+
+    def _table_contains_text(self, table: Any, expected_text: str) -> bool:
+        expected = expected_text.replace("\n", "").strip()
+        if not expected:
+            return True
+        for row in table.rows:
+            for cell in row.cells:
+                text = str(cell.text or "").replace("\n", "").strip()
+                if text == expected:
+                    return True
         return False
 
     def _add_description_fallback(self, slide: Any, source: dict[str, Any]) -> None:

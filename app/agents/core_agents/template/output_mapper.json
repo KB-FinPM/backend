@@ -57,29 +57,41 @@
       "clear_existing_rows": true,
       "columns": [
         {
+          "field": "work|domain",
+          "header_names": [
+            "업무",
+            "업무명"
+          ],
+          "default_column": 1
+        },
+        {
+          "field": "section_category|domain",
+          "header_names": [
+            "구분"
+          ],
+          "default_column": 2
+        },
+        {
           "field": "biz_requirement_id",
           "header_names": [
             "Biz요건ID",
             "Biz 요건 ID"
           ],
-          "default_column": 1
+          "default_column": 3
         },
         {
-          "field": "biz_requirement_name|domain",
+          "field": "biz_requirement_name",
           "header_names": [
-            "Biz요건명",
-            "업무",
-            "업무명"
+            "Biz요건명"
           ],
-          "default_column": 2
+          "default_column": 4
         },
         {
           "field": "category",
           "header_names": [
-            "요구사항구분",
-            "구분"
+            "요구사항구분"
           ],
-          "default_column": 3
+          "default_column": 5
         },
         {
           "field": "creation_stage",
@@ -87,7 +99,7 @@
             "생성단계"
           ],
           "optional": true,
-          "default_column": 4
+          "default_column": 6
         },
         {
           "field": "status",
@@ -96,7 +108,7 @@
             "상태"
           ],
           "optional": true,
-          "default_column": 5
+          "default_column": 7
         },
         {
           "field": "source",
@@ -104,21 +116,21 @@
             "출처"
           ],
           "optional": true,
-          "default_column": 6
+          "default_column": 8
         },
         {
           "field": "requirement_id",
           "header_names": [
             "요구사항ID"
           ],
-          "default_column": 7
+          "default_column": 9
         },
         {
           "field": "requirement_name",
           "header_names": [
             "요구사항명"
           ],
-          "default_column": 8
+          "default_column": 10
         },
         {
           "field": "description",
@@ -127,7 +139,7 @@
             "기능/비기능요구사항(취합정리 5/25)",
             "요구사항내용"
           ],
-          "default_column": 9
+          "default_column": 11
         },
         {
           "field": "user_auth_requirement",
