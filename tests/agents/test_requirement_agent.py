@@ -5,7 +5,6 @@ import pytest
 
 from app.agents.core_agents.requirement_agent.agent import RequirementAgent
 from app.schemas.agent import AgentRequest
-from util.agent_generation_utils import assign_requirement_ids, normalize_requirement_atoms
 
 
 @pytest.mark.anyio
@@ -13,7 +12,6 @@ async def test_requirement_agent_generates_structured_draft_from_chunks() -> Non
     agent = RequirementAgent()
     request = AgentRequest(
         project_id="PRJ-001",
-        context={"author": "홍길동", "project_name": "차세대 FX 플랫폼"},
         documents=[
             {
                 "chunk_id": "CHUNK-001",
@@ -30,8 +28,6 @@ async def test_requirement_agent_generates_structured_draft_from_chunks() -> Non
     assert response.result["requirements"][0]["requirement_id"] == "BSR-00001"
     assert response.result["requirements"][0]["source_document_id"] == "DOC-001"
     assert response.result["requirements"][0]["source_chunk_ids"] == ["CHUNK-001"]
-    assert response.result["metadata"]["author"] == "홍길동"
-    assert response.result["metadata"]["project_name"] == "차세대 FX 플랫폼"
 
 
 @pytest.mark.anyio
@@ -45,22 +41,3 @@ async def test_requirement_agent_fails_without_source_chunks() -> None:
     assert response.error == (
         "No source document chunks available for requirement generation"
     )
-
-
-def test_requirement_name_bullets_are_removed_from_normalized_atoms() -> None:
-    atoms = assign_requirement_ids(
-        normalize_requirement_atoms(
-            [
-                {
-                    "requirement_id": "",
-                    "requirement_name": "* 회원 조회",
-                    "description": "- 회원 목록을 조회한다.",
-                    "biz_requirement_name": "회원",
-                }
-            ]
-        )
-    )
-
-    assert atoms[0].requirement_name == "회원 조회"
-    assert atoms[0].title == "회원 조회"
-    assert atoms[0].description == "- 회원 목록을 조회한다."

@@ -20,11 +20,13 @@ class StubOrchestrator:
         artifact_service=None,
         retrieval_service=None,
         template_service=None,
+        document_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         self.received_artifact_service = artifact_service
         self.received_retrieval_service = retrieval_service
         self.received_template_service = template_service
+        self.received_document_service = document_service
         return GenerationResponse(
             project_id=request.project_id,
             result={"source": "stub-orchestrator"},
@@ -36,11 +38,13 @@ class StubOrchestrator:
         artifact_service=None,
         retrieval_service=None,
         template_service=None,
+        document_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         self.received_artifact_service = artifact_service
         self.received_retrieval_service = retrieval_service
         self.received_template_service = template_service
+        self.received_document_service = document_service
         return GenerationResponse(
             project_id=request.project_id,
             result={"source": "stub-dispatch"},
