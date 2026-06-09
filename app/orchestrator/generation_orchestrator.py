@@ -7,6 +7,7 @@ from uuid import uuid4
 from app.agents.core_agents.artifact_agent.agent import ArtifactAgent
 from app.agents.core_agents.requirement_agent.agent import requirement_agent
 from app.agents.core_agents.screen_design_agent.agent import screen_design_agent
+from app.agents.core_agents.unit_test_agent.agent import unit_test_agent
 from app.agents.core_agents.validator_agent.agent import validator_agent
 from app.agents.core_agents.wbs_agent.agent import wbs_agent
 from app.core.llm import llm_service
@@ -31,6 +32,7 @@ class GenerationOrchestrator:
         requirement_generator: Any = requirement_agent,
         wbs_generator: Any = wbs_agent,
         screen_design_generator: Any = screen_design_agent,
+        unit_test_generator: Any = unit_test_agent,
         validator: Any = validator_agent,
     ) -> None:
         self.retrieval = retrieval
@@ -38,6 +40,7 @@ class GenerationOrchestrator:
             requirement_generator=requirement_generator,
             wbs_generator=wbs_generator,
             screen_design_generator=screen_design_generator,
+            unit_test_generator=unit_test_generator,
         )
         self.validator = validator
 
@@ -68,6 +71,7 @@ class GenerationOrchestrator:
         generation_flow = request.generation_flow()
         if generation_flow.target_artifact_type in {
             ArtifactType.REQUIREMENT_SPEC,
+            ArtifactType.UNITTEST_SPEC,
             ArtifactType.WBS,
             ArtifactType.SCREEN_DESIGN,
         }:
@@ -145,6 +149,7 @@ class GenerationOrchestrator:
             context={
                 "source_document_ids": request.source_document_ids,
                 "document_ids": request.document_ids,
+                "project_name": request.project_name,
                 "source_document_type": (
                     generation_flow.source_document_type.value
                     if generation_flow.source_document_type

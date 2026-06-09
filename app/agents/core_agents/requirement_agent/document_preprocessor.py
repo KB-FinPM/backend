@@ -18,7 +18,7 @@ def normalize_requirement_documents(
     """
     normalized: list[dict[str, Any]] = []
     current_title = ""
-    for document in sorted(documents or [], key=lambda item: int(item.get("chunk_index") or 0)):
+    for document in sorted(documents or [], key=_chunk_order):
         item = deepcopy(document)
         section_title = str(item.get("section_title") or "").strip()
         if section_title and section_title != "ROOT":
@@ -29,6 +29,13 @@ def normalize_requirement_documents(
             item["section_title"] = current_title
         normalized.append(item)
     return normalized
+
+
+def _chunk_order(document: dict[str, Any]) -> int:
+    try:
+        return int(document.get("chunk_index") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _normalize_pipe_table_text(text: str) -> str:

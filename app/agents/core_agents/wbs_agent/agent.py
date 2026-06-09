@@ -60,6 +60,7 @@ class WbsAgent:
                     "tasks": tasks,
                     "metadata": {
                         "project_id": request.project_id,
+                        "project_name": str((request.context or {}).get("project_name") or (request.context or {}).get("project_nm") or "프로젝트명"),
                         "generated_by": self.AGENT_NAME,
                         "project_type": project_type,
                         "source_requirement_count": len(atoms),
@@ -89,7 +90,6 @@ class WbsAgent:
         project_name = str(
             request_context.get("project_name")
             or request_context.get("project_nm")
-            or request.project_id
             or "프로젝트명"
         )
         for raw in template.get("common_items", []):

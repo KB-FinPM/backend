@@ -8,6 +8,7 @@ from app.schemas.agent import AgentResponse
 from app.schemas.requirement import RequirementArtifact
 from app.schemas.schedule import ScheduleTodoList
 from app.schemas.screen_design import ScreenDesignArtifact
+from app.schemas.unit_test import UnitTestArtifact
 from app.schemas.wbs import WbsArtifact
 
 logger = get_logger(__name__)
@@ -53,6 +54,9 @@ class ValidatorAgent:
         if "screens" in result:
             return self._validate_screen_design_artifact(result)
 
+        if "test_cases" in result:
+            return self._validate_unit_test_artifact(result)
+
         if "todos" in result:
             return self._validate_schedule_todo_list(result)
 
@@ -91,6 +95,17 @@ class ValidatorAgent:
     ) -> tuple[dict, list[str]]:
         try:
             artifact = ScreenDesignArtifact.model_validate(result)
+        except ValueError as exc:
+            return result, [str(exc)]
+
+        return artifact.model_dump(mode="json"), []
+
+    def _validate_unit_test_artifact(
+        self,
+        result: dict,
+    ) -> tuple[dict, list[str]]:
+        try:
+            artifact = UnitTestArtifact.model_validate(result)
         except ValueError as exc:
             return result, [str(exc)]
 

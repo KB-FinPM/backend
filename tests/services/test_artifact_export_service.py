@@ -2,12 +2,25 @@
 # KO: 생성 산출물 파일 export 동작 테스트입니다.
 
 from io import BytesIO
+from pathlib import Path
 
 from openpyxl import load_workbook
 from pptx import Presentation
 
 import app.db.base  # noqa: F401
 from app.services.artifact_export_service import ArtifactExportService
+from util.agent_template_utils import build_template_context
+
+
+def test_template_context_uses_project_name_or_default_label() -> None:
+    assert build_template_context(
+        project_id="PRJ-TEST-001",
+        context={"project_name": "차세대 FX 플랫폼"},
+    )["project_name"] == "차세대 FX 플랫폼"
+    assert build_template_context(
+        project_id="PRJ-TEST-001",
+        context={},
+    )["project_name"] == "프로젝트명"
 
 
 def test_wbs_export_fills_hierarchical_display_ids(monkeypatch) -> None:
@@ -55,6 +68,90 @@ def test_wbs_export_fills_hierarchical_display_ids(monkeypatch) -> None:
     assert actual_ids == expected_ids
 
 
+def test_wbs_export_uses_project_name_and_default_label(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "util.agent_template_utils.settings.S3_STORAGE_BACKEND",
+        "mock",
+    )
+    service = ArtifactExportService()
+    base_result = {
+        "artifact_type": "WBS",
+        "tasks": [
+            {
+                "task_id": "WBS-001",
+                "name": "프로젝트명",
+                "metadata": {"level": "0"},
+            }
+        ],
+    }
+
+    named_bytes = service._build_wbs_xlsx(
+        {
+            **base_result,
+            "metadata": {
+                "project_id": "PRJ-TEST-001",
+                "project_name": "차세대 FX 플랫폼",
+            },
+        }
+    )
+    named_sheet = load_workbook(BytesIO(named_bytes), data_only=True)["WBS"]
+    assert named_sheet.cell(row=2, column=4).value == "차세대 FX 플랫폼"
+
+    default_bytes = service._build_wbs_xlsx(
+        {
+            **base_result,
+            "metadata": {"project_id": "PRJ-TEST-001"},
+        }
+    )
+    default_sheet = load_workbook(BytesIO(default_bytes), data_only=True)["WBS"]
+    assert default_sheet.cell(row=2, column=4).value == "프로젝트명"
+
+
+def test_unit_test_export_uses_template_and_case_mapping(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "util.agent_template_utils.settings.S3_STORAGE_BACKEND",
+        "mock",
+    )
+    result_json = {
+        "artifact_type": "UNITTEST_SPEC",
+        "test_cases": [
+            {
+                "test_case_id": "TEST-0001-001",
+                "test_case_name": "회원 조회 화면",
+                "requirement_id": "BSR-00001",
+                "requirement_name": "회원 조회",
+                "scenario_id": "Biz-0001",
+                "test_content": "- 회원 목록을 조회한다.\\n- 회원 상세를 조회한다.",
+                "metadata": {"author": "김국민"},
+            }
+        ],
+        "metadata": {
+            "project_id": "PRJ-TEST-001",
+            "project_name": "테스트 구축 프로젝트",
+            "author": "김국민",
+        },
+    }
+
+    file_bytes = ArtifactExportService()._build_unit_test_xlsx(result_json)
+    workbook = load_workbook(BytesIO(file_bytes), data_only=True)
+    sheet = workbook["케이스"]
+
+    assert _workbook_contains(workbook, "테스트 구축 프로젝트")
+    assert sheet.cell(row=2, column=1).value == "BSR-00001"
+    assert sheet.cell(row=2, column=2).value == "회원 조회"
+    assert sheet.cell(row=2, column=3).value == "Biz-0001"
+    assert sheet.cell(row=2, column=6).value == "TEST-0001-001"
+    assert sheet.cell(row=2, column=7).value == "회원 조회 화면"
+    assert sheet.cell(row=2, column=8).value == (
+        "- 회원 목록을 조회한다.\n"
+        "- 회원 상세를 조회한다."
+    )
+    assert sheet.cell(row=2, column=9).value == "김국민"
+    assert sheet.cell(row=2, column=8).font.bold is False
+    assert sheet.cell(row=2, column=8).fill.fgColor.rgb == "00000000"
+    assert sheet.cell(row=2, column=8).alignment.wrap_text is True
+
+
 def test_requirement_export_keeps_work_category_and_empty_review_note(
     monkeypatch,
 ) -> None:
@@ -84,13 +181,16 @@ def test_requirement_export_keeps_work_category_and_empty_review_note(
                 },
             }
         ],
-        "metadata": {"project_id": "PRJ-TEST-001", "author": "홍길동"},
+        "metadata": {"project_id": "PRJ-TEST-001", "project_name": "차세대 FX 플랫폼", "author": "홍길동"},
     }
 
     file_bytes = ArtifactExportService()._build_requirement_xlsx(result_json)
     workbook = load_workbook(BytesIO(file_bytes), data_only=True)
     sheet = workbook["요구사항명세서"]
 
+    assert _workbook_contains(workbook, "홍길동")
+    assert _workbook_contains(workbook, "차세대 FX 플랫폼")
+    assert not _workbook_contains(workbook, "PRJ-TEST-001")
     assert sheet.cell(row=2, column=1).value == "비대면 아키텍쳐 재설계 및 인프라 구축"
     assert sheet.cell(row=2, column=2).value == "비대면 아키텍쳐 재설계 및 인프라 구축"
     assert sheet.cell(row=2, column=5).value == "기능"
@@ -143,7 +243,7 @@ def test_screen_design_export_creates_pages_with_requirement_descriptions(
                 },
             },
         ],
-        "metadata": {"project_id": "PRJ-TEST-001", "author": "홍길동"},
+        "metadata": {"project_id": "PRJ-TEST-001", "project_name": "차세대 FX 플랫폼", "author": "홍길동"},
     }
 
     file_bytes = ArtifactExportService()._build_screen_design_pptx(result_json)
@@ -160,12 +260,26 @@ def test_screen_design_export_creates_pages_with_requirement_descriptions(
     all_text = "\n".join(texts)
 
     assert "홍길동" in all_text
+    assert "차세대 FX 플랫폼" in all_text
+    assert "PRJ-TEST-001" not in all_text
     assert "REQ-0001" in all_text
     assert "REQ-0002" in all_text
     assert "사용자는 회원 목록을 조회할 수 있어야 한다." in all_text
     assert "작업 내용을 정의한다" not in all_text
     assert "검색 조건" not in all_text
     assert "처리 버튼" not in all_text
+    for slide_index in range(2, len(presentation.slides)):
+        slide = presentation.slides[slide_index]
+        assert not any(
+            getattr(shape, "is_placeholder", False)
+            and getattr(shape, "has_text_frame", False)
+            and not str(shape.text or "").strip()
+            for shape in slide.shapes
+        )
+    template = Presentation(
+        Path("app/agents/core_agents/template/탬플릿_화면설계서.pptx")
+    )
+    assert presentation.slides[2].slide_layout.name == template.slides[2].slide_layout.name
     description_cell, style_cell = _first_description_value_and_style_cells(
         presentation,
     )
@@ -193,6 +307,15 @@ def _first_description_value_and_style_cells(presentation):
                 continue
             return table.cell(1, 1), table.cell(1, 0)
     raise AssertionError("Description table not found")
+
+
+def _workbook_contains(workbook, expected: str) -> bool:
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.value is not None and expected in str(cell.value):
+                    return True
+    return False
 
 
 def _first_run(cell):

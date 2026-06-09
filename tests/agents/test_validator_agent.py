@@ -121,6 +121,30 @@ async def test_validator_accepts_minimal_screen_design_artifact() -> None:
 
 
 @pytest.mark.anyio
+async def test_validator_accepts_minimal_unit_test_artifact() -> None:
+    validator = ValidatorAgent()
+
+    response = await validator.validate(
+        {
+            "artifact_type": "UNITTEST_SPEC",
+            "test_cases": [
+                {
+                    "test_case_id": "TEST-0001-001",
+                    "test_case_name": "회원 조회 화면",
+                    "requirement_id": "BSR-00001",
+                    "requirement_name": "회원 조회",
+                    "scenario_id": "Biz-0001",
+                    "test_content": "회원 목록을 조회한다.",
+                }
+            ],
+        }
+    )
+
+    assert response.success is True
+    assert response.result["artifact_type"] == "UNITTEST_SPEC"
+
+
+@pytest.mark.anyio
 async def test_validator_accepts_minimal_schedule_todo_list() -> None:
     validator = ValidatorAgent()
 

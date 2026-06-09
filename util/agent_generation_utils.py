@@ -191,13 +191,13 @@ def normalize_requirement_atoms(result: Any, documents: list[dict[str, Any]] | N
         if not isinstance(item, dict):
             continue
         requirement_id = str(item.get("requirement_id") or item.get("id") or f"RQ-{index:03d}").strip()
-        title = str(
+        title = _clean_requirement_name_text(str(
             item.get("requirement_name")
             or item.get("title")
             or item.get("feature")
             or item.get("description")
             or f"Requirement {requirement_id}"
-        ).strip()
+        ))
         description = str(item.get("description") or item.get("raw_text") or title).strip()
         source_chunk_ids = item.get("source_chunk_ids") or []
         if isinstance(source_chunk_ids, str):
@@ -212,7 +212,10 @@ def normalize_requirement_atoms(result: Any, documents: list[dict[str, Any]] | N
             RequirementAtom(
                 requirement_id=requirement_id,
                 title=truncate_text(title, 120),
-                requirement_name=truncate_text(str(item.get("requirement_name") or title), 120),
+                requirement_name=truncate_text(
+                    _clean_requirement_name_text(str(item.get("requirement_name") or title)),
+                    120,
+                ),
                 description=truncate_text(description, 700),
                 priority=str(item.get("priority") or "SHOULD"),
                 category=str(item.get("category") or item.get("requirement_type") or "기능"),
@@ -365,8 +368,12 @@ def _normalize_header_name(value: Any) -> str:
 
 
 
+BULLET_MARKER_PATTERN = r"(?:[-*•ㅇ○·]|[oO]|\d+[.)]|[①②③④⑤⑥⑦⑧⑨⑩]|[ㄱ-ㅎ]\.)"
+BULLET_LINE_PATTERN = re.compile(
+    rf"^(\s*)({BULLET_MARKER_PATTERN})(?:\s+|(?=[가-힣A-Z]))(.+)$"
+)
 COMPOUND_SPLIT_PATTERN = re.compile(
-    r"(?=(?:^|\n|\s)(?:[-*•ㅇ○·]|\d+[.)]|[①②③④⑤⑥⑦⑧⑨⑩]|[ㄱ-ㅎ]\.))"
+    rf"(?=(?:^|\n|\s){BULLET_MARKER_PATTERN}(?:\s+|(?=[가-힣A-Z])))"
 )
 
 
@@ -387,6 +394,7 @@ def _looks_like_requirement_detail(text: str) -> bool:
     keywords = [
         "구축", "설계", "개발", "구현", "제공", "적용", "연계", "개선", "관리", "처리", "지원", "확대",
         "모니터링", "로그", "백업", "보안", "API", "화면", "조회", "등록", "수정", "삭제", "검색",
+        "기능", "입력", "거래",
     ]
     return any(keyword.lower() in value.lower() for keyword in keywords)
 
@@ -480,6 +488,8 @@ def _is_generic_table_header(cells: list[str]) -> bool:
         "주요내용",
         "상세",
         "상세내용",
+        "기능/비기능요구사항",
+        "기능비기능요구사항",
         "내용",
         "요건명",
         "요건내용",
@@ -509,6 +519,164 @@ def _compact_generic_cells(raw_cells: list[str]) -> list[str]:
     return []
 
 
+def _split_two_column_requirement_content(value: str) -> tuple[str, str]:
+    items = _split_two_column_requirement_items(value)
+    if not items:
+        return "", ""
+    return items[0]
+
+
+def _split_requirement_name_description_items(
+    requirement_name: str,
+    description_value: str,
+) -> list[tuple[str, str]]:
+    base_name = _clean_requirement_name_text(requirement_name)
+    text = str(description_value or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" not in text:
+        text = "\n".join(_restore_inline_bullet_lines(text))
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return [(base_name, "")]
+
+    items: list[tuple[str, list[str]]] = [(base_name, [])] if base_name else []
+    for line in lines:
+        parsed = _parse_bullet_line(line)
+        if parsed is not None:
+            _, marker, body = parsed
+            if marker in {"o", "ㅇ"}:
+                items.append((_clean_requirement_name_text(body), []))
+                continue
+        if not items:
+            items.append((base_name or _clean_requirement_name_text(line), []))
+            continue
+        items[-1][1].append(line.strip())
+
+    result: list[tuple[str, str]] = []
+    for name, descriptions in items:
+        description = "\n".join(descriptions).strip()
+        result.append((name, description))
+    return result
+
+
+def _bullet_marker_group(marker: str) -> str:
+    if marker in {"o", "O", "ㅇ", "○"}:
+        return "circle"
+    if marker in {"-", "—", "–"}:
+        return "dash"
+    if marker in {"*", "•", "·"}:
+        return "dot"
+    return marker
+
+
+def _split_description_by_top_bullet(value: str) -> list[tuple[str, str]]:
+    text = str(value or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" not in text:
+        text = "\n".join(_restore_inline_bullet_lines(text))
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    top_group = ""
+    for line in lines:
+        parsed = _parse_bullet_line(line)
+        if parsed is not None:
+            _, marker, _ = parsed
+            top_group = _bullet_marker_group(marker)
+            break
+    if top_group != "circle":
+        return []
+
+    items: list[tuple[str, list[str]]] = []
+    for line in lines:
+        parsed = _parse_bullet_line(line)
+        if parsed is not None:
+            _, marker, body = parsed
+            if _bullet_marker_group(marker) == top_group:
+                items.append((_clean_requirement_name_text(body), []))
+                continue
+        if items:
+            items[-1][1].append(line.strip())
+
+    return [(name, "\n".join(descriptions).strip()) for name, descriptions in items if name]
+
+
+def _split_two_column_requirement_items(value: str) -> list[tuple[str, str]]:
+    text = str(value or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" not in text:
+        text = "\n".join(_restore_inline_bullet_lines(text))
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    first = _parse_bullet_line(lines[0])
+    if first is None:
+        requirement_name = _clean_requirement_name_text(lines[0])
+        description = _clean_description_cell_text("\n".join(lines[1:]))
+        return [(requirement_name, description or requirement_name)]
+
+    _, _, first_text = first
+    items: list[tuple[str, list[str]]] = [
+        (_clean_requirement_name_text(first_text), [])
+    ]
+    for line in lines[1:]:
+        parsed = _parse_bullet_line(line)
+        if parsed is not None:
+            _, _, body = parsed
+            items.append((_clean_requirement_name_text(body), []))
+            continue
+        if items:
+            items[-1][1].append(line.strip())
+
+    result: list[tuple[str, str]] = []
+    for requirement_name, descriptions in items:
+        description = "\n".join(descriptions).strip()
+        result.append((requirement_name, description or requirement_name))
+    return result
+
+
+def _restore_inline_bullet_lines(text: str) -> list[str]:
+    value = str(text or "").strip()
+    marker_regex = re.compile(rf"(^|\s+)({BULLET_MARKER_PATTERN})(?:\s+|(?=[가-힣A-Z]))")
+    matches = list(marker_regex.finditer(value))
+    if not matches:
+        return [value] if value else []
+
+    lines: list[str] = []
+    first = matches[0]
+    if value[: first.start()].strip():
+        lines.append(value[: first.start()].strip())
+
+    for index, match in enumerate(matches):
+        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(value)
+        body = value[match.end():next_start].strip()
+        if not body:
+            continue
+        leading = match.group(1) or ""
+        indent = 0 if match.start() == 0 else max(0, len(leading) - 1)
+        lines.append(f"{' ' * indent}{match.group(2)} {body}")
+    return lines
+
+
+def _clean_requirement_name_text(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(rf"^{BULLET_MARKER_PATTERN}(?:\s+|(?=[가-힣A-Z]))", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _parse_bullet_line(value: str) -> tuple[int, str, str] | None:
+    match = BULLET_LINE_PATTERN.match(str(value or ""))
+    if not match:
+        return None
+    marker = match.group(2)
+    if marker in {"o", "O"}:
+        marker = "o"
+    elif re.fullmatch(r"\d+[.)]", marker):
+        marker = "num"
+    elif marker in "①②③④⑤⑥⑦⑧⑨⑩":
+        marker = "circled_num"
+    return len(match.group(1).replace("\t", "    ")), marker, match.group(3).strip()
+
+
 def split_requirement_detail_items(text: str) -> list[str]:
     """Split a compound requirement detail into atomic bullet-like statements.
 
@@ -521,8 +689,8 @@ def split_requirement_detail_items(text: str) -> list[str]:
     if not value:
         return []
     value = value.replace("\r\n", "\n").replace("\r", "\n")
-    value = re.sub(r"\s*[/|]\s*(?=[-•ㅇ○·]|\d+[.)]|[①②③④⑤⑥⑦⑧⑨⑩])", "\n", value)
-    value = re.sub(r"\s+(?=[-•ㅇ○·]\s*[^\s])", "\n", value)
+    value = re.sub(rf"\s*[/|]\s*(?={BULLET_MARKER_PATTERN}\s+)", "\n", value)
+    value = re.sub(rf"\s+(?={BULLET_MARKER_PATTERN}\s+)", "\n", value)
     # Keep explanatory sub-bullets together unless the text is clearly very long.
     parts = [part.strip(" \n\t-•ㅇ○·") for part in re.split(COMPOUND_SPLIT_PATTERN, value) if part.strip(" \n\t-•ㅇ○·")]
     if len(parts) <= 1:
@@ -555,7 +723,9 @@ def _make_atom_from_table_row(
 ) -> RequirementAtom:
     category = category or _classify_category(f"{biz_requirement_name} {requirement_name} {description}")
     req_type = "비기능요구사항" if category in {"비기능", "인프라", "보안", "운영"} else "기능요구사항"
-    title = truncate_text(requirement_name or description or biz_requirement_name or requirement_id, 120)
+    clean_requirement_name = _clean_requirement_name_text(requirement_name)
+    title = truncate_text(clean_requirement_name or description or biz_requirement_name or requirement_id, 120)
+    final_description = description or (" " if metadata.get("preserve_empty_description") else title)
     source_file_name = (document.get("metadata") or {}).get("source_file_name")
     work = metadata.get("work") or metadata.get("section_title") or metadata.get("domain") or ""
     section_category = metadata.get("section_category") or metadata.get("section_title") or metadata.get("domain") or ""
@@ -563,14 +733,14 @@ def _make_atom_from_table_row(
         requirement_id=requirement_id,
         title=title,
         requirement_name=title,
-        description=description or title,
+        description=final_description,
         priority="SHOULD",
         category=category,
         requirement_type=req_type,
         biz_requirement_id=biz_requirement_id,
         biz_requirement_name=biz_requirement_name or category or "공통",
         domain=biz_requirement_name or category or "공통",
-        feature=requirement_name or biz_requirement_name or title,
+        feature=clean_requirement_name or biz_requirement_name or title,
         source_document_id=document.get("document_id"),
         source_chunk_ids=[str(chunk_id)] if chunk_id else [],
         acceptance_criteria=[f"{requirement_id or title} 요구사항이 충족된다."],
@@ -585,7 +755,7 @@ def _make_atom_from_table_row(
             "requirement_id": requirement_id,
             "requirement_name": title,
             "requirement_type": req_type,
-            "description": description or title,
+            "description": final_description,
             "creation_stage": metadata.get("creation_stage") or "요구사항정의",
             "status": metadata.get("status") or "신규",
             "source": metadata.get("source") or "구축요건정의서",
@@ -655,6 +825,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
     header_indices: dict[str, int] = {}
     generic_table_mode = False
     generic_indices: dict[str, int] = {}
+    generic_table_kind = ""
 
     for document in documents or []:
         metadata = document.get("metadata") or {}
@@ -682,6 +853,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     header_indices = {}
                     generic_table_mode = False
                     generic_indices = {}
+                    generic_table_kind = ""
                     continue
                 if _looks_like_heading_line(stripped_line):
                     current_table_title = _normalize_section_title(stripped_line)
@@ -693,6 +865,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     header_indices = {}
                     generic_table_mode = False
                     generic_indices = {}
+                    generic_table_kind = ""
                 continue
             if section_is_excluded:
                 continue
@@ -711,6 +884,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
             if candidate_header:
                 header_indices = candidate_header
                 generic_table_mode = False
+                generic_table_kind = ""
                 continue
 
             # sample_0605 input often has construction-definition tables with
@@ -724,6 +898,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     "description": normalized_cells.index("상세"),
                 }
                 header_indices = {}
+                generic_table_kind = "generic"
                 continue
             if _is_generic_table_header(cells):
                 compact_header = _compact_generic_cells(raw_cells)
@@ -735,13 +910,25 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                         "description": 2,
                     }
                     header_indices = {}
+                    generic_table_kind = "generic"
                 elif len(compact_header) == 2:
                     generic_table_mode = True
-                    generic_indices = {
-                        "biz_requirement_name": 0,
-                        "requirement_name": 0,
-                        "description": 1,
-                    }
+                    if "요구사항명" in normalized_cells and (
+                        "기능/비기능요구사항" in normalized_cells
+                        or "기능비기능요구사항" in normalized_cells
+                    ):
+                        generic_indices = {
+                            "requirement_name": 0,
+                            "description": 1,
+                        }
+                        generic_table_kind = "requirement_description"
+                    else:
+                        generic_indices = {
+                            "biz_requirement_name": 0,
+                            "requirement_name": 0,
+                            "description": 1,
+                        }
+                        generic_table_kind = "generic"
                     header_indices = {}
                 continue
 
@@ -755,12 +942,51 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                         "description": 2,
                     }
                 elif len(compact_cells) == 2:
-                    generic_cells = compact_cells[:2]
-                    generic_indices = {
-                        "biz_requirement_name": 0,
-                        "requirement_name": 0,
-                        "description": 1,
-                    }
+                    table_title = current_table_title or document.get("section_title") or "공통"
+                    raw_values = [cell for cell in raw_cells if _clean_cell_text(cell)]
+                    content_value = raw_values[1] if len(raw_values) > 1 else compact_cells[1]
+                    top_bullet_items: list[tuple[str, str]] = []
+                    if generic_table_kind == "requirement_description":
+                        biz_name = compact_cells[0] or "공통"
+                        split_items = _split_requirement_name_description_items(
+                            compact_cells[0],
+                            content_value,
+                        )
+                    else:
+                        biz_name = compact_cells[0] or "공통"
+                        top_bullet_items = _split_description_by_top_bullet(content_value)
+                        split_items = top_bullet_items or _split_two_column_requirement_items(content_value)
+                    for req_name, detail in split_items:
+                        if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
+                            continue
+                        atom = _make_atom_from_table_row(
+                            document=document,
+                            chunk_id=chunk_id,
+                            category="기능",
+                            biz_requirement_id="",
+                            biz_requirement_name=biz_name,
+                            requirement_id="",
+                            requirement_name=req_name,
+                            description=detail,
+                            metadata={
+                                "source": "구축요건정의서",
+                                "source_doc": metadata.get("source_file_name"),
+                                "raw_table_category": biz_name,
+                                "raw_table_title": req_name,
+                                "section_title": _normalize_section_title(table_title),
+                                "work": _normalize_section_title(table_title),
+                                "section_category": _normalize_section_title(table_title),
+                                "preserve_empty_description": (
+                                    generic_table_kind == "requirement_description"
+                                    or bool(top_bullet_items)
+                                ),
+                            },
+                        )
+                        if table_title:
+                            atom.domain = _normalize_section_title(table_title)
+                            atom.metadata["domain"] = atom.domain
+                        atoms.append(atom)
+                    continue
                 else:
                     continue
 
@@ -774,6 +1000,36 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                 req_name = g("requirement_name")
                 detail = g("description")
                 table_title = current_table_title or document.get("section_title") or "공통"
+                split_items = _split_description_by_top_bullet(detail)
+                if split_items:
+                    for split_req_name, split_detail in split_items:
+                        if not _looks_like_requirement_detail(f"{biz_name} {split_req_name} {split_detail}"):
+                            continue
+                        atom = _make_atom_from_table_row(
+                            document=document,
+                            chunk_id=chunk_id,
+                            category="기능",
+                            biz_requirement_id="",
+                            biz_requirement_name=biz_name,
+                            requirement_id="",
+                            requirement_name=split_req_name,
+                            description=split_detail,
+                            metadata={
+                                "source": "구축요건정의서",
+                                "source_doc": metadata.get("source_file_name"),
+                                "raw_table_category": biz_name,
+                                "raw_table_title": req_name,
+                                "section_title": _normalize_section_title(table_title),
+                                "work": _normalize_section_title(table_title),
+                                "section_category": _normalize_section_title(table_title),
+                                "preserve_empty_description": True,
+                            },
+                        )
+                        if table_title:
+                            atom.domain = _normalize_section_title(table_title)
+                            atom.metadata["domain"] = atom.domain
+                        atoms.append(atom)
+                    continue
                 if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
                     continue
                 atom = _make_atom_from_table_row(
@@ -806,6 +1062,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                 has_target_section or current_table_title
             ):
                 generic_table_mode = True
+                generic_table_kind = "generic"
                 if len(compact_cells) == 3:
                     generic_indices = {
                         "biz_requirement_name": 0,
@@ -813,16 +1070,75 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                         "description": 2,
                     }
                 else:
-                    generic_indices = {
-                        "biz_requirement_name": 0,
-                        "requirement_name": 0,
-                        "description": 1,
-                    }
+                    biz_name = compact_cells[0] or "공통"
+                    table_title = current_table_title or document.get("section_title") or "공통"
+                    raw_values = [cell for cell in raw_cells if _clean_cell_text(cell)]
+                    content_value = raw_values[1] if len(raw_values) > 1 else compact_cells[1]
+                    top_bullet_items = _split_description_by_top_bullet(content_value)
+                    split_items = top_bullet_items or _split_two_column_requirement_items(content_value)
+                    for req_name, detail in split_items:
+                        if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
+                            continue
+                        atom = _make_atom_from_table_row(
+                            document=document,
+                            chunk_id=chunk_id,
+                            category="기능",
+                            biz_requirement_id="",
+                            biz_requirement_name=biz_name,
+                            requirement_id="",
+                            requirement_name=req_name or detail,
+                            description=detail,
+                            metadata={
+                                "source": "구축요건정의서",
+                                "source_doc": metadata.get("source_file_name"),
+                                "raw_table_category": biz_name,
+                                "raw_table_title": req_name,
+                                "section_title": _normalize_section_title(table_title),
+                                "work": _normalize_section_title(table_title),
+                                "section_category": _normalize_section_title(table_title),
+                                "preserve_empty_description": bool(top_bullet_items),
+                            },
+                        )
+                        if table_title:
+                            atom.domain = _normalize_section_title(table_title)
+                            atom.metadata["domain"] = atom.domain
+                        atoms.append(atom)
+                    continue
                 # Re-process this row now that generic mode is established.
                 biz_name = compact_cells[generic_indices["biz_requirement_name"]]
                 req_name = compact_cells[generic_indices["requirement_name"]]
                 detail = compact_cells[generic_indices["description"]]
                 table_title = current_table_title or document.get("section_title") or "공통"
+                split_items = _split_description_by_top_bullet(detail)
+                if split_items:
+                    for split_req_name, split_detail in split_items:
+                        if not _looks_like_requirement_detail(f"{biz_name} {split_req_name} {split_detail}"):
+                            continue
+                        atom = _make_atom_from_table_row(
+                            document=document,
+                            chunk_id=chunk_id,
+                            category="기능",
+                            biz_requirement_id="",
+                            biz_requirement_name=biz_name or "공통",
+                            requirement_id="",
+                            requirement_name=split_req_name,
+                            description=split_detail,
+                            metadata={
+                                "source": "구축요건정의서",
+                                "source_doc": metadata.get("source_file_name"),
+                                "raw_table_category": biz_name,
+                                "raw_table_title": req_name,
+                                "section_title": _normalize_section_title(table_title),
+                                "work": _normalize_section_title(table_title),
+                                "section_category": _normalize_section_title(table_title),
+                                "preserve_empty_description": True,
+                            },
+                        )
+                        if table_title:
+                            atom.domain = _normalize_section_title(table_title)
+                            atom.metadata["domain"] = atom.domain
+                        atoms.append(atom)
+                    continue
                 if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
                     continue
                 atom = _make_atom_from_table_row(
@@ -868,7 +1184,13 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
             if not any([requirement_name, description, requirement_id, biz_name]):
                 continue
             category = get("category") or _classify_category(f"{biz_name} {requirement_name} {description}")
-            detail_items = split_requirement_detail_items(description) if description else [requirement_name]
+            split_items = _split_description_by_top_bullet(description)
+            if split_items:
+                detail_items = [detail for _, detail in split_items]
+                requirement_names = [name for name, _ in split_items]
+            else:
+                detail_items = [description] if description else [requirement_name]
+                requirement_names = [requirement_name for _ in detail_items]
             for detail_index, detail_item in enumerate(detail_items, start=1):
                 # Preserve an existing BFE-* ID for the original row. When a
                 # single row is split into multiple atomic requirements, suffix
@@ -876,9 +1198,9 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                 derived_req_id = requirement_id
                 if requirement_id and len(detail_items) > 1:
                     derived_req_id = requirement_id if detail_index == 1 else f"{requirement_id}-{detail_index:02d}"
-                atomic_name = requirement_name
+                atomic_name = requirement_names[detail_index - 1]
                 if len(detail_items) > 1:
-                    atomic_name = truncate_text(f"{requirement_name} - {detail_item}", 120)
+                    atomic_name = truncate_text(atomic_name, 120)
                 atoms.append(_make_atom_from_table_row(
                     document=document,
                     chunk_id=chunk_id,
@@ -887,7 +1209,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     biz_requirement_name=biz_name or "공통",
                     requirement_id=derived_req_id,
                     requirement_name=atomic_name or detail_item,
-                    description=detail_item or description or requirement_name,
+                    description=detail_item if split_items else (detail_item or description or requirement_name),
                     metadata={
                         "biz_requirement_id": get("biz_requirement_id"),
                         "biz_requirement_name": biz_name,
@@ -903,6 +1225,8 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                         "change_date": get("change_date"),
                         "source_doc": get("source_doc") or metadata.get("source_file_name"),
                         "ace": get("ace"),
+                        "raw_table_title": requirement_name,
+                        "preserve_empty_description": bool(split_items),
                     },
                 ))
     return atoms
@@ -947,8 +1271,11 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             atom.requirement_id = current_id
         if not atom.requirement_name:
             atom.requirement_name = atom.title or atom.feature or atom.description[:80]
+        atom.requirement_name = _clean_requirement_name_text(atom.requirement_name)
         if not atom.title:
             atom.title = atom.requirement_name
+        else:
+            atom.title = _clean_requirement_name_text(atom.title)
         atom.acceptance_criteria = [f"{atom.requirement_id} 요구사항이 충족된다."]
         atom.metadata = {
             **(atom.metadata or {}),

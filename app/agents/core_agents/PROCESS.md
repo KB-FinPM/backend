@@ -26,7 +26,14 @@ documents: RAG 검색 결과 문서 청크
 Requirement Agent는 다음 기준으로 요구사항을 생성합니다.
 
 - 구축요건정의서 또는 RAG 문서 chunk를 근거로 요구사항을 추출합니다.
+- Core Agent 내부에서 요구사항 추출 전용 chunk 전처리를 수행합니다. 범용 Input Parser는 수정하지 않습니다.
 - 요구사항은 `Biz요건명`, `업무영역`, `domain`, `category` 기준으로 그룹화할 수 있도록 metadata를 구성합니다.
+- 구축요건정의서의 3단 표는 1번째 컬럼을 `Biz요건명`, 2번째 컬럼을 `요구사항명`, 3번째 컬럼을 `기능/비기능요구사항`으로 매핑합니다.
+- 3단 표의 3번째 컬럼에서 첫 상위 bullet(`o`, `O`, `ㅇ`, `○`)을 만나면 같은 계열 bullet 항목은 `요구사항명`으로 분리하고, 뒤따르는 `-` 등 하위 bullet은 직전 요구사항의 `기능/비기능요구사항`으로 유지합니다.
+- 구축요건정의서의 2단 표는 1번째 컬럼을 `Biz요건명`으로 보고, 2번째 컬럼의 상위내용을 `요구사항명`, 들여쓰기/bullet/다른 기호로 시작하는 하위내용을 `기능/비기능요구사항`으로 매핑합니다.
+- 단, 2단 표 헤더가 `요구사항명 | 기능/비기능요구사항`인 경우 1번째 컬럼은 첫 `요구사항명`으로 사용하고, 2번째 컬럼 안의 `o`, `O`, `ㅇ` bullet은 추가 `요구사항명`으로 분리합니다. 이때 `-` bullet은 직전 요구사항의 `기능/비기능요구사항`으로 유지합니다.
+- 2단/3단 표 위 제목은 `업무`, `구분`으로 매핑합니다.
+- `개요`, `범위`, `배경`, `일정`, `조직도`, `별첨` 성격의 섹션과 `주 1)` 형태의 주석은 요구사항 추출 대상에서 제외합니다.
 - 인프라 구축 프로젝트에서는 OCP, Kafka, EFK, CDC, API Gateway, Service Mesh, Monitoring, Logging, DB, 보안, 백업 등을 주요 구축 영역으로 봅니다.
 - 개발 프로젝트에서는 업무, 화면, 기능, 인터페이스, 데이터, 권한, 배치 등을 주요 영역으로 봅니다.
 - 문서에 없는 내용은 추측하지 않습니다.
@@ -73,19 +80,15 @@ hybrid: 분석, 설계, 개발/구축, 스테이징 검증, 운영 이행
 
 ## 4. 화면설계서 생성
 
-Screen Design Agent는 화면과 관련 있는 요구사항만 선별합니다.
+Screen Design Agent는 요구사항ID 기준으로 화면설계서 페이지를 생성합니다.
 
-포함 후보:
+처리 규칙:
 
-```text
-화면, UI, UX, 페이지, 조회, 등록, 수정, 삭제, 승인, 결재, 관리, 검색, 대시보드
-```
-
-제외 후보:
-
-```text
-API 단독, 배치, 인프라, 백업, 서버 구성, Kafka, EFK, CDC, Service Mesh, 모니터링, 로그, 보안 단독 요건
-```
+- 하나의 요구사항ID는 하나의 화면설계 페이지로 매핑합니다.
+- `탬플릿_화면설계서.pptx`의 3페이지 템플릿 슬라이드를 복제해 사용합니다.
+- Description 영역에는 요구사항명세서의 `기능/비기능요구사항` 내용만 입력합니다.
+- Description 영역에 요구사항ID, 요구사항명, 임의 UI 항목명(`검색 조건`, `처리 버튼` 등)을 추가하지 않습니다.
+- 작성자는 요청의 `author`, `writer`, `created_by`, `user_id` 순서로 매핑하고, 없으면 `작성자`를 사용합니다.
 
 출력은 backend 최소 스키마를 따릅니다.
 
@@ -96,7 +99,7 @@ API 단독, 배치, 인프라, 백업, 서버 구성, Kafka, EFK, CDC, Service M
 }
 ```
 
-화면 표시항목은 `screens[].metadata.display_items`에 보관합니다.
+화면 표시항목은 템플릿 Description 매핑을 위해 `screens[].metadata.display_items`에 `Description` 항목만 보관합니다.
 
 ## 5. S3 / PgVector / Bedrock 접근 원칙
 
@@ -162,7 +165,8 @@ SCREEN_DESIGN -> 화면설계서.pptx
 
 ## Requirement extraction process parity
 1. `/generate/requirement` 호출 시 선택된 `source_document_ids`의 chunk 전체를 조회합니다.
-2. 각 chunk를 기존 sample_0605의 extraction prompt 형식으로 LLM에 전달합니다.
-3. LLM은 chunk당 최대 10개의 요구사항 atom JSON 배열을 반환합니다.
-4. 반환 atom을 통합한 뒤 중복 제거, Biz요건 ID, 요구사항 ID를 재채번합니다.
-5. `output_mapper.json` 및 S3/로컬 템플릿 기준으로 요구사항명세서 Excel에 매핑합니다.
+2. Core Agent 내부 전처리로 pipe table 행과 section title을 정규화합니다.
+3. 표 기반 요구사항이 있으면 LLM을 거치지 않고 행 단위로 atom을 생성합니다.
+4. 표 기반 요구사항이 없으면 각 chunk를 기존 sample_0605의 extraction prompt 형식으로 LLM에 전달합니다.
+5. 반환 atom을 통합한 뒤 중복 제거, Biz요건 ID(`Biz-0001`), 요구사항 ID(`BSR-00001`)를 재채번합니다.
+6. `output_mapper.json` 및 S3/로컬 템플릿 기준으로 요구사항명세서 Excel에 매핑합니다.
