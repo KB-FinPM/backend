@@ -113,3 +113,4 @@ class ChatResponse(BaseResponse):
     pending_action: ChatActionMetadata | None = None
     suggested_actions: list[ChatSuggestedAction] = Field(default_factory=list)
     result: dict[str, Any] = Field(default_factory=dict)
+    download_files: list[dict[str, Any]] = Field(default_factory=list)

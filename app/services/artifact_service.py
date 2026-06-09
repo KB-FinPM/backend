@@ -1,6 +1,7 @@
 # EN: Business service for generated artifact persistence and lookup.
 # KO: 생성 산출물 저장과 조회를 담당하는 비즈니스 서비스입니다.
 
+from pathlib import PurePath
 from typing import Any
 
 from app.models.artifact import ArtifactModel
@@ -67,6 +68,7 @@ class ArtifactService:
             project_id=artifact.project_id,
             artifact_type=ArtifactType(artifact.artifact_type),
             name=artifact.name,
+            file_name=self._file_name_for_artifact(artifact),
             version=artifact.version,
             source_document_ids=artifact.source_document_ids or [],
             template_id=artifact.template_id,
@@ -75,3 +77,10 @@ class ArtifactService:
             storage_path=artifact.storage_path,
             status=ArtifactStatus(artifact.status),
         )
+
+    def _file_name_for_artifact(self, artifact: ArtifactModel) -> str | None:
+        if artifact.storage_path:
+            file_name = PurePath(artifact.storage_path).name
+            if file_name:
+                return file_name
+        return artifact.name or None

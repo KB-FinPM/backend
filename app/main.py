@@ -22,6 +22,7 @@ from app.api import (
 from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.logger import get_logger
+from app.db.session import init_db
 from app.schemas.response import ErrorResponse
 
 logger = get_logger(__name__)
@@ -39,6 +40,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def initialize_database_schema() -> None:
+    await init_db()
 
 
 @app.exception_handler(ApiError)

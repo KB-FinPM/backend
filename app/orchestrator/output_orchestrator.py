@@ -32,11 +32,14 @@ class OutputOrchestrator:
             return await self.chat_agent.render(request)
 
         if request.response_type == OutputResponseType.API_RESPONSE:
+            display_payload = self._format_api_display_payload(request)
             return OutputAgentResponse(
                 success=not request.errors,
                 agent_name="OutputOrchestrator",
-                message=request.message,
-                display_payload=request.result_json,
+                message=display_payload.get("message", request.message)
+                if isinstance(display_payload, dict)
+                else request.message,
+                display_payload=display_payload,
                 artifact_refs=[request.artifact] if request.artifact else [],
                 error="; ".join(request.errors) if request.errors else None,
             )
@@ -55,6 +58,35 @@ class OutputOrchestrator:
             message="unsupported output request",
             error="unsupported output request",
         )
+
+    def _format_api_display_payload(
+        self,
+        request: OutputAgentRequest,
+    ) -> dict:
+        if request.errors:
+            return self.chat_agent.build_display_payload(
+                {
+                    "event": "ACTION_FAILED",
+                    "error": "; ".join(request.errors),
+                    "result": request.result_json,
+                }
+            )
+
+        result = request.result_json.get("result")
+        if isinstance(result, dict) and (
+            result.get("artifact_type") == "SCHEDULE_TODO_LIST"
+            or "todos" in result
+            or "artifact" in result
+            or "generated" in result
+        ):
+            return self.chat_agent.build_display_payload(
+                {
+                    "event": "ACTION_COMPLETED",
+                    "result": result,
+                }
+            )
+
+        return request.result_json
 
 
 output_orchestrator = OutputOrchestrator()

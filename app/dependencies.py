@@ -13,6 +13,7 @@ from app.orchestrator.output_orchestrator import (
 )
 from app.repositories.artifact_repository import ArtifactRepository
 from app.repositories.artifact_link_repository import ArtifactLinkRepository
+from app.repositories.action_item_repository import ActionItemRepository
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.template_repository import TemplateRepository
@@ -52,6 +53,12 @@ def get_conversation_repository(
     return ConversationRepository(session)
 
 
+def get_action_item_repository(
+    session: AsyncSession = Depends(get_session),
+) -> ActionItemRepository:
+    return ActionItemRepository(session)
+
+
 def get_template_repository(
     session: AsyncSession = Depends(get_session),
 ) -> TemplateRepository:
@@ -74,8 +81,10 @@ def get_generation_service() -> GenerationService:
     return GenerationService(generation_orchestrator)
 
 
-def get_schedule_service() -> ScheduleService:
-    return ScheduleService()
+def get_schedule_service(
+    action_item_repository: ActionItemRepository = Depends(get_action_item_repository),
+) -> ScheduleService:
+    return ScheduleService(action_item_repository=action_item_repository)
 
 
 def get_retrieval_service(

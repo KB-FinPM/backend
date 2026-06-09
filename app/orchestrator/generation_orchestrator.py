@@ -151,6 +151,7 @@ class GenerationOrchestrator:
                     else None
                 ),
                 "target_artifact_type": generation_flow.target_artifact_type.value,
+                "project_name": request.project_name or request.project_id,
                 "template": template_context,
                 "query": request.query,
                 "author": request.author_value(),
@@ -176,6 +177,7 @@ class GenerationOrchestrator:
                 artifact_id=artifact_id,
                 artifact_type=generation_flow.target_artifact_type,
                 result_json=validated_response.result,
+                project_name=request.project_name,
                 document_service=document_service,
                 storage_service=(
                     document_service.storage_service
@@ -188,7 +190,11 @@ class GenerationOrchestrator:
                 artifact_id=artifact_id,
                 project_id=request.project_id,
                 artifact_type=generation_flow.target_artifact_type,
-                name=generation_flow.target_artifact_type.value,
+                name=(
+                    export_result.file_name
+                    if export_result is not None
+                    else generation_flow.target_artifact_type.value
+                ),
                 source_document_ids=request.source_document_ids,
                 template_id=(
                     resolved_template.template_id
