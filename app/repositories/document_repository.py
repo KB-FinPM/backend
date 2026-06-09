@@ -170,4 +170,6 @@ class DocumentRepository:
             file_name=document.file_name,
             storage_path=document.storage_path,
             status=DocumentStatus(document.status),
+            created_at=document.created_at,
+            updated_at=document.updated_at,
         )

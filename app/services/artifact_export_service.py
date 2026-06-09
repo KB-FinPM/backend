@@ -26,6 +26,7 @@ from util.agent_template_utils import (
 )
 
 logger = get_logger(__name__)
+INVALID_FILE_NAME_CHARS = set('<>:"/\\|?*')
 
 
 @dataclass(frozen=True)
@@ -51,11 +52,12 @@ class ArtifactExportService:
         artifact_id: str,
         artifact_type: ArtifactType,
         result_json: dict[str, Any],
+        project_name: str | None = None,
         document_service: DocumentService | None = None,
         storage_service: S3Service | None = None,
     ) -> ArtifactExportResult | None:
         if artifact_type == ArtifactType.REQUIREMENT_SPEC:
-            file_name = output_file_name("requirement_spec", "요구사항명세서.xlsx")
+            file_name = self._requirement_file_name(project_name)
             file_bytes = self._build_requirement_xlsx(result_json)
             content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif artifact_type == ArtifactType.UNITTEST_SPEC:
@@ -126,6 +128,21 @@ class ArtifactExportService:
             content_type=content_type,
             document=generated_document,
         )
+
+    def _requirement_file_name(self, project_name: str | None) -> str:
+        safe_project_name = self._safe_file_name_part(project_name or "")
+        if not safe_project_name:
+            return "요구사항명세서.xlsx"
+        return f"[{safe_project_name}] 요구사항명세서.xlsx"
+
+    def _safe_file_name_part(self, value: str) -> str:
+        cleaned = "".join(
+            "_"
+            if character in INVALID_FILE_NAME_CHARS or ord(character) < 32
+            else character
+            for character in str(value)
+        )
+        return " ".join(cleaned.strip().strip(".").split())
 
     def _requirement_text(self, result_json: dict[str, Any]) -> str:
         lines = ["# REQUIREMENT_SPEC"]

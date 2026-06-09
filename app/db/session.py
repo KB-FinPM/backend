@@ -36,7 +36,40 @@ async def init_db() -> None:
         if connection.dialect.name == "postgresql":
             await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await connection.run_sync(Base.metadata.create_all)
+        await _ensure_action_item_columns(connection)
 
 
 async def dispose_db() -> None:
     await engine.dispose()
+
+
+async def _ensure_action_item_columns(connection) -> None:
+    columns = {
+        "description": "TEXT",
+        "due_date_text": "VARCHAR(100)",
+        "related_document": "VARCHAR(200)",
+        "source_type": "VARCHAR(40) DEFAULT 'MEETING_MINUTES'",
+        "updated_at": "DATETIME DEFAULT CURRENT_TIMESTAMP",
+    }
+    if connection.dialect.name == "sqlite":
+        result = await connection.execute(text("PRAGMA table_info(action_items)"))
+        existing_columns = {row[1] for row in result.fetchall()}
+        for column_name, column_sql in columns.items():
+            if column_name not in existing_columns:
+                await connection.execute(
+                    text(f"ALTER TABLE action_items ADD COLUMN {column_name} {column_sql}")
+                )
+        return
+
+    if connection.dialect.name == "postgresql":
+        postgres_columns = {
+            **columns,
+            "updated_at": "TIMESTAMP WITH TIME ZONE DEFAULT now()",
+        }
+        for column_name, column_sql in postgres_columns.items():
+            await connection.execute(
+                text(
+                    f"ALTER TABLE action_items ADD COLUMN IF NOT EXISTS "
+                    f"{column_name} {column_sql}"
+                )
+            )
