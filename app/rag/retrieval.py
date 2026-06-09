@@ -23,13 +23,15 @@ class RetrievalService:
         project_id: str,
         permission_scope: list[str],
         query: str,
-        top_k: int = 5,
+        top_k: int = 200,
+        document_ids: list[str] | None = None,
     ) -> list[dict]:
         logger.info(
             "[RAG] search | "
             f"project_id={project_id} | "
             f"permission_scope={permission_scope} | "
-            f"query={query[:50]}"
+            f"query={query[:50]} | "
+            f"document_ids={document_ids or []}"
         )
 
         if "project:read" not in permission_scope:
@@ -44,7 +46,15 @@ class RetrievalService:
             project_id=project_id,
             query=query,
             limit=top_k,
+            document_ids=document_ids,
         )
+        if not chunks and query:
+            chunks = await self.document_repository.search_chunks_by_project(
+                project_id=project_id,
+                query="",
+                limit=top_k,
+                document_ids=document_ids,
+            )
         return [
             {
                 "chunk_id": chunk.chunk_id,

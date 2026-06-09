@@ -5,6 +5,10 @@ from app.agents.input_agents.document_parser_agent.agent import (
     DocumentParserAgent,
     document_parser_agent,
 )
+from app.agents.input_agents.chat_input_agent.agent import (
+    ChatInputAgent,
+    chat_input_agent,
+)
 from app.schemas.io_agent import (
     InputAgentRequest,
     InputAgentResponse,
@@ -19,12 +23,15 @@ class InputOrchestrator:
     def __init__(
         self,
         document_parser: DocumentParserAgent = document_parser_agent,
+        chat_input: ChatInputAgent = chat_input_agent,
     ) -> None:
         self.document_parser = document_parser
+        self.chat_input = chat_input
 
     async def normalize(self, request: InputAgentRequest) -> InputAgentResponse:
-        # TODO: Route TEXT inputs to a dedicated input agent once that agent is
-        # implemented.
+        if request.input_type == InputType.TEXT:
+            return await self.chat_input.parse(request)
+
         if request.input_type == InputType.FILE:
             return await self.document_parser.parse(request)
 

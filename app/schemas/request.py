@@ -49,6 +49,10 @@ class GenerationRequest(BaseModel):
         description="Template version to use for generation",
     )
     query: Optional[str] = Field(None, description="Additional generation request")
+    author: Optional[str] = Field(None, description="Artifact author name")
+    writer: Optional[str] = Field(None, description="Deprecated alias for author")
+    created_by: Optional[str] = Field(None, description="Deprecated alias for author")
+    user_id: Optional[str] = Field(None, description="Requesting user ID")
     permission_scope: list[str] = Field(
         default_factory=lambda: ["project:read"],
         description="Permission scope used for project-scoped retrieval",
@@ -73,6 +77,9 @@ class GenerationRequest(BaseModel):
                 template_version=self.template_version,
             ),
         )
+
+    def author_value(self) -> str:
+        return str(self.author or self.writer or self.created_by or self.user_id or "")
 
 
 class ScheduleTodoRequest(BaseModel):

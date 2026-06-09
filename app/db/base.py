@@ -16,6 +16,11 @@ from app.models.artifact import (  # noqa: E402, F401
     ArtifactVersionModel,
 )
 from app.models.artifact_link import ArtifactLinkModel  # noqa: E402, F401
+from app.models.conversation import (  # noqa: E402, F401
+    ConversationActionModel,
+    ConversationMessageModel,
+    ConversationModel,
+)
 from app.models.document import DocumentChunkModel, DocumentModel  # noqa: E402, F401
 from app.models.project import ProjectModel  # noqa: E402, F401
 from app.models.template import TemplateModel  # noqa: E402, F401

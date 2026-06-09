@@ -51,4 +51,27 @@ class Settings(BaseSettings):
         return value
 
 
+def normalize_async_database_url(database_url: str) -> str:
+    """Return a SQLAlchemy async-driver URL for AsyncEngine.
+
+    SQLAlchemy AsyncEngine cannot use sync PostgreSQL drivers such as
+    psycopg2. This helper keeps sqlite async URLs unchanged and rewrites
+    common PostgreSQL sync URLs to asyncpg.
+    """
+    if not database_url:
+        return database_url
+
+    replacements = {
+        "postgresql+psycopg2://": "postgresql+asyncpg://",
+        "postgresql+psycopg://": "postgresql+asyncpg://",
+        "postgresql://": "postgresql+asyncpg://",
+        "postgres://": "postgresql+asyncpg://",
+    }
+    for prefix, replacement in replacements.items():
+        if database_url.startswith(prefix):
+            return replacement + database_url[len(prefix):]
+
+    return database_url
+
+
 settings = Settings()

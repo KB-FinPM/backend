@@ -141,15 +141,23 @@ class DocumentRepository:
         project_id: str,
         query: str,
         limit: int = 5,
+        document_ids: list[str] | None = None,
     ) -> list[DocumentChunkModel]:
-        statement = (
-            select(DocumentChunkModel)
-            .where(DocumentChunkModel.project_id == project_id)
-            .order_by(DocumentChunkModel.created_at.desc())
-            .limit(limit)
-        )
+        statement = select(DocumentChunkModel).where(DocumentChunkModel.project_id == project_id)
+        if document_ids:
+            statement = statement.where(DocumentChunkModel.document_id.in_(document_ids))
+
         if query:
             statement = statement.where(DocumentChunkModel.text.ilike(f"%{query}%"))
+            statement = statement.order_by(DocumentChunkModel.created_at.desc())
+        else:
+            # Requirement generation must consume the selected document in source
+            # order, not the latest N chunks. This mirrors sample_0605's
+            # chunk-by-chunk pipeline.
+            statement = statement.order_by(DocumentChunkModel.document_id.asc(), DocumentChunkModel.chunk_index.asc())
+
+        if limit and limit > 0:
+            statement = statement.limit(limit)
 
         result = await self.session.execute(statement)
         return list(result.scalars().all())

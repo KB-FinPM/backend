@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from app.core.config import settings
+from app.core.config import normalize_async_database_url, settings
 from app.db.session import AsyncSessionLocal, dispose_db
 from app.storage.s3 import S3Service
 
@@ -15,7 +15,7 @@ async def check_db() -> None:
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("SELECT 1"))
         value = result.scalar_one()
-    print(f"DB OK | url={_mask_database_url(settings.DATABASE_URL)} | result={value}")
+    print(f"DB OK | url={_mask_database_url(normalize_async_database_url(settings.DATABASE_URL))} | result={value}")
 
 
 async def check_s3() -> None:

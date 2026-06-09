@@ -39,8 +39,14 @@ class ArtifactRepository:
             template_id=template_id,
             template_version=template_version,
             storage_path=storage_path,
+            status="EXPORTED" if storage_path else "CREATED",
         )
         self.session.add(artifact)
+        # Flush the parent artifact before inserting child rows.
+        # Without ORM relationships SQLAlchemy may not reliably order these INSERTs,
+        # which can raise a foreign key violation on artifact_versions or
+        # artifact_documents even though the source document exists.
+        await self.session.flush()
         self.session.add(
             ArtifactVersionModel(
                 artifact_version_id=f"ARTV-{uuid4().hex[:12].upper()}",

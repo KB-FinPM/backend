@@ -3,6 +3,8 @@
 
 from enum import StrEnum
 
+from typing import Any
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -31,6 +33,10 @@ class RequirementItem(BaseModel):
         description="Acceptance criteria",
     )
     rationale: str | None = Field(None, description="Generation rationale")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Mapper-aligned fields such as category, biz_requirement_name, requirement_name, requirement_type",
+    )
 
 
 class RequirementArtifact(BaseModel):
