@@ -24,6 +24,7 @@ class UploadRequest(BaseModel):
 
 class GenerationRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
+    project_name: Optional[str] = Field(None, description="Project display name")
     source_document_ids: list[str] = Field(
         default_factory=list,
         description="Source document IDs used to generate the target artifact",

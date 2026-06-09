@@ -83,6 +83,20 @@ SCREEN_DESIGN_EXAMPLE = {
     },
 }
 
+UNITTEST_EXAMPLE = {
+    "summary": "Build unit test cases from requirement specification",
+    "value": {
+        "project_id": "PRJ-TEST-001",
+        "project_name": "테스트 구축 프로젝트",
+        "author": "김국민",
+        "source_document_ids": ["DOC-ADA194C012AF"],
+        "source_document_type": "CONSTRUCTION_UNITTEST_DEFINITION",
+        "target_artifact_type": "UNITTEST_SPEC",
+        "query": "단위테스트케이스를 생성해줘",
+        "permission_scope": ["project:read"],
+    },
+}
+
 
 @router.post(
     "/requirement",
@@ -174,6 +188,43 @@ async def generate_screen_design(
     request.target_artifact_type = ArtifactType.SCREEN_DESIGN
     request.source_document_type = request.source_document_type or (
         DocumentType.REQUIREMENT_SPEC
+    )
+
+    return await _generate_artifact_response(
+        request=request,
+        generation_service=generation_service,
+        artifact_service=artifact_service,
+        document_service=document_service,
+        retrieval_service=retrieval_service,
+        template_service=template_service,
+        input_orchestrator=input_orchestrator,
+        output_orchestrator=output_orchestrator,
+    )
+
+
+@router.post(
+    "/unittest",
+    response_model=GenerationResponse,
+    responses=GENERATION_ERROR_RESPONSES,
+)
+async def generate_unittest(
+    request: GenerationRequest = Body(
+        ...,
+        openapi_examples={"unittest": UNITTEST_EXAMPLE},
+    ),
+    generation_service: GenerationService = Depends(get_generation_service),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+    document_service: DocumentService = Depends(get_document_service),
+    retrieval_service: RetrievalService = Depends(get_retrieval_service),
+    template_service: TemplateService = Depends(get_template_service),
+    input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
+    output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+) -> GenerationResponse:
+    """Generate a unit test case artifact through the PM agent orchestrator."""
+    logger.info(f"generate_unittest | project_id={request.project_id}")
+    request.target_artifact_type = ArtifactType.UNITTEST_SPEC
+    request.source_document_type = request.source_document_type or (
+        DocumentType.CONSTRUCTION_UNITTEST_DEFINITION
     )
 
     return await _generate_artifact_response(

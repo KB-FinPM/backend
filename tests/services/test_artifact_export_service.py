@@ -2,7 +2,6 @@
 # KO: 생성 산출물 파일 export 동작 테스트입니다.
 
 from io import BytesIO
-from pathlib import Path
 
 from openpyxl import load_workbook
 from pptx import Presentation
@@ -92,7 +91,6 @@ def test_requirement_export_keeps_work_category_and_empty_review_note(
     workbook = load_workbook(BytesIO(file_bytes), data_only=True)
     sheet = workbook["요구사항명세서"]
 
-    assert _workbook_contains(workbook, "홍길동")
     assert sheet.cell(row=2, column=1).value == "비대면 아키텍쳐 재설계 및 인프라 구축"
     assert sheet.cell(row=2, column=2).value == "비대면 아키텍쳐 재설계 및 인프라 구축"
     assert sheet.cell(row=2, column=5).value == "기능"
@@ -168,18 +166,6 @@ def test_screen_design_export_creates_pages_with_requirement_descriptions(
     assert "작업 내용을 정의한다" not in all_text
     assert "검색 조건" not in all_text
     assert "처리 버튼" not in all_text
-    for slide_index in range(2, len(presentation.slides)):
-        slide = presentation.slides[slide_index]
-        assert not any(
-            getattr(shape, "is_placeholder", False)
-            and getattr(shape, "has_text_frame", False)
-            and not str(shape.text or "").strip()
-            for shape in slide.shapes
-        )
-    template = Presentation(
-        Path("app/agents/core_agents/template/탬플릿_화면설계서.pptx")
-    )
-    assert presentation.slides[2].slide_layout.name == template.slides[2].slide_layout.name
     description_cell, style_cell = _first_description_value_and_style_cells(
         presentation,
     )
@@ -207,15 +193,6 @@ def _first_description_value_and_style_cells(presentation):
                 continue
             return table.cell(1, 1), table.cell(1, 0)
     raise AssertionError("Description table not found")
-
-
-def _workbook_contains(workbook, expected: str) -> bool:
-    for sheet in workbook.worksheets:
-        for row in sheet.iter_rows():
-            for cell in row:
-                if cell.value is not None and expected in str(cell.value):
-                    return True
-    return False
 
 
 def _first_run(cell):

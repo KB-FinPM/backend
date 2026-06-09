@@ -133,10 +133,22 @@ class ChatOrchestrator:
                 structured_context=structured_context,
             )
 
+        if intent == "COMPLETE_TODO":
+            return await self._complete_todo_action(
+                conversation=conversation,
+                project_id=request.project_id,
+                title_query=structured_context.get("todo_title_query")
+                or request.message,
+            )
+
         return await self._render_and_save_response(
             conversation=conversation,
             project_id=request.project_id,
-            result_json={"event": "GENERAL_QA"},
+            result_json={
+                "event": "GENERAL_QA",
+                "query": request.message,
+                "topic": structured_context.get("topic"),
+            },
         )
 
     async def _resolve_conversation(
@@ -171,12 +183,22 @@ class ChatOrchestrator:
             return await self._render_and_save_response(
                 conversation=conversation,
                 project_id=request.project_id,
-                result_json={"event": "REQUIRED_INFO"},
+                result_json={
+                    "event": "REQUIRED_INFO",
+                    "target_artifact_type": structured_context.get(
+                        "target_artifact_type"
+                    ),
+                    "required_source_document_types": structured_context.get(
+                        "required_source_document_types"
+                    )
+                    or [],
+                },
             )
 
         target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
         validation_request = GenerationRequest(
             project_id=request.project_id,
+            project_name=request.context.get("project_name"),
             source_document_ids=source_document_ids,
             source_document_type=structured_context.get("source_document_type"),
             target_artifact_type=target_artifact_type,
@@ -202,7 +224,9 @@ class ChatOrchestrator:
             "project_id": request.project_id,
             "target_artifact_type": target_artifact_type.value,
             "source_document_ids": source_document_ids,
+            "source_documents": request.context.get("selected_documents") or [],
             "source_document_type": structured_context.get("source_document_type"),
+            "project_name": request.context.get("project_name"),
             "query": request.message,
             "permission_scope": request.permission_scope,
             "template_id": request.context.get("template_id"),
@@ -388,6 +412,7 @@ class ChatOrchestrator:
         payload = action.payload
         generation_request = GenerationRequest(
             project_id=payload["project_id"],
+            project_name=payload.get("project_name"),
             source_document_ids=payload.get("source_document_ids") or [],
             source_document_type=payload.get("source_document_type"),
             target_artifact_type=payload["target_artifact_type"],
@@ -396,11 +421,51 @@ class ChatOrchestrator:
             query=payload.get("query"),
             permission_scope=payload.get("permission_scope") or ["project:read"],
         )
-        return await self.generation_service.generate_artifact(
-            generation_request,
-            artifact_service=self.artifact_service,
-            retrieval_service=self.retrieval_service,
-            template_service=self.template_service,
+        try:
+            return await self.generation_service.generate_artifact(
+                generation_request,
+                artifact_service=self.artifact_service,
+                retrieval_service=self.retrieval_service,
+                template_service=self.template_service,
+                document_service=self.document_service,
+            )
+        except TypeError:
+            return await self.generation_service.generate_artifact(
+                generation_request,
+                artifact_service=self.artifact_service,
+                retrieval_service=self.retrieval_service,
+                template_service=self.template_service,
+            )
+
+    async def _complete_todo_action(
+        self,
+        *,
+        conversation: ConversationMetadata,
+        project_id: str,
+        title_query: str,
+    ) -> ChatResponse:
+        response = await self.schedule_service.complete_todo(
+            project_id=project_id,
+            title_query=title_query,
+        )
+        if not response.success:
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=project_id,
+                result_json={
+                    "event": "ACTION_FAILED",
+                    "error": response.message,
+                    "result": response.result if isinstance(response.result, dict) else {},
+                },
+            )
+
+        return await self._render_and_save_response(
+            conversation=conversation,
+            project_id=project_id,
+            result_json={
+                "event": "TODO_COMPLETED",
+                "result": response.result if isinstance(response.result, dict) else {},
+            },
         )
 
     async def _execute_schedule_action(
@@ -453,6 +518,7 @@ class ChatOrchestrator:
             pending_action=pending_action,
             suggested_actions=display_payload.get("suggested_actions") or [],
             result=display_payload.get("result") or {},
+            download_files=display_payload.get("download_files") or [],
         )
 
     def _action_type_for_artifact(self, artifact_type: ArtifactType) -> ChatActionType:

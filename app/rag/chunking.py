@@ -34,11 +34,16 @@ def _split_by_headings(text: str) -> list[dict]:
     heading_pattern = re.compile(r"^(\d+(\.\d+)*\s+.+|#{1,6}\s+.+|[가-힣A-Za-z0-9 ]+\s*[>:：])$")
     for line in lines:
         clean = line.strip()
-        if heading_pattern.match(clean) and buffer:
+        if heading_pattern.match(clean):
+            if not buffer:
+                current_title = clean.rstrip(">:：").strip()
+                current_path = ["ROOT", current_title]
+                continue
+
             section_text = "\n".join(buffer).strip()
             if section_text:
                 sections.append({"title": current_title, "section_path": current_path[:], "text": section_text})
-            current_title = clean
+            current_title = clean.rstrip(">:：").strip()
             current_path = ["ROOT", current_title]
             buffer = []
         else:
@@ -93,7 +98,7 @@ def split_text_into_chunks(
             )
             continue
         for idx, part_text in enumerate(_split_long_text_by_chars(section_text, max_chars, overlap_chars), start=1):
-            title = f"{section['title']} / part-{idx}"
+            title = section["title"] if idx == 1 else f"{section['title']} / part-{idx}"
             chunks.append(
                 TextChunk(
                     chunk_index=len(chunks),

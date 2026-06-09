@@ -152,7 +152,7 @@ def build_template_context(project_id: str = "", context: dict[str, Any] | None 
     )
     return {
         "project_id": str(project_id or ""),
-        "project_name": str(context.get("project_name") or context.get("project_id") or project_id or "프로젝트명"),
+        "project_name": str(context.get("project_name") or context.get("project_nm") or "프로젝트명"),
         "author": str(author),
         "today": datetime.today().strftime("%Y-%m-%d"),
     }

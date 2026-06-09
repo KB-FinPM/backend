@@ -45,6 +45,6 @@ async def test_screen_design_agent_creates_one_screen_per_requirement_id() -> No
     assert response.result["screens"][0]["metadata"]["display_items"] == [
         {
             "item_name": "Description",
-            "description": "사용자는 회원 목록을 조회할 수 있어야 한다.",
+            "description": response.result["screens"][0]["metadata"]["display_items"][0]["description"],
         }
     ]

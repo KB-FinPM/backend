@@ -26,6 +26,7 @@ from util.agent_template_utils import (
 )
 
 logger = get_logger(__name__)
+INVALID_FILE_NAME_CHARS = set('<>:"/\\|?*')
 
 
 @dataclass(frozen=True)
@@ -51,12 +52,17 @@ class ArtifactExportService:
         artifact_id: str,
         artifact_type: ArtifactType,
         result_json: dict[str, Any],
+        project_name: str | None = None,
         document_service: DocumentService | None = None,
         storage_service: S3Service | None = None,
     ) -> ArtifactExportResult | None:
         if artifact_type == ArtifactType.REQUIREMENT_SPEC:
-            file_name = output_file_name("requirement_spec", "요구사항명세서.xlsx")
+            file_name = self._requirement_file_name(project_name)
             file_bytes = self._build_requirement_xlsx(result_json)
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        elif artifact_type == ArtifactType.UNITTEST_SPEC:
+            file_name = output_file_name("unit_test", "단위테스트케이스.xlsx")
+            file_bytes = self._build_unit_test_xlsx(result_json)
             content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif artifact_type == ArtifactType.WBS:
             file_name = output_file_name("wbs", "WBS.xlsx")
@@ -122,6 +128,21 @@ class ArtifactExportService:
             content_type=content_type,
             document=generated_document,
         )
+
+    def _requirement_file_name(self, project_name: str | None) -> str:
+        safe_project_name = self._safe_file_name_part(project_name or "")
+        if not safe_project_name:
+            return "요구사항명세서.xlsx"
+        return f"[{safe_project_name}] 요구사항명세서.xlsx"
+
+    def _safe_file_name_part(self, value: str) -> str:
+        cleaned = "".join(
+            "_"
+            if character in INVALID_FILE_NAME_CHARS or ord(character) < 32
+            else character
+            for character in str(value)
+        )
+        return " ".join(cleaned.strip().strip(".").split())
 
     def _requirement_text(self, result_json: dict[str, Any]) -> str:
         lines = ["# REQUIREMENT_SPEC"]
@@ -200,7 +221,7 @@ class ArtifactExportService:
         sheet_cfg = wbs_mapper.get("data_sheet") or {}
         columns = sheet_cfg.get("columns") or []
         context = build_template_context(project_id=str((result_json.get("metadata") or {}).get("project_id") or ""), context=result_json.get("metadata") or {})
-        tasks = self._normalize_wbs_hierarchy(result_json.get("tasks", []), project_name=context.get("project_name") or context.get("project_id") or "프로젝트명")
+        tasks = self._normalize_wbs_hierarchy(result_json.get("tasks", []), project_name=context.get("project_name") or "프로젝트명")
 
         template_path = wbs_mapper.get("template_path")
         if template_path:
@@ -220,6 +241,114 @@ class ArtifactExportService:
             ws.append([get_value(source, column.get("field"), context=context, row_number=row_number) for column in columns] if columns else [row_number, source.get("level", ""), source.get("id", ""), source.get("wbs_name", ""), source.get("deliverable", "")])
         self._style_sheet(ws, widths=[10, 10, 18, 48, 34, 20, 20, 34, 20])
         return self._save_workbook(wb)
+
+    def _build_unit_test_xlsx(self, result_json: dict[str, Any]) -> bytes:
+        from openpyxl import Workbook, load_workbook
+
+        mapper = load_output_mapper()
+        unit_mapper = get_nested(mapper, "unit_test", default={}) or {}
+        sheet_cfg = unit_mapper.get("data_sheet") or self._default_unit_test_sheet_cfg()
+        columns = sheet_cfg.get("columns") or self._unit_test_columns()
+        context = build_template_context(
+            project_id=str((result_json.get("metadata") or {}).get("project_id") or ""),
+            context=result_json.get("metadata") or {},
+        )
+        test_cases = result_json.get("test_cases", [])
+
+        template_path = unit_mapper.get("template_path") or "template/탬플릿_단위테스트케이스.xlsx"
+        if template_path:
+            wb = load_workbook(resolve_template_path(template_path))
+            self._apply_placeholder_sheets(
+                wb,
+                unit_mapper.get("placeholder_sheets") or self._default_cover_placeholder_sheets(),
+                context,
+            )
+            sheet_name = self._resolve_sheet_name(
+                wb,
+                sheet_cfg.get("sheet_name", "케이스"),
+                sheet_cfg.get("fallback_sheet_names") or ["목록총괄표"],
+            )
+            ws = wb[sheet_name]
+            self._write_mapped_rows(ws, test_cases, sheet_cfg, columns, context, self._unit_test_source)
+            self._format_unit_test_content_column(ws, sheet_cfg, columns, len(test_cases))
+            return self._save_workbook(wb)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet_cfg.get("sheet_name") or "케이스"
+        headers = [(column.get("header_names") or [column.get("field", "")])[0] for column in columns] or [
+            "No",
+            "요구사항ID",
+            "요구사항명",
+            "시나리오ID",
+            "테스트케이스ID",
+            "테스트케이스명",
+            "테스트케이스 점검 내용",
+        ]
+        ws.append(headers)
+        for row_number, item in enumerate(test_cases, start=1):
+            source = self._unit_test_source(item)
+            ws.append(
+                [get_value(source, column.get("field"), context=context, row_number=row_number) for column in columns]
+                if columns
+                else [
+                    row_number,
+                    source.get("requirement_id", ""),
+                    source.get("requirement_name", ""),
+                    source.get("scenario_id", ""),
+                    source.get("test_case_id", ""),
+                    source.get("test_case_name", ""),
+                    source.get("test_content", ""),
+                ]
+            )
+        self._format_unit_test_content_column(ws, sheet_cfg, columns, len(test_cases))
+        self._style_sheet(ws, widths=[8, 18, 32, 18, 22, 36, 72, 22, 18, 18])
+        return self._save_workbook(wb)
+
+    def _default_cover_placeholder_sheets(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "sheet_name": "표지",
+                "placeholders": {
+                    "{프로젝트명}": "project_name",
+                    "{작성자명}": "author",
+                    "{작성자}": "author",
+                },
+            },
+            {
+                "sheet_name": "개정이력",
+                "placeholders": {
+                    "{작성일}": "today",
+                    "{작성자명}": "author",
+                    "{작성자}": "author",
+                },
+            },
+        ]
+
+    def _default_unit_test_sheet_cfg(self) -> dict[str, Any]:
+        return {
+            "sheet_name": "케이스",
+            "fallback_sheet_names": ["목록총괄표"],
+            "header_row": 1,
+            "start_row": 2,
+            "clear_existing_rows": True,
+            "copy_template_row_style": False,
+            "columns": self._unit_test_columns(),
+        }
+
+    def _unit_test_columns(self) -> list[dict[str, Any]]:
+        return [
+            {"field": "row_number", "header_names": ["No", "NO"], "default_column": 1},
+            {"field": "new_category", "header_names": ["신규구분"], "optional": True, "default_column": 2},
+            {"field": "test_case_id", "header_names": ["테스트케이스ID", "테스트ID"], "default_column": 3},
+            {"field": "test_case_name", "header_names": ["테스트케이스명", "화면명"], "default_column": 4},
+            {"field": "scenario_id", "header_names": ["시나리오ID", "화면/배치 ID"], "default_column": 5},
+            {"field": "screen_batch_type", "header_names": ["화면/배치"], "optional": True},
+            {"field": "test_content", "header_names": ["테스트케이스 점검 내용", "  테스트케이스 점검 내용", "테스트케이스 내용"], "default_column": 7},
+            {"field": "requirement_id", "header_names": ["요구사항 ID", "요구사항ID"], "optional": True},
+            {"field": "requirement_name", "header_names": ["요구사항명"], "optional": True},
+            {"field": "author", "header_names": ["담당 테스터", "담당자"], "optional": True, "default_column": 10},
+        ]
 
     def _build_screen_design_pptx(self, result_json: dict[str, Any]) -> bytes:
         from pptx import Presentation
@@ -347,6 +476,76 @@ class ArtifactExportService:
             "note": metadata.get("note") or "",
         }
 
+    def _unit_test_source(self, item: dict[str, Any]) -> dict[str, Any]:
+        metadata = item.get("metadata") or {}
+        test_content = item.get("test_content")
+        if test_content in (None, ""):
+            test_content = metadata.get("test_content", "")
+        return {
+            **metadata,
+            **item,
+            "new_category": metadata.get("new_category") or "신규",
+            "screen_batch_type": metadata.get("screen_batch_type") or "화면",
+            "test_case_id": item.get("test_case_id") or metadata.get("test_case_id", ""),
+            "test_case_name": item.get("test_case_name") or metadata.get("test_case_name", ""),
+            "requirement_id": item.get("requirement_id") or metadata.get("requirement_id", ""),
+            "requirement_name": item.get("requirement_name") or metadata.get("requirement_name", ""),
+            "scenario_id": item.get("scenario_id") or metadata.get("scenario_id", ""),
+            "test_content": self._unit_test_content_text(test_content),
+            "author": metadata.get("author") or "",
+        }
+
+    def _unit_test_content_text(self, value: Any) -> str:
+        text = (
+            str(value or "")
+            .replace("\\n", "\n")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
+        return text if text.strip() else " "
+
+    def _format_unit_test_content_column(
+        self,
+        ws: Any,
+        data_mapper: dict[str, Any],
+        columns: list[dict[str, Any]],
+        item_count: int,
+    ) -> None:
+        from copy import copy
+        from openpyxl.cell.cell import MergedCell
+
+        header_row = int(data_mapper.get("header_row", 1))
+        start_row = int(data_mapper.get("start_row", 2))
+        headers = self._header_map(ws, header_row=header_row)
+        column = None
+        for column_mapper in columns:
+            if column_mapper.get("field") == "test_content":
+                column = self._find_column(headers, column_mapper)
+                break
+        if column is None:
+            return
+        for row in range(start_row, start_row + max(item_count, 0)):
+            cell = ws.cell(row=row, column=column)
+            if isinstance(cell, MergedCell):
+                continue
+            alignment = copy(cell.alignment)
+            alignment.wrap_text = True
+            alignment.vertical = alignment.vertical or "top"
+            cell.alignment = alignment
+
+    def _resolve_sheet_name(
+        self,
+        workbook: Any,
+        preferred_name: str,
+        fallback_names: list[str],
+    ) -> str:
+        if preferred_name in workbook.sheetnames:
+            return preferred_name
+        for fallback_name in fallback_names:
+            if fallback_name in workbook.sheetnames:
+                return fallback_name
+        return workbook.sheetnames[-1]
+
     def _normalize_wbs_hierarchy(self, tasks: list[dict[str, Any]], project_name: str = "프로젝트명") -> list[dict[str, Any]]:
         """Ensure WBS rows always have display IDs like 0, 1, 1.1, 1.1.1.
 
@@ -414,7 +613,7 @@ class ArtifactExportService:
 
     def _common_screen_placeholder_values(self, mapper: dict[str, Any], context: dict[str, str]) -> dict[str, str]:
         values = build_placeholder_values(get_nested(mapper, "placeholder_slides", "common", default={}) or {}, context=context)
-        project_name = context.get("project_name") or context.get("project_id") or "프로젝트명"
+        project_name = context.get("project_name") or "프로젝트명"
         values.update({
             "{프로젝트명}": project_name,
             "{ProjectName}": project_name,
@@ -432,7 +631,7 @@ class ArtifactExportService:
         requirement_name = str(source.get("requirement_name") or screen_name)
         description = str(source.get("description") or "")
         return {
-            "{프로젝트명}": context.get("project_name") or context.get("project_id") or "프로젝트명",
+            "{프로젝트명}": context.get("project_name") or "프로젝트명",
             "{작성일}": context.get("today", ""),
             "{작성자}": context.get("author", ""),
             "{작성자명}": context.get("author", ""),
@@ -518,7 +717,7 @@ class ArtifactExportService:
         # Ensure there are enough physical rows and copy the first data row style
         # to newly created rows so template formatting remains close to sample_0605.
         required_max_row = start_row + max(len(items), 1) - 1
-        if ws.max_row < required_max_row:
+        if ws.max_row < required_max_row and data_mapper.get("copy_template_row_style", True):
             template_row = start_row if ws.max_row >= start_row else header_row
             for row_idx in range(ws.max_row + 1, required_max_row + 1):
                 for col_idx in range(1, ws.max_column + 1):

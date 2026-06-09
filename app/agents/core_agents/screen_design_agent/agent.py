@@ -67,7 +67,7 @@ class ScreenDesignAgent:
                     "screens": screens,
                     "metadata": {
                         "project_id": request.project_id,
-                        "project_name": str((request.context or {}).get("project_name") or request.project_id or "프로젝트명"),
+                        "project_name": str((request.context or {}).get("project_name") or (request.context or {}).get("project_nm") or "프로젝트명"),
                         "author": self._author(request.context or {}),
                         "generated_by": self.AGENT_NAME,
                         "source_requirement_count": len(atoms),

@@ -8,10 +8,14 @@ from pydantic import BaseModel, Field, model_validator
 
 class ScheduleTodoItem(BaseModel):
     todo_id: str = Field(..., min_length=1, description="Todo item ID")
+    project_id: str | None = Field(None, description="Project ID")
     title: str = Field(..., min_length=1, description="Todo title")
     description: str | None = Field(None, description="Todo description")
     assignee: str | None = Field(None, description="Assignee name or ID")
-    due_date: str | None = Field(None, description="Due date as an ISO-like string")
+    due_date: str | None = Field(None, description="Due date as text or ISO-like string")
+    related_document: str | None = Field(None, description="Related artifact/document")
+    source_type: str = Field("MEETING_MINUTES", description="TODO source type")
+    status: str = Field("TODO", description="TODO status")
     source_document_id: str | None = Field(None, description="Source document ID")
     source_chunk_ids: list[str] = Field(
         default_factory=list,

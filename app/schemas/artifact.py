@@ -2,6 +2,7 @@
 # KO: 문서, 산출물, 템플릿, 생성 흐름에 대한 공통 스키마입니다.
 
 from enum import StrEnum
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class DocumentType(StrEnum):
     CONSTRUCTION_REQUIREMENT_DEFINITION = "CONSTRUCTION_REQUIREMENT_DEFINITION"
+    CONSTRUCTION_UNITTEST_DEFINITION = "CONSTRUCTION_UNITTEST_DEFINITION"
     REQUIREMENT_SPEC = "REQUIREMENT_SPEC"
     MEETING_NOTES = "MEETING_NOTES"
     UNKNOWN = "UNKNOWN"
@@ -30,6 +32,7 @@ class ArtifactStatus(StrEnum):
 
 class ArtifactType(StrEnum):
     REQUIREMENT_SPEC = "REQUIREMENT_SPEC"
+    UNITTEST_SPEC = "UNITTEST_SPEC"
     SCREEN_DESIGN = "SCREEN_DESIGN"
     WBS = "WBS"
     ACTION_ITEMS = "ACTION_ITEMS"
@@ -71,6 +74,8 @@ class DocumentMetadata(BaseModel):
         DocumentStatus.UPLOADED,
         description="Current document processing status",
     )
+    created_at: Optional[datetime] = Field(None, description="Uploaded timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last updated timestamp")
 
 
 class ArtifactMetadata(BaseModel):
@@ -78,6 +83,7 @@ class ArtifactMetadata(BaseModel):
     project_id: str = Field(..., description="Project ID")
     artifact_type: ArtifactType = Field(..., description="Generated artifact type")
     name: str = Field(..., description="Artifact display name")
+    file_name: Optional[str] = Field(None, description="Generated file name")
     version: int = Field(1, description="Artifact version")
     source_document_ids: list[str] = Field(
         default_factory=list,

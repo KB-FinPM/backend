@@ -33,6 +33,7 @@ class StubGenerationOrchestrator:
         artifact_service=None,
         retrieval_service=None,
         template_service=None,
+        document_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         return GenerationResponse(
