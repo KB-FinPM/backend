@@ -66,3 +66,19 @@ async def test_artifact_agent_dispatches_screen_design_generation() -> None:
 
     assert response.result == {"source": "ScreenDesignAgent"}
     assert screen_design.received_request is not None
+
+
+@pytest.mark.anyio
+async def test_artifact_agent_dispatches_unit_test_generation() -> None:
+    unit_test = StubGenerator("UnitTestAgent")
+    agent = ArtifactAgent(unit_test_generator=unit_test)
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={"target_artifact_type": "UNITTEST_SPEC"},
+        )
+    )
+
+    assert response.result == {"source": "UnitTestAgent"}
+    assert unit_test.received_request is not None

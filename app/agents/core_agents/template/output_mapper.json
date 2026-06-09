@@ -20,6 +20,10 @@
         "document_name": "요구사항명세서",
         "extension": ".xlsx"
       },
+      "unit_test": {
+        "document_name": "단위테스트케이스",
+        "extension": ".xlsx"
+      },
       "wbs": {
         "document_name": "WBS",
         "extension": ".xlsx"
@@ -222,6 +226,119 @@
             "요구사항유형"
           ],
           "optional": true
+        }
+      ]
+    }
+  },
+  "unit_test": {
+    "template_path": "template/탬플릿_단위테스트케이스.xlsx",
+    "placeholder_sheets": [
+      {
+        "sheet_name": "표지",
+        "placeholders": {
+          "{프로젝트명}": "project_name",
+          "{작성자명}": "author",
+          "{작성자}": "author"
+        }
+      },
+      {
+        "sheet_name": "개정이력",
+        "placeholders": {
+          "{작성일}": "today",
+          "{작성자명}": "author",
+          "{작성자}": "author"
+        }
+      }
+    ],
+    "data_sheet": {
+      "sheet_name": "케이스",
+      "fallback_sheet_names": [
+        "목록총괄표"
+      ],
+      "header_row": 1,
+      "start_row": 2,
+      "clear_existing_rows": true,
+      "copy_template_row_style": false,
+      "columns": [
+        {
+          "field": "row_number",
+          "header_names": [
+            "No",
+            "NO"
+          ],
+          "default_column": 1
+        },
+        {
+          "field": "new_category",
+          "header_names": [
+            "신규구분"
+          ],
+          "optional": true,
+          "default_column": 2
+        },
+        {
+          "field": "test_case_id",
+          "header_names": [
+            "테스트케이스ID",
+            "테스트ID"
+          ],
+          "default_column": 3
+        },
+        {
+          "field": "test_case_name",
+          "header_names": [
+            "테스트케이스명",
+            "화면명"
+          ],
+          "default_column": 4
+        },
+        {
+          "field": "scenario_id",
+          "header_names": [
+            "시나리오ID",
+            "화면/배치 ID"
+          ],
+          "default_column": 5
+        },
+        {
+          "field": "screen_batch_type",
+          "header_names": [
+            "화면/배치"
+          ],
+          "optional": true
+        },
+        {
+          "field": "test_content",
+          "header_names": [
+            "테스트케이스 점검 내용",
+            "  테스트케이스 점검 내용",
+            "테스트케이스 내용"
+          ],
+          "default_column": 7
+        },
+        {
+          "field": "requirement_id",
+          "header_names": [
+            "요구사항 ID",
+            "요구사항ID"
+          ],
+          "optional": true
+        },
+        {
+          "field": "requirement_name",
+          "header_names": [
+            "요구사항명"
+          ],
+          "optional": true
+        },
+        {
+          "field": "author",
+          "header_names": [
+            "담당 테스터",
+            "담당자"
+          ],
+          "optional": true,
+          "default_column": 10
         }
       ]
     }

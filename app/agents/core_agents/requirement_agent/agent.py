@@ -177,12 +177,13 @@ class RequirementAgent:
             or context.get("created_by")
             or context.get("user_id")
         )
-        if not author:
-            return metadata
-        return {
-            **metadata,
-            "author": str(author),
-        }
+        project_name = context.get("project_name") or context.get("project_nm")
+        enriched = {**metadata}
+        if author:
+            enriched["author"] = str(author)
+        if project_name:
+            enriched["project_name"] = str(project_name)
+        return enriched
 
     def _build_chunk_prompt(
         self,

@@ -16,6 +16,7 @@ async def test_screen_design_agent_creates_one_screen_per_requirement_id() -> No
             project_id="PRJ-001",
             context={
                 "author": "홍길동",
+                "project_name": "차세대 FX 플랫폼",
                 "requirement_artifact": {
                     "requirements": [
                         {
@@ -42,6 +43,7 @@ async def test_screen_design_agent_creates_one_screen_per_requirement_id() -> No
     assert response.result["screens"][0]["metadata"]["requirement_id"] == "REQ-0001"
     assert response.result["screens"][0]["metadata"]["description"] == "사용자는 회원 목록을 조회할 수 있어야 한다."
     assert response.result["metadata"]["author"] == "홍길동"
+    assert response.result["metadata"]["project_name"] == "차세대 FX 플랫폼"
     assert response.result["screens"][0]["metadata"]["display_items"] == [
         {
             "item_name": "Description",

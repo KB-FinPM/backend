@@ -33,6 +33,7 @@ class StubGenerationOrchestrator:
         artifact_service=None,
         retrieval_service=None,
         template_service=None,
+        document_service=None,
     ) -> GenerationResponse:
         self.received_request = request
         return GenerationResponse(
@@ -236,6 +237,57 @@ def test_generate_screen_design_sets_target_artifact_type(client: TestClient) ->
     assert stub_generation_service.received_request.target_artifact_type == (
         "SCREEN_DESIGN"
     )
+    assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
+    assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
+
+
+def test_generate_unittest_sets_target_artifact_type(client: TestClient) -> None:
+    stub_generation_service = StubGenerationOrchestrator()
+    stub_input_orchestrator = StubInputOrchestrator()
+    stub_output_orchestrator = StubOutputOrchestrator()
+    client.app.dependency_overrides[get_generation_service] = (
+        lambda: stub_generation_service
+    )
+    client.app.dependency_overrides[get_artifact_service] = lambda: object()
+    client.app.dependency_overrides[get_document_service] = lambda: StubDocumentService()
+    client.app.dependency_overrides[get_retrieval_service] = lambda: object()
+    client.app.dependency_overrides[get_template_service] = lambda: object()
+    client.app.dependency_overrides[get_input_orchestrator] = (
+        lambda: stub_input_orchestrator
+    )
+    client.app.dependency_overrides[get_output_orchestrator] = (
+        lambda: stub_output_orchestrator
+    )
+
+    try:
+        response = client.post(
+            "/generate/unittest",
+            json={
+                "project_id": "PRJ-TEST-001",
+                "project_name": "테스트 구축 프로젝트",
+                "author": "김국민",
+                "source_document_ids": ["DOC-ADA194C012AF"],
+                "source_document_type": "CONSTRUCTION_UNITTEST_DEFINITION",
+                "target_artifact_type": "REQUIREMENT_SPEC",
+                "query": "단위테스트케이스를 생성해줘",
+                "permission_scope": ["project:read"],
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert stub_generation_service.received_request is not None
+    assert stub_generation_service.received_request.target_artifact_type == (
+        "UNITTEST_SPEC"
+    )
+    assert stub_generation_service.received_request.source_document_type == (
+        "CONSTRUCTION_UNITTEST_DEFINITION"
+    )
+    assert stub_generation_service.received_request.project_name == (
+        "테스트 구축 프로젝트"
+    )
+    assert stub_generation_service.received_request.author == "김국민"
     assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
 

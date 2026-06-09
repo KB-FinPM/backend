@@ -9,6 +9,7 @@ from app.agents.core_agents.screen_design_agent.agent import (
     ScreenDesignAgent,
     screen_design_agent,
 )
+from app.agents.core_agents.unit_test_agent.agent import UnitTestAgent, unit_test_agent
 from app.agents.core_agents.wbs_agent.agent import WbsAgent, wbs_agent
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
@@ -32,10 +33,12 @@ class ArtifactAgent:
         requirement_generator: RequirementAgent = requirement_agent,
         wbs_generator: WbsAgent = wbs_agent,
         screen_design_generator: ScreenDesignAgent = screen_design_agent,
+        unit_test_generator: UnitTestAgent = unit_test_agent,
     ) -> None:
         self.requirement_generator = requirement_generator
         self.wbs_generator = wbs_generator
         self.screen_design_generator = screen_design_generator
+        self.unit_test_generator = unit_test_generator
 
     async def generate(self, request: AgentRequest) -> AgentResponse:
         artifact_type = self._target_artifact_type(request)
@@ -52,6 +55,9 @@ class ArtifactAgent:
 
         if artifact_type == ArtifactType.SCREEN_DESIGN:
             return await self.screen_design_generator.generate(request)
+
+        if artifact_type == ArtifactType.UNITTEST_SPEC:
+            return await self.unit_test_generator.generate(request)
 
         return AgentResponse(
             success=False,
