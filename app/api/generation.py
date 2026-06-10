@@ -61,6 +61,8 @@ WBS_EXAMPLE = {
     "summary": "Build WBS from requirement specification",
     "value": {
         "project_id": "PRJ-001",
+        "start_date": "2024.01.10",
+        "project_period": "6개월",
         "source_document_ids": ["DOC-REQ-001"],
         "source_document_type": "REQUIREMENT_SPEC",
         "target_artifact_type": "WBS",
@@ -287,6 +289,8 @@ async def _normalize_generation_input(
                 "target_artifact_type": request.target_artifact_type.value,
                 "source_document_ids": request.source_document_ids,
                 "query": request.query,
+                "start_date": request.start_date,
+                "project_period": request.project_period,
             },
         )
     )
