@@ -75,6 +75,30 @@ class ActionItemRepository:
         await self.session.refresh(best_match)
         return self._to_todo_dict(best_match)
 
+    async def complete_todo_by_id(
+        self,
+        *,
+        project_id: str,
+        todo_id: str,
+    ) -> dict[str, Any] | None:
+        if not todo_id:
+            return None
+        statement = select(ActionItemModel).where(
+            ActionItemModel.project_id == project_id,
+            ActionItemModel.action_item_id == todo_id,
+            ActionItemModel.status != "DONE",
+        )
+        result = await self.session.execute(statement)
+        item = result.scalar_one_or_none()
+        if item is None:
+            return None
+
+        item.status = "DONE"
+        item.updated_at = datetime.utcnow()
+        await self.session.commit()
+        await self.session.refresh(item)
+        return self._to_todo_dict(item)
+
     async def list_project_todos(self, *, project_id: str) -> list[dict[str, Any]]:
         statement = (
             select(ActionItemModel)

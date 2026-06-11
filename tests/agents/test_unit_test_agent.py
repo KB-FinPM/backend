@@ -21,7 +21,7 @@ async def test_unit_test_agent_creates_cases_from_requirements() -> None:
                 "requirement_artifact": {
                     "requirements": [
                         {
-                            "requirement_id": "REQ-00001",
+                            "requirement_id": "BSR-00001",
                             "title": "회원 조회",
                             "description": "- 회원 목록을 조회한다.\\n- 회원 상세를 조회한다.",
                             "metadata": {
@@ -30,7 +30,7 @@ async def test_unit_test_agent_creates_cases_from_requirements() -> None:
                             },
                         },
                         {
-                            "requirement_id": "REQ-00002",
+                            "requirement_id": "BSR-00002",
                             "title": "회원 등록",
                             "description": "회원 정보를 등록한다.",
                             "metadata": {
@@ -39,7 +39,7 @@ async def test_unit_test_agent_creates_cases_from_requirements() -> None:
                             },
                         },
                         {
-                            "requirement_id": "REQ-00003",
+                            "requirement_id": "BSR-00003",
                             "title": "권한 변경",
                             "description": "권한을 변경한다.",
                             "metadata": {
@@ -62,7 +62,7 @@ async def test_unit_test_agent_creates_cases_from_requirements() -> None:
         "TEST-0001-002",
         "TEST-0002-001",
     ]
-    assert response.result["test_cases"][0]["requirement_id"] == "REQ-00001"
+    assert response.result["test_cases"][0]["requirement_id"] == "BSR-00001"
     assert response.result["test_cases"][0]["requirement_name"] == "회원 조회"
     assert response.result["test_cases"][0]["scenario_id"] == "Biz-0001"
     assert response.result["test_cases"][0]["test_case_name"] == "회원 조회 화면"
@@ -86,7 +86,7 @@ async def test_unit_test_agent_reads_requirement_metadata_from_documents() -> No
                     "text": "회원 조회",
                     "metadata": {
                         "requirement": {
-                            "requirement_id": "REQ-00001",
+                            "requirement_id": "BSR-00001",
                             "title": "회원 조회",
                             "description": "회원 목록을 조회한다.",
                             "metadata": {
@@ -116,7 +116,7 @@ async def test_unit_test_agent_preserves_blank_test_content_for_validation() -> 
                 "requirement_artifact": {
                     "requirements": [
                         {
-                            "requirement_id": "REQ-00001",
+                            "requirement_id": "BSR-00001",
                             "title": "대량거래 입력",
                             "description": "",
                             "metadata": {

@@ -168,5 +168,5 @@ SCREEN_DESIGN -> 화면설계서.pptx
 2. Core Agent 내부 전처리로 pipe table 행과 section title을 정규화합니다.
 3. 표 기반 요구사항이 있으면 LLM을 거치지 않고 행 단위로 atom을 생성합니다.
 4. 표 기반 요구사항이 없으면 각 chunk를 기존 sample_0605의 extraction prompt 형식으로 LLM에 전달합니다.
-5. 반환 atom을 통합한 뒤 중복 제거, Biz요건 ID(`Biz-0001`), 요구사항 ID(`REQ-00001`)를 재채번합니다.
+5. 반환 atom을 통합한 뒤 중복 제거, Biz요건 ID(`Biz-0001`), 요구사항 ID(`BSR-00001`)를 재채번합니다.
 6. `output_mapper.json` 및 S3/로컬 템플릿 기준으로 요구사항명세서 Excel에 매핑합니다.
