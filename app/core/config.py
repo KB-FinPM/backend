@@ -28,6 +28,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5174",
         "http://127.0.0.1:5175",
         "http://127.0.0.1:5176",
+        "https://d2xtqtnbdz7asr.cloudfront.net",
     ]
 
     AWS_REGION: str = "ap-northeast-2"
