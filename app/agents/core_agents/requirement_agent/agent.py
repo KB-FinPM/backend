@@ -13,7 +13,6 @@ from util.agent_generation_utils import (
     assign_requirement_ids,
     atoms_to_requirement_artifact,
     deduplicate_requirement_atoms,
-    extract_requirement_atoms_from_pipe_tables,
     normalize_requirement_atoms,
     parse_json_array,
     parse_json_object,
@@ -21,6 +20,7 @@ from util.agent_generation_utils import (
 from util.agent_template_utils import mapper_summary_for_prompt
 
 logger = get_logger(__name__)
+LLM_LOG_PREFIX = "!!! LLM"
 
 
 EXTRACTION_SYSTEM_PROMPT = """
@@ -45,6 +45,23 @@ EXTRACTION_SYSTEM_PROMPT = """
 - 한 번의 응답에서 최대 10개 요구사항만 추출한다.
 - 각 description은 120자 이내로 요약한다.
 - note는 50자 이내로 작성한다.
+- JSON 외의 설명 문장은 절대 출력하지 않는다.
+""".strip()
+
+
+TABLE_EXTRACTION_SYSTEM_PROMPT = """
+너는 PM Agent의 구축요건정의서 표 분석기다.
+입력으로 제공된 표 기반 요구사항 후보와 원문 chunk를 검토하여 요구사항명세서에 들어갈 atom을 정리하라.
+반드시 JSON 배열만 반환한다.
+각 항목 schema:
+[
+  {"category":"기능 | 비기능 | 인터페이스 | 데이터 | 정책 | 인프라 | 보안 | 운영","biz_requirement_id":"Biz요건ID 또는 빈 문자열","biz_requirement_name":"Biz요건명 또는 업무영역","requirement_name":"요구사항명","requirement_type":"기능요구사항 | 비기능요구사항","domain":"업무영역","feature":"기능명 또는 구축항목","description":"요구사항 설명","note":"검토의견 또는 비고","source_document_id":"문서ID","source_chunk_id":"chunkID"}
+]
+규칙:
+- 표 후보에 없는 내용을 새로 만들지 않는다.
+- 원문 또는 후보에 있는 ID와 업무영역은 최대한 보존한다.
+- 중복 요구사항은 병합한다.
+- 각 description은 120자 이내로 요약한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
 """.strip()
 
@@ -97,18 +114,54 @@ class RequirementAgent:
     ) -> dict[str, Any] | None:
         orchestrator = (request.context or {}).get("generation_orchestrator")
         if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
+            logger.info(
+                f"[{self.AGENT_NAME}] orchestrator unavailable | "
+                f"project_id={request.project_id}"
+            )
             return None
 
         documents = normalize_requirement_documents(request.documents)
         if not documents:
+            logger.info(
+                f"[{self.AGENT_NAME}] no normalized documents | "
+                f"project_id={request.project_id}"
+            )
             return None
 
+        logger.info(
+            f"[{self.AGENT_NAME}] orchestrator path start | "
+            f"project_id={request.project_id} | document_count={len(documents)}"
+        )
+
         # 1) Existing 구축요건정의서 files often already contain structured
-        # requirement tables. Preserve those rows and IDs first; this matches
-        # the pre-merge output much more closely than summarizing through LLM.
-        table_atoms = extract_requirement_atoms_from_pipe_tables(documents)
+        # requirement tables. Extract deterministic candidates first, then send
+        # them through the orchestrator LLM boundary so the Bedrock path and
+        # logging are exercised consistently.
+        table_atoms = orchestrator.extract_requirement_atoms_from_pipe_tables(documents)
+        logger.info(
+            f"[{self.AGENT_NAME}] table extraction result | "
+            f"project_id={request.project_id} | table_atom_count={len(table_atoms)}"
+        )
         if table_atoms:
-            atoms = assign_requirement_ids(deduplicate_requirement_atoms(table_atoms))
+            logger.info(
+                f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} table path -> LLM | "
+                f"project_id={request.project_id}"
+            )
+            prompt = self._build_table_prompt(request, documents, table_atoms)
+            llm_result = await orchestrator.invoke_agent_llm(
+                system_prompt=TABLE_EXTRACTION_SYSTEM_PROMPT,
+                user_prompt=prompt,
+                max_tokens=6000,
+            )
+            chunk_items = parse_json_array(llm_result)
+            if not chunk_items:
+                parsed_obj = parse_json_object(llm_result)
+                if parsed_obj and isinstance(parsed_obj.get("requirements"), list):
+                    chunk_items = [
+                        item for item in parsed_obj["requirements"] if isinstance(item, dict)
+                    ]
+            atoms = normalize_requirement_atoms(chunk_items, documents=None) if chunk_items else table_atoms
+            atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
             result = atoms_to_requirement_artifact(
                 atoms,
                 project_id=request.project_id,
@@ -119,11 +172,21 @@ class RequirementAgent:
 
         # 2) Fallback to sample_0605 chunk-by-chunk LLM extraction when no
         # source requirement table is detected.
+        logger.info(
+            f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk fallback path -> LLM | "
+            f"project_id={request.project_id}"
+        )
         atoms = []
         for idx, document in enumerate(documents, start=1):
             text = str(document.get("text") or "").strip()
             if not text:
                 continue
+            logger.info(
+                f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk LLM request | "
+                f"project_id={request.project_id} | "
+                f"chunk_index={idx} | chunk_id={document.get('chunk_id')} | "
+                f"text_chars={len(text)}"
+            )
             prompt = self._build_chunk_prompt(request, document, idx, len(documents))
             llm_result = await orchestrator.invoke_agent_llm(
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
@@ -154,6 +217,58 @@ class RequirementAgent:
         )
         self._apply_request_metadata(result, request)
         return result
+
+    def _build_table_prompt(
+        self,
+        request: AgentRequest,
+        documents: list[dict[str, Any]],
+        table_atoms: list[Any],
+    ) -> str:
+        context = {
+            key: value
+            for key, value in (request.context or {}).items()
+            if key != "generation_orchestrator"
+        }
+        candidates = [
+            {
+                "requirement_id": atom.requirement_id,
+                "category": atom.category,
+                "biz_requirement_id": atom.biz_requirement_id,
+                "biz_requirement_name": atom.biz_requirement_name,
+                "requirement_name": atom.requirement_name or atom.title,
+                "requirement_type": atom.requirement_type,
+                "domain": atom.domain,
+                "feature": atom.feature,
+                "description": atom.description,
+                "note": atom.rationale,
+                "source_document_id": atom.source_document_id,
+                "source_chunk_ids": atom.source_chunk_ids,
+            }
+            for atom in table_atoms
+        ]
+        source_chunks = [
+            {
+                "document_id": document.get("document_id"),
+                "chunk_id": document.get("chunk_id"),
+                "section_title": document.get("section_title"),
+                "text": str(document.get("text") or "")[:2000],
+            }
+            for document in documents[:20]
+        ]
+        return f"""
+Project ID: {request.project_id}
+Context:
+{json.dumps(context, ensure_ascii=False, default=str)}
+
+Template mapper summary:
+{mapper_summary_for_prompt()}
+
+표 기반 요구사항 후보:
+{json.dumps(candidates, ensure_ascii=False, default=str)}
+
+원문 chunk:
+{json.dumps(source_chunks, ensure_ascii=False, default=str)}
+""".strip()
 
     def _apply_request_metadata(
         self,

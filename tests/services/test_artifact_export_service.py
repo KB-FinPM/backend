@@ -300,7 +300,7 @@ def test_requirement_export_keeps_work_category_and_empty_review_note(
         "artifact_type": "REQUIREMENT_SPEC",
         "requirements": [
             {
-                "requirement_id": "BSR-00001",
+                "requirement_id": "REQ-00001",
                 "title": "시스템 아키텍쳐 설계",
                 "description": "- 서비스별 독립성, 확장 유연성을 가질 수 있는 OCP 플랫폼 구축",
                 "metadata": {
