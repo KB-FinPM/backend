@@ -48,7 +48,7 @@ def test_list_templates_returns_available_templates(client: TestClient) -> None:
     client.app.dependency_overrides[get_template_service] = StubTemplateService
 
     try:
-        response = client.get("/templates?artifact_type=REQUIREMENT_SPEC")
+        response = client.get("/api/templates?artifact_type=REQUIREMENT_SPEC")
     finally:
         client.app.dependency_overrides.clear()
 
@@ -60,7 +60,7 @@ def test_get_template_returns_404_when_missing(client: TestClient) -> None:
     client.app.dependency_overrides[get_template_service] = StubTemplateService
 
     try:
-        response = client.get("/templates/missing")
+        response = client.get("/api/templates/missing")
     finally:
         client.app.dependency_overrides.clear()
 

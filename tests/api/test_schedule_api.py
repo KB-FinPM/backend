@@ -81,7 +81,7 @@ def test_extract_schedule_todos_routes_through_io_orchestrators(
 
     try:
         response = client.post(
-            "/schedule/todos",
+            "/api/schedule/todos",
             json={
                 "project_id": "PRJ-001",
                 "meeting_notes": "Discussed login scope.",
@@ -116,7 +116,7 @@ def test_extract_action_items_uses_meeting_notes_route(
 
     try:
         response = client.post(
-            "/schedule/action-items",
+            "/api/schedule/action-items",
             json={
                 "project_id": "PRJ-001",
                 "meeting_notes": "Weekly meeting: confirm login scope by Friday.",
@@ -142,7 +142,7 @@ def test_extract_schedule_todos_returns_422_when_input_normalization_fails(
 
     try:
         response = client.post(
-            "/schedule/todos",
+            "/api/schedule/todos",
             json={
                 "project_id": "PRJ-001",
                 "meeting_notes": "Discussed login scope.",
