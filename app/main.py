@@ -42,22 +42,8 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def request_trace_middleware(request: Request, call_next):
-    logger.info(
-        f"!!! HTTP request start | method={request.method} | path={request.url.path}"
-    )
-    response = await call_next(request)
-    logger.info(
-        f"!!! HTTP request end | method={request.method} | path={request.url.path} | "
-        f"status_code={response.status_code}"
-    )
-    return response
-
-
 @app.on_event("startup")
 async def initialize_database_schema() -> None:
-    logger.info("!!! app startup | initializing database schema")
     await init_db()
 
 

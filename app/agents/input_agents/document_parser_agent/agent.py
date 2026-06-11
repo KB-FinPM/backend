@@ -4,6 +4,8 @@
 from io import BytesIO
 from pathlib import PurePath
 import re
+from datetime import date, datetime
+from typing import Any
 
 from app.schemas.io_agent import (
     InputAgentRequest,
@@ -24,6 +26,7 @@ class DocumentParserAgent:
         ".json",
         ".log",
         ".docx",
+        ".xlsx",
     }
     AGENT_NAME = "DocumentParserAgent"
 
@@ -49,7 +52,17 @@ class DocumentParserAgent:
             )
 
         try:
-            text = self._extract_text(file_payload.file_bytes, extension)
+            extra_metadata: dict[str, Any] = {}
+            if extension == ".xlsx":
+                text, extra_metadata = self._extract_xlsx_text(
+                    file_payload.file_bytes,
+                    file_name=file_payload.file_name,
+                    document_type=str(
+                        (request.context or {}).get("document_type") or ""
+                    ),
+                )
+            else:
+                text = self._extract_text(file_payload.file_bytes, extension)
         except Exception as exc:
             return InputAgentResponse(
                 success=False,
@@ -69,18 +82,24 @@ class DocumentParserAgent:
                 validation_errors=["empty parsed text"],
             )
 
+        metadata = {
+            "file_name": file_payload.file_name,
+            "extension": extension,
+            "byte_size": len(file_payload.file_bytes),
+            "content_type": file_payload.content_type,
+            **extra_metadata,
+        }
+        structured_context = {
+            "text": text,
+            "metadata": metadata,
+        }
+        if "wbs_context" in extra_metadata:
+            structured_context["wbs_context"] = extra_metadata["wbs_context"]
+
         return InputAgentResponse(
             agent_name=self.AGENT_NAME,
             normalized_request_type=NormalizedRequestType.DOCUMENT_INGESTION,
-            structured_context={
-                "text": text,
-                "metadata": {
-                    "file_name": file_payload.file_name,
-                    "extension": extension,
-                    "byte_size": len(file_payload.file_bytes),
-                    "content_type": file_payload.content_type,
-                },
-            },
+            structured_context=structured_context,
         )
 
     def _extract_text(self, file_bytes: bytes, extension: str) -> str:
@@ -115,6 +134,130 @@ class DocumentParserAgent:
                     lines.append(" | ".join(cells))
 
         return "\n".join(lines)
+
+    def _extract_xlsx_text(
+        self,
+        file_bytes: bytes,
+        *,
+        file_name: str,
+        document_type: str,
+    ) -> tuple[str, dict[str, Any]]:
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:
+            raise RuntimeError(
+                "openpyxl is required for .xlsx uploads. Run `pip install openpyxl`."
+            ) from exc
+
+        workbook = load_workbook(
+            BytesIO(file_bytes),
+            data_only=True,
+            read_only=True,
+        )
+        lines: list[str] = []
+        for worksheet in workbook.worksheets:
+            lines.append(f"[{worksheet.title}]")
+            for row in worksheet.iter_rows(values_only=True):
+                values = [self._cell_to_text(value) for value in row]
+                while values and not values[-1]:
+                    values.pop()
+                if any(values):
+                    lines.append(" | ".join(values))
+
+        metadata: dict[str, Any] = {
+            "sheet_names": workbook.sheetnames,
+        }
+        if document_type.upper() == "WBS" or "WBS" in workbook.sheetnames:
+            wbs_context = self._extract_wbs_context(workbook, file_name=file_name)
+            if wbs_context.get("rows"):
+                metadata["artifact_type"] = "WBS"
+                metadata["wbs_context"] = wbs_context
+
+        return "\n".join(lines), metadata
+
+    def _extract_wbs_context(self, workbook, *, file_name: str) -> dict[str, Any]:
+        worksheet = workbook["WBS"] if "WBS" in workbook.sheetnames else workbook.active
+        header_row_number = 1
+        headers: list[str] = []
+        rows: list[dict[str, Any]] = []
+
+        for row_number, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
+            values = [self._cell_to_json(value) for value in row]
+            candidate_headers = [str(value or "").strip() for value in values]
+            if not headers and self._looks_like_wbs_header(candidate_headers):
+                headers = candidate_headers
+                header_row_number = row_number
+                continue
+            if not headers or row_number <= header_row_number:
+                continue
+
+            row_data = {
+                headers[index]: values[index]
+                for index in range(min(len(headers), len(values)))
+                if headers[index]
+            }
+            if not any(value not in (None, "") for value in row_data.values()):
+                continue
+
+            rows.append(
+                {
+                    **row_data,
+                    "row_number": row_number,
+                    "no": row_data.get("NO"),
+                    "level": row_data.get("레벨"),
+                    "wbs_id": row_data.get("ID"),
+                    "title": row_data.get("WBS명"),
+                    "planned_start_date": row_data.get("시작예정일"),
+                    "planned_end_date": row_data.get("종료예정일"),
+                    "raw_assignee": row_data.get("작업자"),
+                    "artifact": row_data.get("산출물"),
+                    "actual_start_date": row_data.get("실제시작일"),
+                    "actual_end_date": row_data.get("실제종료일"),
+                    "quality_project_no": row_data.get("품질프로젝트번호"),
+                    "raw_status": row_data.get("작업상태"),
+                    "source_document_name": file_name,
+                }
+            )
+
+        return {
+            "source_document_name": file_name,
+            "sheet_name": worksheet.title,
+            "header_row_number": header_row_number,
+            "columns": {
+                "no": "NO",
+                "level": "레벨",
+                "id": "ID",
+                "title": "WBS명",
+                "planned_start_date": "시작예정일",
+                "planned_end_date": "종료예정일",
+                "assignee": "작업자",
+                "artifact": "산출물",
+                "actual_start_date": "실제시작일",
+                "actual_end_date": "실제종료일",
+                "quality_project_no": "품질프로젝트번호",
+                "status": "작업상태",
+            },
+            "rows": rows,
+        }
+
+    def _looks_like_wbs_header(self, values: list[str]) -> bool:
+        header_text = "|".join(values)
+        return "WBS명" in header_text and "시작예정일" in header_text and "종료예정일" in header_text
+
+    def _cell_to_text(self, value: Any) -> str:
+        normalized = self._cell_to_json(value)
+        return "" if normalized is None else str(normalized).strip()
+
+    def _cell_to_json(self, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     def _extract_docx_cell_text(self, cell, numbering_levels: dict[tuple[str, str], str]) -> str:
         paragraphs: list[str] = []
