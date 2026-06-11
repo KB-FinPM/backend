@@ -74,7 +74,56 @@ class DocumentIngestionOrchestrator:
             parser_name = parsed_response.agent_name
 
         generated_requirements = parsed_context.get("requirements")
-        if (
+        wbs_context = parsed_context.get("wbs_context") or parsed_metadata.get(
+            "wbs_context"
+        )
+        if isinstance(wbs_context, dict) and isinstance(
+            wbs_context.get("rows"), list
+        ) and wbs_context.get("rows"):
+            base_metadata = {
+                key: value
+                for key, value in parsed_metadata.items()
+                if key != "wbs_context"
+            }
+            context_summary = {
+                key: value
+                for key, value in wbs_context.items()
+                if key != "rows"
+            }
+            for index, row in enumerate(wbs_context.get("rows") or []):
+                if not isinstance(row, dict):
+                    continue
+                text = " | ".join(
+                    str(value)
+                    for value in [
+                        row.get("row_number"),
+                        row.get("level"),
+                        row.get("wbs_id") or row.get("ID"),
+                        row.get("title") or row.get("WBS명"),
+                        row.get("planned_start_date") or row.get("시작예정일"),
+                        row.get("planned_end_date") or row.get("종료예정일"),
+                        row.get("raw_assignee") or row.get("작업자"),
+                        row.get("artifact") or row.get("산출물"),
+                        row.get("raw_status") or row.get("작업상태"),
+                    ]
+                    if value not in (None, "")
+                )
+                await document_repository.create_chunk(
+                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
+                    project_id=project_id,
+                    document_id=document_id,
+                    chunk_index=index,
+                    text=text or str(row.get("title") or row.get("WBS명") or "WBS"),
+                    section_title=str(row.get("title") or row.get("WBS명") or "WBS"),
+                    chunk_metadata={
+                        **base_metadata,
+                        "parser_name": parser_name or "DocumentParserAgent",
+                        "source_file_name": file_name,
+                        "wbs_context": context_summary,
+                        "wbs_row": row,
+                    },
+                )
+        elif (
             parsed_metadata.get("artifact_type") == "REQUIREMENT_SPEC"
             and isinstance(generated_requirements, list)
             and generated_requirements
