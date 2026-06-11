@@ -61,6 +61,8 @@ WBS_EXAMPLE = {
     "summary": "Build WBS from requirement specification",
     "value": {
         "project_id": "PRJ-001",
+        "start_date": "2024.01.10",
+        "project_period": "6개월",
         "source_document_ids": ["DOC-REQ-001"],
         "source_document_type": "REQUIREMENT_SPEC",
         "target_artifact_type": "WBS",
@@ -90,7 +92,7 @@ UNITTEST_EXAMPLE = {
         "project_name": "테스트 구축 프로젝트",
         "author": "김국민",
         "source_document_ids": ["DOC-ADA194C012AF"],
-        "source_document_type": "CONSTRUCTION_UNITTEST_DEFINITION",
+        "source_document_type": "REQUIREMENT_SPEC",
         "target_artifact_type": "UNITTEST_SPEC",
         "query": "단위테스트케이스를 생성해줘",
         "permission_scope": ["project:read"],
@@ -117,7 +119,13 @@ async def generate_requirement(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a requirement artifact through the PM agent orchestrator."""
-    logger.info(f"generate_requirement | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_requirement | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={request.target_artifact_type or ArtifactType.REQUIREMENT_SPEC} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
 
     return await _generate_artifact_response(
         request=request,
@@ -147,7 +155,13 @@ async def generate_wbs(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a WBS artifact through the PM agent orchestrator."""
-    logger.info(f"generate_wbs | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_wbs | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={ArtifactType.WBS.value} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
     request.target_artifact_type = ArtifactType.WBS
     request.source_document_type = request.source_document_type or (
         DocumentType.REQUIREMENT_SPEC
@@ -184,7 +198,13 @@ async def generate_screen_design(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a screen design artifact through the PM agent orchestrator."""
-    logger.info(f"generate_screen_design | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_screen_design | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={ArtifactType.SCREEN_DESIGN.value} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
     request.target_artifact_type = ArtifactType.SCREEN_DESIGN
     request.source_document_type = request.source_document_type or (
         DocumentType.REQUIREMENT_SPEC
@@ -221,10 +241,16 @@ async def generate_unittest(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a unit test case artifact through the PM agent orchestrator."""
-    logger.info(f"generate_unittest | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_unittest | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={ArtifactType.UNITTEST_SPEC.value} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
     request.target_artifact_type = ArtifactType.UNITTEST_SPEC
     request.source_document_type = request.source_document_type or (
-        DocumentType.CONSTRUCTION_UNITTEST_DEFINITION
+        DocumentType.REQUIREMENT_SPEC
     )
 
     return await _generate_artifact_response(
@@ -287,6 +313,8 @@ async def _normalize_generation_input(
                 "target_artifact_type": request.target_artifact_type.value,
                 "source_document_ids": request.source_document_ids,
                 "query": request.query,
+                "start_date": request.start_date,
+                "project_period": request.project_period,
             },
         )
     )
@@ -356,6 +384,13 @@ async def _format_generation_response(
         )
     )
     if isinstance(response.result, dict):
+        exported_document = response.result.get("exported_document")
+        if isinstance(exported_document, dict):
+            response.document_id = exported_document.get("document_id")
+            document_type = exported_document.get("document_type")
+            response.document_type = (
+                document_type.value if hasattr(document_type, "value") else document_type
+            )
         response.result = {
             **response.result,
             "display": output_response.display_payload,

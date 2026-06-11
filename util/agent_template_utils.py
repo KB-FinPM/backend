@@ -119,6 +119,14 @@ def load_output_mapper() -> dict[str, Any]:
     return load_template_json("output_mapper.json", {})
 
 
+def _load_local_template_json(path_or_name: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    try:
+        path = _resolve_local_template_file(path_or_name)
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return deepcopy(default or {})
+
+
 def load_deliverable_mapper() -> dict[str, Any]:
     mapper = load_output_mapper()
     path = get_nested(mapper, "wbs", "deliverable_mapper_path", default="deliverable_mapper.json")
@@ -126,9 +134,36 @@ def load_deliverable_mapper() -> dict[str, Any]:
 
 
 def load_wbs_template() -> dict[str, Any]:
-    mapper = load_output_mapper()
-    path = get_nested(mapper, "wbs", "common_template_path", default="wbs_template.json")
-    return load_template_json(path, {"common_items": []})
+    return _load_local_template_json("wbs_template.json", {"common_items": []})
+
+
+def load_wbs_common_rows(
+    *,
+    template_path: str | None = None,
+    sheet_name: str = "WBS",
+    start_row: int = 2,
+    end_row: int | None = 86,
+) -> list[dict[str, Any]]:
+    """Load the static WBS prefix rows from the bundled JSON template."""
+    template = load_wbs_template()
+    common_items = template.get("common_items", [])
+    rows: list[dict[str, Any]] = []
+    max_count = max((end_row or start_row) - start_row + 1, 0) if end_row is not None else len(common_items)
+    for item in common_items[:max_count]:
+        if not isinstance(item, dict):
+            continue
+        wbs_name = str(item.get("wbs_name") or "").strip()
+        if not wbs_name:
+            continue
+        rows.append(
+            {
+                "level": "" if item.get("level") is None else str(item.get("level")),
+                "wbs_id": "" if item.get("wbs_id") is None else str(item.get("wbs_id")),
+                "wbs_name": wbs_name,
+                "deliverable": "" if item.get("deliverable") is None else str(item.get("deliverable")),
+            }
+        )
+    return rows
 
 
 def get_nested(config: dict[str, Any], *keys: str, default: Any = None) -> Any:

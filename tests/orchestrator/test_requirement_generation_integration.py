@@ -15,6 +15,7 @@ from app.repositories.document_repository import DocumentRepository
 from app.schemas.artifact import ArtifactType, DocumentType
 from app.schemas.request import GenerationRequest
 from app.services.artifact_service import ArtifactService
+from app.core.llm import llm_service
 
 
 @pytest.fixture
@@ -39,7 +40,17 @@ async def session_factory():
 @pytest.mark.anyio
 async def test_requirement_generation_uses_stored_chunks_and_persists_artifact(
     session_factory,
+    monkeypatch,
 ) -> None:
+    async def fake_invoke(prompt: str, system: str = "", max_tokens: int | None = None) -> str:
+        return (
+            '[{"category":"기능","biz_requirement_name":"인증","requirement_name":"로그인",'
+            '"requirement_type":"기능요구사항","domain":"업무","feature":"로그인",'
+            '"description":"Login is required.","note":""}]'
+        )
+
+    monkeypatch.setattr(llm_service, "invoke", fake_invoke)
+
     async with session_factory() as session:
         document_repository = DocumentRepository(session)
         artifact_repository = ArtifactRepository(session)
