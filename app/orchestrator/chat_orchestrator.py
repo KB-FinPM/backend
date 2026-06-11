@@ -31,8 +31,11 @@ from app.schemas.response import GenerationResponse, ScheduleTodoResponse
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.core.logger import get_logger
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
+
+logger = get_logger(__name__)
 
 
 class ChatOrchestrator:
@@ -62,6 +65,10 @@ class ChatOrchestrator:
         self.output_formatter = output_formatter
 
     async def handle_message(self, request: ChatMessageRequest) -> ChatResponse:
+        logger.info(
+            f"!!! Chat handle_message | project_id={request.project_id} | "
+            f"conversation_id={request.conversation_id or 'NEW'}"
+        )
         conversation = await self._resolve_conversation(request)
         await self.conversation_repository.add_message(
             message_id=self._new_id("MSG"),
@@ -120,6 +127,12 @@ class ChatOrchestrator:
             )
 
         if intent == "GENERATE_ARTIFACT":
+            logger.info(
+                f"!!! Chat intent GENERATE_ARTIFACT | project_id={request.project_id} | "
+                f"target_artifact_type={structured_context.get('target_artifact_type')} | "
+                f"source_document_type={structured_context.get('source_document_type')} | "
+                f"source_document_ids={structured_context.get('source_document_ids') or []}"
+            )
             return await self._prepare_generation_action(
                 conversation=conversation,
                 request=request,
@@ -127,40 +140,7 @@ class ChatOrchestrator:
             )
 
         if intent == "EXTRACT_ACTION_ITEMS":
-            if structured_context.get("missing_slots"):
-                return await self._render_and_save_response(
-                    conversation=conversation,
-                    project_id=request.project_id,
-                    result_json={
-                        "event": "SCHEDULE_RESULT",
-                        "result": {
-                            "artifact_type": "SCHEDULE_TODO_LIST",
-                            "action": structured_context.get("schedule_action")
-                            or "EXTRACT_TODOS_FROM_MEETING",
-                            "status": "REQUIRED_INFO",
-                            "missing_fields": structured_context.get("missing_slots")
-                            or [],
-                            "metadata": {"required_context": "MEETING_NOTES"},
-                        },
-                    },
-                )
             return await self._prepare_schedule_action(
-                conversation=conversation,
-                request=request,
-                structured_context=structured_context,
-            )
-
-        if intent == "SCHEDULE_QUERY":
-            schedule_action = str(
-                structured_context.get("schedule_action") or ""
-            ).strip()
-            if schedule_action == "EXTRACT_TODOS_FROM_MEETING":
-                return await self._prepare_schedule_action(
-                    conversation=conversation,
-                    request=request,
-                    structured_context=structured_context,
-                )
-            return await self._run_schedule_query(
                 conversation=conversation,
                 request=request,
                 structured_context=structured_context,
@@ -211,6 +191,12 @@ class ChatOrchestrator:
         request: ChatMessageRequest,
         structured_context: dict[str, Any],
     ) -> ChatResponse:
+        logger.info(
+            f"!!! Chat prepare_generation_action | project_id={request.project_id} | "
+            f"target_artifact_type={structured_context.get('target_artifact_type')} | "
+            f"source_document_type={structured_context.get('source_document_type')} | "
+            f"source_document_ids={structured_context.get('source_document_ids') or []}"
+        )
         source_document_ids = structured_context.get("source_document_ids") or []
         if not source_document_ids:
             return await self._render_and_save_response(
@@ -221,7 +207,6 @@ class ChatOrchestrator:
                     "target_artifact_type": structured_context.get(
                         "target_artifact_type"
                     ),
-                    "query": request.message,
                     "required_source_document_types": structured_context.get(
                         "required_source_document_types"
                     )
@@ -297,8 +282,6 @@ class ChatOrchestrator:
             action_type=ChatActionType.EXTRACT_ACTION_ITEMS,
             payload={
                 "project_id": request.project_id,
-                "schedule_action": structured_context.get("schedule_action")
-                or "EXTRACT_TODOS_FROM_MEETING",
                 "meeting_notes": structured_context.get("meeting_notes")
                 or request.message,
                 "source_document_ids": structured_context.get("source_document_ids")
@@ -334,8 +317,9 @@ class ChatOrchestrator:
                 conversation=conversation,
                 project_id=project_id,
                 result_json={
-                    "event": "NO_PENDING_ACTION",
-                    "action": "CONFIRM",
+                    "event": "ACTION_FAILED",
+                    "error": "No pending action is waiting for confirmation.",
+                    "result": {},
                 },
             )
 
@@ -398,15 +382,6 @@ class ChatOrchestrator:
                 action_id=pending_action.action_id,
                 status=ChatActionStatus.CANCELLED,
             )
-        else:
-            return await self._render_and_save_response(
-                conversation=conversation,
-                project_id=project_id,
-                result_json={
-                    "event": "NO_PENDING_ACTION",
-                    "action": "CANCEL",
-                },
-            )
 
         return await self._render_and_save_response(
             conversation=conversation,
@@ -444,7 +419,6 @@ class ChatOrchestrator:
             ChatActionType.GENERATE_REQUIREMENT,
             ChatActionType.GENERATE_WBS,
             ChatActionType.GENERATE_SCREEN_DESIGN,
-            ChatActionType.GENERATE_UNITTEST,
         }:
             return await self._execute_generation_action(action)
 
@@ -493,36 +467,22 @@ class ChatOrchestrator:
             project_id=project_id,
             title_query=title_query,
         )
+        if not response.success:
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=project_id,
+                result_json={
+                    "event": "ACTION_FAILED",
+                    "error": response.message,
+                    "result": response.result if isinstance(response.result, dict) else {},
+                },
+            )
+
         return await self._render_and_save_response(
             conversation=conversation,
             project_id=project_id,
             result_json={
-                "event": "SCHEDULE_RESULT",
-                "result": response.result if isinstance(response.result, dict) else {},
-            },
-        )
-
-    async def _run_schedule_query(
-        self,
-        *,
-        conversation: ConversationMetadata,
-        request: ChatMessageRequest,
-        structured_context: dict[str, Any],
-    ) -> ChatResponse:
-        response = await self.schedule_service.run_query(
-            project_id=request.project_id,
-            schedule_action=str(structured_context.get("schedule_action") or ""),
-            context={
-                **request.context,
-                "normalized_input": structured_context,
-            },
-            permission_scope=request.permission_scope,
-        )
-        return await self._render_and_save_response(
-            conversation=conversation,
-            project_id=request.project_id,
-            result_json={
-                "event": "SCHEDULE_RESULT",
+                "event": "TODO_COMPLETED",
                 "result": response.result if isinstance(response.result, dict) else {},
             },
         )
@@ -541,12 +501,7 @@ class ChatOrchestrator:
         )
         return await self.schedule_service.extract_todos(
             schedule_request,
-            structured_context={
-                "source": "chat",
-                "action_id": action.action_id,
-                "schedule_action": payload.get("schedule_action")
-                or "EXTRACT_TODOS_FROM_MEETING",
-            },
+            structured_context={"source": "chat", "action_id": action.action_id},
         )
 
     async def _render_and_save_response(
@@ -590,7 +545,6 @@ class ChatOrchestrator:
             ArtifactType.REQUIREMENT_SPEC: ChatActionType.GENERATE_REQUIREMENT,
             ArtifactType.WBS: ChatActionType.GENERATE_WBS,
             ArtifactType.SCREEN_DESIGN: ChatActionType.GENERATE_SCREEN_DESIGN,
-            ArtifactType.UNITTEST_SPEC: ChatActionType.GENERATE_UNITTEST,
         }
         return mapping[artifact_type]
 

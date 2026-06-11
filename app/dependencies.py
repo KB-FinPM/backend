@@ -83,14 +83,8 @@ def get_generation_service() -> GenerationService:
 
 def get_schedule_service(
     action_item_repository: ActionItemRepository = Depends(get_action_item_repository),
-    document_repository: DocumentRepository = Depends(get_document_repository),
-    artifact_repository: ArtifactRepository = Depends(get_artifact_repository),
 ) -> ScheduleService:
-    return ScheduleService(
-        action_item_repository=action_item_repository,
-        document_repository=document_repository,
-        artifact_repository=artifact_repository,
-    )
+    return ScheduleService(action_item_repository=action_item_repository)
 
 
 def get_retrieval_service(

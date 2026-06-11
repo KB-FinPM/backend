@@ -240,8 +240,6 @@ async def test_generate_artifact_dispatches_wbs_agent_adapter() -> None:
     request = GenerationRequest(
         project_id="PRJ-001",
         target_artifact_type="WBS",
-        start_date="2024.01.10",
-        project_period="6개월",
     )
 
     response = await orchestrator.generate_artifact(request)
@@ -255,8 +253,6 @@ async def test_generate_artifact_dispatches_wbs_agent_adapter() -> None:
     assert calls == ["retrieval", "WbsAgent"]
     assert wbs_agent.received_request is not None
     assert wbs_agent.received_request.context["target_artifact_type"] == "WBS"
-    assert wbs_agent.received_request.context["start_date"] == "2024.01.10"
-    assert wbs_agent.received_request.context["project_period"] == "6개월"
 
 
 @pytest.mark.anyio
@@ -286,39 +282,6 @@ async def test_generate_artifact_dispatches_screen_design_agent_adapter() -> Non
     assert screen_design_agent.received_request is not None
     assert screen_design_agent.received_request.context["target_artifact_type"] == (
         "SCREEN_DESIGN"
-    )
-
-
-@pytest.mark.anyio
-async def test_generate_artifact_dispatches_unit_test_agent_adapter() -> None:
-    calls: list[str] = []
-    unit_test_agent = StubPlaceholderAgent(
-        calls,
-        agent_name="UnitTestAgent",
-        error="Unit test generation agent is not implemented yet",
-    )
-    orchestrator = GenerationOrchestrator(
-        retrieval=StubRetrievalService(calls),
-        requirement_generator=StubRequirementAgent(calls),
-        unit_test_generator=unit_test_agent,
-        validator=StubValidatorAgent(calls),
-    )
-    request = GenerationRequest(
-        project_id="PRJ-001",
-        target_artifact_type="UNITTEST_SPEC",
-    )
-
-    response = await orchestrator.generate_artifact(request)
-
-    assert response.success is False
-    assert response.message == "Unit test generation agent is not implemented yet"
-    assert calls == ["retrieval", "UnitTestAgent"]
-    assert unit_test_agent.received_request is not None
-    assert unit_test_agent.received_request.context["target_artifact_type"] == (
-        "UNITTEST_SPEC"
-    )
-    assert unit_test_agent.received_request.context["generation_orchestrator"] is (
-        orchestrator
     )
 
 

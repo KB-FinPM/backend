@@ -58,18 +58,10 @@ class StubGenerationOrchestrator:
 
 class StubInputOrchestrator:
     def __init__(self) -> None:
-        self.received_project_id: str | None = None
-        self.received_permission_scope: list[str] | None = None
         self.received_input_type: str | None = None
-        self.received_context: dict | None = None
-        self.received_raw_payload: dict | None = None
 
     async def normalize(self, request):
-        self.received_project_id = request.project_id
-        self.received_permission_scope = request.permission_scope
         self.received_input_type = request.input_type
-        self.received_context = request.context
-        self.received_raw_payload = request.raw_payload
         return InputAgentResponse(
             agent_name="StubInputOrchestrator",
             normalized_request_type=NormalizedRequestType.ARTIFACT_GENERATION,
@@ -206,14 +198,9 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
             "/generate/wbs",
             json={
                 "project_id": "PRJ-001",
-                "project_name": "WBS Project",
                 "source_document_ids": ["DOC-REQ-001"],
                 "source_document_type": "REQUIREMENT_SPEC",
                 "target_artifact_type": "REQUIREMENT_SPEC",
-                "query": "Create a WBS",
-                "permission_scope": ["project:read", "artifact:generate"],
-                "start_date": "2024.01.10",
-                "project_period": "6개월",
             },
         )
     finally:
@@ -222,29 +209,7 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
     assert response.status_code == 200
     assert stub_generation_service.received_request is not None
     assert stub_generation_service.received_request.target_artifact_type == "WBS"
-    assert stub_generation_service.received_request.start_date == "2024.01.10"
-    assert stub_generation_service.received_request.project_period == "6개월"
-    assert stub_input_orchestrator.received_project_id == "PRJ-001"
-    assert stub_input_orchestrator.received_permission_scope == [
-        "project:read",
-        "artifact:generate",
-    ]
     assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
-    assert stub_input_orchestrator.received_context is not None
-    assert stub_input_orchestrator.received_context["project_id"] == "PRJ-001"
-    assert stub_input_orchestrator.received_context["project_name"] == "WBS Project"
-    assert stub_input_orchestrator.received_context["source_document_ids"] == [
-        "DOC-REQ-001"
-    ]
-    assert stub_input_orchestrator.received_context["source_document_type"] == (
-        "REQUIREMENT_SPEC"
-    )
-    assert stub_input_orchestrator.received_context["target_artifact_type"] == "WBS"
-    assert stub_input_orchestrator.received_context["query"] == "Create a WBS"
-    assert stub_input_orchestrator.received_context["start_date"] == "2024.01.10"
-    assert stub_input_orchestrator.received_context["project_period"] == "6개월"
-    assert stub_input_orchestrator.received_raw_payload is not None
-    assert stub_input_orchestrator.received_raw_payload["start_date"] == "2024.01.10"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
 
 
@@ -390,17 +355,3 @@ def test_generate_action_items_route_is_not_exposed(client: TestClient) -> None:
     )
 
     assert response.status_code == 404
-
-
-def test_generate_requirement_rejects_invalid_artifact_type(client: TestClient) -> None:
-    response = client.post(
-        "/generate/requirement",
-        json={
-            "project_id": "PRJ-001",
-            "source_document_ids": ["DOC-001"],
-            "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
-            "target_artifact_type": "NOT_A_REAL_ARTIFACT",
-        },
-    )
-
-    assert response.status_code == 422

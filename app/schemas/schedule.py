@@ -13,7 +13,6 @@ class ScheduleTodoItem(BaseModel):
     description: str | None = Field(None, description="Todo description")
     assignee: str | None = Field(None, description="Assignee name or ID")
     due_date: str | None = Field(None, description="Due date as text or ISO-like string")
-    related_artifact: str | None = Field(None, description="Related PM artifact")
     related_document: str | None = Field(None, description="Related artifact/document")
     source_type: str = Field("MEETING_MINUTES", description="TODO source type")
     status: str = Field("TODO", description="TODO status")
@@ -33,31 +32,10 @@ class ScheduleTodoList(BaseModel):
         "SCHEDULE_TODO_LIST",
         description="Meeting action-item extraction result type",
     )
-    action: str | None = Field(None, description="Schedule management action")
-    status: str = Field("SUCCESS", description="Schedule action result status")
     todos: list[ScheduleTodoItem] = Field(
-        default_factory=list,
+        ...,
+        min_length=1,
         description="Action items extracted from meeting notes",
-    )
-    needs_confirmation: list[ScheduleTodoItem] = Field(
-        default_factory=list,
-        description="Schedule items that require missing assignee or due date confirmation",
-    )
-    needs_confirmation_count: int = Field(
-        0,
-        description="Number of extracted or matched items that need confirmation",
-    )
-    missing_fields: list[str] = Field(
-        default_factory=list,
-        description="Fields required to complete the schedule action",
-    )
-    candidates: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Candidate todos for ambiguous follow-up actions",
-    )
-    week_context: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Calculated project week context",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,

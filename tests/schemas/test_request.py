@@ -37,58 +37,6 @@ def test_generation_request_syncs_source_document_ids() -> None:
     assert request.document_ids == ["DOC-001"]
 
 
-def test_generation_request_accepts_optional_wbs_schedule_fields() -> None:
-    request = GenerationRequest(
-        project_id="PRJ-001",
-        start_date="2024.01.10",
-        project_period="6개월",
-    )
-    legacy_request = GenerationRequest(project_id="PRJ-002")
-
-    assert request.start_date == "2024.01.10"
-    assert request.project_period == "6개월"
-    assert legacy_request.start_date is None
-    assert legacy_request.project_period is None
-
-
-def test_generation_request_accepts_requirement_generation_payload() -> None:
-    request = GenerationRequest(
-        project_id="PRJ-001",
-        project_name="Requirement Project",
-        source_document_ids=["DOC-CONST-001"],
-        source_document_type="CONSTRUCTION_REQUIREMENT_DEFINITION",
-        target_artifact_type="REQUIREMENT_SPEC",
-        template_id="TPL-REQ-SPEC-DEFAULT",
-        query="Create a requirement specification.",
-        author="Analyst",
-        permission_scope=["project:read", "artifact:generate"],
-    )
-
-    assert request.project_id == "PRJ-001"
-    assert request.project_name == "Requirement Project"
-    assert request.source_document_ids == ["DOC-CONST-001"]
-    assert request.document_ids == ["DOC-CONST-001"]
-    assert request.source_document_type == "CONSTRUCTION_REQUIREMENT_DEFINITION"
-    assert request.target_artifact_type == "REQUIREMENT_SPEC"
-    assert request.template_id == "TPL-REQ-SPEC-DEFAULT"
-    assert request.permission_scope == ["project:read", "artifact:generate"]
-
-
-def test_generation_request_accepts_wbs_payload_without_schedule_fields() -> None:
-    request = GenerationRequest(
-        project_id="PRJ-001",
-        source_document_ids=["DOC-REQ-001"],
-        source_document_type="REQUIREMENT_SPEC",
-        target_artifact_type="WBS",
-        query="Create a WBS from the requirement specification.",
-    )
-
-    assert request.target_artifact_type == "WBS"
-    assert request.source_document_type == "REQUIREMENT_SPEC"
-    assert request.start_date is None
-    assert request.project_period is None
-
-
 def test_generation_request_builds_generation_flow() -> None:
     request = GenerationRequest(
         project_id="PRJ-001",

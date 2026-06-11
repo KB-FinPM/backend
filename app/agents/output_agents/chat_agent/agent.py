@@ -37,10 +37,6 @@ class ChatOutputAgent:
             return self._completed_payload(result_json)
         if event == "TODO_COMPLETED":
             return self._todo_completed_payload(result_json)
-        if event == "SCHEDULE_RESULT":
-            return self._schedule_result_payload(result_json)
-        if event == "NO_PENDING_ACTION":
-            return self._no_pending_action_payload(result_json)
         if event == "ACTION_FAILED":
             return self._failed_payload(result_json)
         if event == "ACTION_CANCELLED":
@@ -139,49 +135,9 @@ class ChatOutputAgent:
         title = items[0]["title"] if items else "선택한 TODO"
         return {
             "state": ChatState.COMPLETED.value,
-            "message": f'"{title}" 업무를 완료 처리했습니다.',
+            "message": f'"{title}" TODO를 완료로 변경했습니다.',
             "result": {**result, "items": items},
             "display_type": "schedule_todos",
-            "suggested_actions": [],
-            "recommended_prompts": self._default_recommended_prompts(),
-        }
-
-    def _schedule_result_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
-        result = result_json.get("result") or {}
-        action = result.get("action")
-        status = result.get("status")
-        if status == "REQUIRED_INFO":
-            return self._schedule_required_info_payload(result)
-        if action == "SHOW_CURRENT_WEEK":
-            return self._current_week_payload(result)
-        if action in {
-            "SHOW_THIS_WEEK_TODOS",
-            "SHOW_NEXT_WEEK_TODOS",
-            "SHOW_TODAY_TODOS",
-            "SHOW_OVERDUE_TODOS",
-            "SHOW_ASSIGNEE_TODOS",
-            "ASSISTANT_BRIEFING",
-            "COMPARE_WEEKLY_MEETING_TODOS",
-        }:
-            return self._schedule_query_payload(result)
-        if action == "COMPLETE_TODO":
-            return self._complete_todo_payload(result)
-        if self._is_schedule_todo_result(result):
-            return self.build_schedule_todo_display(result)
-        return {
-            "state": ChatState.IDLE.value,
-            "message": "일정관리 요청을 처리했습니다.",
-            "result": result,
-            "suggested_actions": [],
-            "recommended_prompts": self._default_recommended_prompts(),
-        }
-
-    def _no_pending_action_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
-        action = result_json.get("action")
-        verb = "취소할" if action == "CANCEL" else "확인할"
-        return {
-            "state": ChatState.IDLE.value,
-            "message": f"현재 {verb} 작업이 없습니다. 진행할 작업을 다시 입력해 주세요.",
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
@@ -199,176 +155,30 @@ class ChatOutputAgent:
                 "먼저 선택해 주세요."
             ),
         }
-        upload_request = self._upload_request_payload(
-            artifact_type=artifact_type,
-            original_message=result_json.get("query"),
-        )
-        result = {
-            "required_source_document_types": result_json.get(
-                "required_source_document_types"
-            )
-            or [],
-        }
-        if upload_request:
-            result["upload_request"] = upload_request
-
         return {
             "state": ChatState.WAITING_REQUIRED_INFO.value,
             "message": messages.get(
                 artifact_type,
                 "진행하려면 기준 문서를 먼저 업로드하거나 선택해 주세요.",
             ),
-            "result": result,
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
 
-    def _schedule_required_info_payload(self, result: dict[str, Any]) -> dict[str, Any]:
-        metadata = result.get("metadata") or {}
-        required_context = str(metadata.get("required_context") or "").upper()
-        missing_fields = result.get("missing_fields") or []
-        if required_context == "WBS" or "wbs" in missing_fields:
-            message = (
-                "현재 프로젝트에서 참고할 WBS 문서를 찾지 못했습니다. "
-                "WBS를 업로드하거나, 요구사항 명세서를 기준으로 WBS를 먼저 생성해 주세요."
-            )
-            upload_request = {
-                "required": True,
-                "label": "WBS 업로드",
-                "acceptedTypes": [".xlsx"],
-                "documentType": "WBS",
-                "originalMessage": "WBS 기준으로 일정 알려줘",
-            }
-        elif required_context == "MEETING_NOTES" or "meeting_notes" in missing_fields:
-            message = "회의록 내용을 붙여넣거나 주간회의 문서를 업로드해 주세요."
-            upload_request = {
-                "required": True,
-                "label": "회의록 업로드",
-                "acceptedTypes": [".docx", ".md", ".txt", ".csv", ".log"],
-                "documentType": "MEETING_NOTES",
-                "originalMessage": "회의록 보고 TODO 정리해줘",
-            }
-        elif required_context == "ASSIGNEE" or "assignee" in missing_fields:
-            message = "담당자 이름을 알려주시면 남은 업무를 확인해 드릴게요."
-            upload_request = None
-        else:
-            message = "일정 확인에 필요한 프로젝트 기준 정보가 부족합니다."
-            upload_request = None
-
-        payload_result = dict(result)
-        if upload_request:
-            payload_result["upload_request"] = upload_request
-        return {
-            "state": ChatState.WAITING_REQUIRED_INFO.value,
-            "message": message,
-            "result": payload_result,
-            "suggested_actions": [],
-            "recommended_prompts": self._schedule_recommended_prompts(),
-        }
-
     def _general_qa_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
-        topic = result_json.get("topic")
-        query = result_json.get("query")
         return {
             "state": ChatState.IDLE.value,
-            "message": self._pm_concept_answer(topic=topic, query=query),
+            "message": (
+                "PM 문서와 산출물 관련 요청으로 이해했습니다. 현재는 문서 생성과 "
+                "회의록 기반 할 일 추출을 중심으로 도와드릴 수 있습니다."
+            ),
             "result": {
-                "topic": topic,
-                "query": query,
+                "topic": result_json.get("topic"),
+                "query": result_json.get("query"),
             },
             "suggested_actions": [],
-            "recommended_prompts": self._topic_recommended_prompts(topic),
+            "recommended_prompts": self._default_recommended_prompts(),
         }
-
-    def _upload_request_payload(
-        self,
-        *,
-        artifact_type: str | None,
-        original_message: Any,
-    ) -> dict[str, Any] | None:
-        if artifact_type != "REQUIREMENT_SPEC":
-            return None
-        return {
-            "required": True,
-            "label": "구축요건 정의서 업로드",
-            "acceptedTypes": [".docx", ".md", ".txt", ".csv", ".json", ".log"],
-            "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
-            "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
-        }
-
-    def _pm_concept_answer(self, *, topic: Any, query: Any) -> str:
-        topic_value = str(topic or "")
-        if topic_value == "REQUIREMENT_SPEC":
-            return (
-                "요구사항 정의서는 구축요건정의서나 RFP의 내용을 실제 개발·구축 범위로 "
-                "쪼개 정리한 기준 문서입니다. 보통 요구사항 ID, 구분, 요구사항명, 상세 내용, "
-                "우선순위, 출처 같은 항목을 담고, 이후 WBS, 화면설계서, 단위테스트케이스를 "
-                "만드는 기준으로 사용합니다."
-            )
-        if topic_value == "CONSTRUCTION_REQUIREMENT_DEFINITION":
-            return (
-                "구축요건정의서는 고객이 원하는 구축 범위, 업무 요건, 제약 조건, 연동 대상, "
-                "일정 조건 등을 정리한 선행 문서입니다. RFP와 비슷하게 요구사항 정의서를 "
-                "만들 때 입력 자료로 쓰이며, 내용이 구체적일수록 이후 산출물의 품질이 좋아집니다."
-            )
-        if topic_value == "WBS":
-            return (
-                "WBS는 프로젝트 범위를 작업 단위로 나누고 단계, 담당자, 기간, 선후관계를 "
-                "정리한 일정 관리 문서입니다. PM Agent에서는 요구사항 정의서를 기준으로 분석, "
-                "설계, 개발·구축, 테스트, 이행 같은 단계별 작업을 구성합니다."
-            )
-        if topic_value == "SCREEN_DESIGN":
-            return (
-                "화면설계서는 요구사항을 사용자가 보는 화면 흐름과 입력·출력 항목으로 옮긴 "
-                "문서입니다. 현재 흐름에서는 요구사항 정의서의 기능·비기능 요구사항을 기준으로 "
-                "화면 단위 초안을 생성합니다."
-            )
-        if topic_value == "UNITTEST_SPEC":
-            return (
-                "단위테스트케이스는 기능이 요구사항대로 동작하는지 확인하기 위한 테스트 조건, "
-                "입력값, 기대 결과를 정리한 문서입니다. 요구사항 정의서나 화면설계서를 기준으로 작성합니다."
-            )
-        if topic_value == "ACTION_ITEMS":
-            return (
-                "TODO 또는 액션아이템은 회의나 업무 협의에서 정해진 후속 작업입니다. "
-                "담당자, 기한, 관련 산출물, 상태를 함께 관리하면 누락 없이 진행 상황을 확인할 수 있습니다."
-            )
-        if topic_value == "MEETING_NOTES":
-            return (
-                "회의록은 논의 내용, 결정 사항, 이슈, 후속 작업을 남기는 문서입니다. "
-                "회의록 내용을 붙여넣고 할 일 추출을 요청하면 담당자와 기한이 보이는 TODO를 정리할 수 있습니다."
-            )
-
-        normalized_query = str(query or "").strip()
-        if normalized_query:
-            return (
-                "현재는 PM 산출물 생성과 일정 관리 중심으로 답변할 수 있습니다. "
-                "요구사항 정의서, 구축요건정의서, WBS, 화면설계서, 회의록 TODO에 대해 "
-                "궁금한 점을 물어보거나 산출물 생성을 요청해 주세요."
-            )
-        return "문서 생성이나 회의록 기반 할 일 추출이 필요하면 요청해 주세요."
-
-    def _topic_recommended_prompts(self, topic: Any) -> list[dict[str, str]]:
-        topic_value = str(topic or "")
-        if topic_value == "REQUIREMENT_SPEC":
-            return [
-                {"label": "요구사항 정의서 생성", "message": "요구사항 정의서 생성해줘"},
-                {"label": "구축요건정의서 설명", "message": "구축요건정의서가 뭐야?"},
-                {"label": "WBS 생성", "message": "WBS 만들어줘"},
-            ]
-        if topic_value == "CONSTRUCTION_REQUIREMENT_DEFINITION":
-            return [
-                {"label": "요구사항 정의서 생성", "message": "요구사항 정의서 생성해줘"},
-                {"label": "요구사항 정의서 설명", "message": "요구사항 정의서가 뭐야?"},
-                {"label": "회의록 할 일 추출", "message": "회의록에서 할 일 뽑아줘"},
-            ]
-        if topic_value in {"ACTION_ITEMS", "MEETING_NOTES"}:
-            return [
-                {"label": "회의록 할 일 추출", "message": "회의록에서 할 일 뽑아줘"},
-                {"label": "이번 주 일정", "message": "이번 주 해야 할 일 알려줘"},
-                {"label": "요구사항 정의서 생성", "message": "요구사항 정의서 생성해줘"},
-            ]
-        return self._default_recommended_prompts()
 
     def build_schedule_todo_display(
         self,
@@ -393,167 +203,27 @@ class ChatOutputAgent:
             "recommended_prompts": self._default_recommended_prompts(),
         }
 
-    def _current_week_payload(self, result: dict[str, Any]) -> dict[str, Any]:
-        week_context = result.get("week_context") or {}
-        status = result.get("status")
-        if status == "REQUIRED_INFO":
-            message = "프로젝트 시작일이 있어야 현재 주차를 계산할 수 있습니다."
-        elif status == "BEFORE_PROJECT_START":
-            message = "아직 프로젝트 시작 전입니다."
-        elif status == "AFTER_PROJECT_END":
-            message = "프로젝트 종료일 이후입니다."
-        else:
-            current_week = week_context.get("current_week")
-            message = f"프로젝트 시작일 기준 현재는 {current_week}주차입니다."
-        return {
-            "state": ChatState.COMPLETED.value
-            if status == "SUCCESS"
-            else ChatState.WAITING_REQUIRED_INFO.value,
-            "message": message,
-            "result": result,
-            "suggested_actions": [],
-            "recommended_prompts": self._schedule_recommended_prompts(),
-        }
-
-    def _schedule_query_payload(self, result: dict[str, Any]) -> dict[str, Any]:
-        todos = result.get("todos") or []
-        items = self._schedule_todo_items(todos)
-        action = result.get("action")
-        if result.get("assistant_message"):
-            message = str(result.get("assistant_message"))
-        elif action == "SHOW_OVERDUE_TODOS":
-            message = (
-                f"기한이 지난 TODO는 {len(items)}건입니다."
-                if items
-                else "기한이 지난 TODO가 없습니다."
-            )
-        elif action == "SHOW_NEXT_WEEK_TODOS":
-            message = (
-                f"다음 주 진행해야 할 업무는 {len(items)}건입니다."
-                if items
-                else "다음 주 진행해야 할 업무가 없습니다."
-            )
-        elif action == "SHOW_TODAY_TODOS":
-            message = (
-                f"오늘 챙겨야 할 업무는 {len(items)}건입니다."
-                if items
-                else "오늘 챙겨야 할 업무가 없습니다."
-            )
-        elif action == "SHOW_ASSIGNEE_TODOS":
-            assignee = (result.get("metadata") or {}).get("assignee") or "해당 담당자"
-            message = (
-                f"{assignee} 담당자의 남은 업무는 {len(items)}건입니다."
-                if items
-                else f"{assignee} 담당자의 남은 업무가 없습니다."
-            )
-        elif action == "ASSISTANT_BRIEFING":
-            message = (
-                f"WBS와 기존 TODO를 기준으로 이번 주에 챙겨야 할 일을 {len(items)}건 정리했습니다."
-                if items
-                else "WBS와 기존 TODO 기준으로 이번 주에 바로 표시할 업무가 없습니다."
-            )
-        elif action == "COMPARE_WEEKLY_MEETING_TODOS":
-            message = (
-                "지난 회의와 이번 회의의 TODO를 비교했습니다."
-                if items
-                else "비교할 회의 TODO가 없습니다."
-            )
-        else:
-            message = (
-                f"이번 주 진행해야 할 TODO는 {len(items)}건입니다."
-                if items
-                else "이번 주 진행해야 할 TODO가 없습니다."
-            )
-        return {
-            "state": ChatState.COMPLETED.value,
-            "message": message,
-            "result": {
-                **result,
-                "items": items,
-                "schedule_table": self._schedule_table(items),
-            },
-            "display_type": "schedule_todos",
-            "suggested_actions": [],
-            "recommended_prompts": self._schedule_recommended_prompts(),
-        }
-
-    def _complete_todo_payload(self, result: dict[str, Any]) -> dict[str, Any]:
-        status = result.get("status")
-        if status == "SUCCESS":
-            todos = result.get("todos") or []
-            items = self._schedule_todo_items(todos)
-            title = items[0]["title"] if items else "선택한 TODO"
-            return {
-                "state": ChatState.COMPLETED.value,
-                "message": f'"{title}" 업무를 완료 처리했습니다.',
-                "result": {
-                    **result,
-                    "items": items,
-                    "schedule_table": self._schedule_table(items),
-                },
-                "display_type": "schedule_todos",
-                "suggested_actions": [],
-                "recommended_prompts": self._schedule_recommended_prompts(),
-            }
-        if status == "CLARIFICATION_REQUIRED":
-            candidates = result.get("candidates") or []
-            items = self._schedule_todo_items(candidates)
-            return {
-                "state": ChatState.WAITING_REQUIRED_INFO.value,
-                "message": (
-                    "완료 처리할 업무를 특정하지 못했습니다. "
-                    "아래 TODO 중 어떤 업무를 완료했는지 선택해 주세요."
-                ),
-                "result": {
-                    **result,
-                    "items": items,
-                    "schedule_table": self._schedule_table(items),
-                },
-                "display_type": "schedule_todos",
-                "suggested_actions": [],
-                "recommended_prompts": self._schedule_recommended_prompts(),
-            }
-        return {
-            "state": ChatState.FAILED.value,
-            "message": "완료 처리할 TODO를 찾지 못했습니다. TODO 제목을 조금 더 정확히 입력해 주세요.",
-            "result": result,
-            "suggested_actions": [],
-            "recommended_prompts": self._schedule_recommended_prompts(),
-        }
-
     def _schedule_todo_items(self, todos: list[Any]) -> list[dict[str, Any]]:
         items = []
         for todo in todos:
             if not isinstance(todo, dict):
                 continue
-            assignee = todo.get("assignee_display") or todo.get("assignee") or "담당자 미정"
-            due_date = todo.get("due_date") or todo.get("planned_end_date") or "기한 미정"
+            assignee = todo.get("assignee") or "담당자 미정"
+            due_date = todo.get("due_date") or "기한 미정"
             status = todo.get("status") or "TODO"
-            status_display = todo.get("status_display") or self._todo_status_value(
-                status,
-                assignee,
-                due_date,
-            )
             items.append(
                 {
                     "todo_id": todo.get("todo_id"),
                     "title": todo.get("title") or "제목 없음",
                     "assignee": assignee,
                     "due_date": due_date,
-                    "related_document": todo.get("related_artifact")
-                    or todo.get("related_document")
+                    "related_document": todo.get("related_document")
                     or "회의록 기반 신규 TODO",
-                    "status": status_display,
+                    "status": self._todo_status_label(status, assignee, due_date),
                     "description": todo.get("description") or "",
                 }
             )
         return items
-
-    def _schedule_table(self, items: list[dict[str, Any]]) -> dict[str, Any]:
-        return {
-            "columns": ["할 일", "담당자", "기한", "관련 산출물", "상태"],
-            "items": items,
-        }
 
     def _legacy_schedule_todo_items(self, todos: list[Any]) -> list[dict[str, Any]]:
         items = []
@@ -585,18 +255,6 @@ class ChatOutputAgent:
             return "확인 필요"
         return "예정"
 
-    def _todo_status_value(
-        self,
-        status: str,
-        assignee: str,
-        due_date: str,
-    ) -> str:
-        if status in {"TODO", "NEEDS_CONFIRMATION", "DONE", "OVERDUE"}:
-            return status
-        if assignee == "담당자 미정" or due_date == "기한 미정":
-            return "NEEDS_CONFIRMATION"
-        return "TODO"
-
     def _is_schedule_todo_result(self, result_json: dict[str, Any]) -> bool:
         return (
             result_json.get("artifact_type") == "SCHEDULE_TODO_LIST"
@@ -613,9 +271,8 @@ class ChatOutputAgent:
             "REQUIREMENT_SPEC": (
                 "요구사항 정의서가 생성되었습니다. 아래 파일을 확인해주세요."
             ),
-            "WBS": f"WBS가 생성되었습니다.{file_suffix}",
-            "SCREEN_DESIGN": f"화면설계서가 생성되었습니다.{file_suffix}",
-            "UNITTEST_SPEC": f"단위테스트케이스가 생성되었습니다.{file_suffix}",
+            "WBS": f"WBS 문서가 생성되었습니다. 주요 일정과 작업 항목을 확인해 주세요.{file_suffix}",
+            "SCREEN_DESIGN": f"화면설계서 초안이 생성되었습니다.{file_suffix}",
         }
         return messages.get(
             artifact_type or "",
@@ -657,28 +314,11 @@ class ChatOutputAgent:
             },
         ]
 
-    def _schedule_recommended_prompts(self) -> list[dict[str, str]]:
-        return [
-            {
-                "label": "이번 주 할 일",
-                "message": "이번 주 해야 할 일 알려줘",
-            },
-            {
-                "label": "기한 지난 업무",
-                "message": "기한 지난 업무 보여줘",
-            },
-            {
-                "label": "현재 주차",
-                "message": "지금 프로젝트 몇 주차야?",
-            },
-        ]
-
     def _artifact_label(self, artifact_type: str | None) -> str:
         labels = {
             "REQUIREMENT_SPEC": "요구사항 정의서",
             "WBS": "WBS",
             "SCREEN_DESIGN": "화면설계서",
-            "UNITTEST_SPEC": "단위테스트케이스",
         }
         return labels.get(artifact_type or "", "산출물")
 
@@ -727,12 +367,10 @@ class ChatOutputAgent:
             return "화면설계서.pptx"
         if artifact_type == "WBS":
             return "WBS.xlsx"
-        if artifact_type == "UNITTEST_SPEC":
-            return "단위테스트케이스.xlsx"
         return "산출물 다운로드"
 
     def _default_mime_type(self, artifact_type: str | None) -> str:
-        if artifact_type in {"REQUIREMENT_SPEC", "WBS", "UNITTEST_SPEC"}:
+        if artifact_type in {"REQUIREMENT_SPEC", "WBS"}:
             return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         if artifact_type == "SCREEN_DESIGN":
             return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -758,12 +396,7 @@ class ChatOutputAgent:
             )
 
         file_names = [
-            str(
-                document.get("file_name")
-                or document.get("original_filename")
-                or document.get("name")
-                or ""
-            ).strip()
+            str(document.get("file_name") or document.get("original_filename") or "").strip()
             for document in source_documents
             if isinstance(document, dict)
         ]
