@@ -18,8 +18,10 @@ from app.schemas.artifact import ArtifactType
 from app.services.artifact_export_service import artifact_export_service
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
+from util.agent_generation_utils import extract_requirement_atoms_from_pipe_tables
 
 logger = get_logger(__name__)
+LLM_LOG_PREFIX = "!!! LLM"
 
 
 class GenerationOrchestrator:
@@ -69,6 +71,12 @@ class GenerationOrchestrator:
         document_service: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
+        logger.info(
+            "[Orchestrator] dispatch | "
+            f"project_id={request.project_id} | "
+            f"target_artifact_type={generation_flow.target_artifact_type} | "
+            f"source_document_type={generation_flow.source_document_type or 'UNKNOWN'}"
+        )
         if generation_flow.target_artifact_type in {
             ArtifactType.REQUIREMENT_SPEC,
             ArtifactType.UNITTEST_SPEC,
@@ -104,7 +112,8 @@ class GenerationOrchestrator:
         logger.info(
             "[Orchestrator] generate_artifact start | "
             f"project_id={request.project_id} | "
-            f"target_artifact_type={generation_flow.target_artifact_type}"
+            f"target_artifact_type={generation_flow.target_artifact_type} | "
+            f"source_document_ids={request.source_document_ids or []}"
         )
 
         resolved_template = None
@@ -259,7 +268,31 @@ class GenerationOrchestrator:
             f"System instruction:\n{system_prompt.strip()}\n\n"
             f"User input:\n{user_prompt.strip()}"
         )
-        return await llm_service.invoke(prompt)
+        logger.info(
+            f"[Orchestrator] {LLM_LOG_PREFIX} invoke request | "
+            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)} | max_tokens={max_tokens}"
+        )
+        logger.debug(
+            f"[Orchestrator] {LLM_LOG_PREFIX} prompt preview | "
+            f"text={prompt[:300]}"
+        )
+        response = await llm_service.invoke(prompt)
+        logger.info(
+            f"[Orchestrator] {LLM_LOG_PREFIX} invoke response | "
+            f"response_chars={len(response)}"
+        )
+        logger.debug(
+            f"[Orchestrator] {LLM_LOG_PREFIX} response preview | "
+            f"text={response[:300]}"
+        )
+        return response
+
+    def extract_requirement_atoms_from_pipe_tables(
+        self,
+        documents: list[dict],
+    ) -> list[dict]:
+        """Expose table extraction through the orchestrator boundary."""
+        return extract_requirement_atoms_from_pipe_tables(documents)
 
     async def search_agent_context(
         self,

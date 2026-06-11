@@ -15,7 +15,7 @@ def test_unit_test_artifact_accepts_minimal_payload() -> None:
                 {
                     "test_case_id": "TEST-0001-001",
                     "test_case_name": "회원 조회 화면",
-                    "requirement_id": "BSR-00001",
+                    "requirement_id": "REQ-00001",
                     "requirement_name": "회원 조회",
                     "scenario_id": "Biz-0001",
                     "test_content": "회원 목록을 조회한다.",
@@ -36,7 +36,7 @@ def test_unit_test_artifact_rejects_wrong_artifact_type() -> None:
                     {
                         "test_case_id": "TEST-0001-001",
                         "test_case_name": "회원 조회 화면",
-                        "requirement_id": "BSR-00001",
+                        "requirement_id": "REQ-00001",
                         "requirement_name": "회원 조회",
                         "scenario_id": "Biz-0001",
                         "test_content": "회원 목록을 조회한다.",

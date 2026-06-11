@@ -31,8 +31,11 @@ from app.schemas.response import GenerationResponse, ScheduleTodoResponse
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.core.logger import get_logger
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
+
+logger = get_logger(__name__)
 
 
 class ChatOrchestrator:
@@ -62,6 +65,10 @@ class ChatOrchestrator:
         self.output_formatter = output_formatter
 
     async def handle_message(self, request: ChatMessageRequest) -> ChatResponse:
+        logger.info(
+            f"!!! Chat handle_message | project_id={request.project_id} | "
+            f"conversation_id={request.conversation_id or 'NEW'}"
+        )
         conversation = await self._resolve_conversation(request)
         await self.conversation_repository.add_message(
             message_id=self._new_id("MSG"),
@@ -120,6 +127,12 @@ class ChatOrchestrator:
             )
 
         if intent == "GENERATE_ARTIFACT":
+            logger.info(
+                f"!!! Chat intent GENERATE_ARTIFACT | project_id={request.project_id} | "
+                f"target_artifact_type={structured_context.get('target_artifact_type')} | "
+                f"source_document_type={structured_context.get('source_document_type')} | "
+                f"source_document_ids={structured_context.get('source_document_ids') or []}"
+            )
             return await self._prepare_generation_action(
                 conversation=conversation,
                 request=request,
@@ -178,6 +191,12 @@ class ChatOrchestrator:
         request: ChatMessageRequest,
         structured_context: dict[str, Any],
     ) -> ChatResponse:
+        logger.info(
+            f"!!! Chat prepare_generation_action | project_id={request.project_id} | "
+            f"target_artifact_type={structured_context.get('target_artifact_type')} | "
+            f"source_document_type={structured_context.get('source_document_type')} | "
+            f"source_document_ids={structured_context.get('source_document_ids') or []}"
+        )
         source_document_ids = structured_context.get("source_document_ids") or []
         if not source_document_ids:
             return await self._render_and_save_response(

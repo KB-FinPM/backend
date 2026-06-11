@@ -119,7 +119,13 @@ async def generate_requirement(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a requirement artifact through the PM agent orchestrator."""
-    logger.info(f"generate_requirement | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_requirement | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={request.target_artifact_type or ArtifactType.REQUIREMENT_SPEC} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
 
     return await _generate_artifact_response(
         request=request,
@@ -149,7 +155,13 @@ async def generate_wbs(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a WBS artifact through the PM agent orchestrator."""
-    logger.info(f"generate_wbs | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_wbs | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={ArtifactType.WBS.value} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
     request.target_artifact_type = ArtifactType.WBS
     request.source_document_type = request.source_document_type or (
         DocumentType.REQUIREMENT_SPEC
@@ -186,7 +198,13 @@ async def generate_screen_design(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a screen design artifact through the PM agent orchestrator."""
-    logger.info(f"generate_screen_design | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_screen_design | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={ArtifactType.SCREEN_DESIGN.value} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
     request.target_artifact_type = ArtifactType.SCREEN_DESIGN
     request.source_document_type = request.source_document_type or (
         DocumentType.REQUIREMENT_SPEC
@@ -223,7 +241,13 @@ async def generate_unittest(
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
     """Generate a unit test case artifact through the PM agent orchestrator."""
-    logger.info(f"generate_unittest | project_id={request.project_id}")
+    logger.info(
+        "!!! generate_unittest | "
+        f"project_id={request.project_id} | "
+        f"target_artifact_type={ArtifactType.UNITTEST_SPEC.value} | "
+        f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
+        f"source_document_ids={request.source_document_ids or []}"
+    )
     request.target_artifact_type = ArtifactType.UNITTEST_SPEC
     request.source_document_type = request.source_document_type or (
         DocumentType.REQUIREMENT_SPEC

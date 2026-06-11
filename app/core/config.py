@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     S3_GENERATED_PREFIX: str = "storage/generated_files"
 
     BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-4-5"
+    BEDROCK_INFERENCE_PROFILE_ID: str = ""
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./finpm.db"
 
