@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     APP_ENV: str = "development"
     DEBUG: bool = True
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173", "https://d2xtqtnbdz7asr.cloudfront.net"]
 
     AWS_REGION: str = "ap-northeast-2"
     AWS_ACCESS_KEY_ID: str = ""
