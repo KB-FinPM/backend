@@ -26,7 +26,7 @@ def test_chat_messages_route_delegates_to_chat_service(client: TestClient) -> No
 
     try:
         response = client.post(
-            "/chat/messages",
+            "/api/chat/messages",
             json={
                 "project_id": "PRJ-001",
                 "message": "이 요구사항으로 WBS 만들어줘",

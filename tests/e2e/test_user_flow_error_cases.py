@@ -87,7 +87,7 @@ def test_user_flow_unsupported_upload_returns_422_without_500(
 
     try:
         response = client.post(
-            "/upload",
+            "/api/upload",
             data={
                 "project_id": PROJECT_ID,
                 "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
@@ -165,7 +165,7 @@ def test_user_flow_missing_document_id_generation_returns_404(
 
     try:
         response = client.post(
-            "/generate/wbs",
+            "/api/generate/wbs",
             json={
                 "project_id": PROJECT_ID,
                 "source_document_ids": ["DOC-404"],
@@ -197,7 +197,7 @@ def test_user_flow_missing_artifact_download_returns_404(
     client.app.dependency_overrides[get_artifact_service] = lambda: MissingArtifactService()
 
     try:
-        response = client.get(f"/projects/{PROJECT_ID}/artifacts/ART-404/download")
+        response = client.get(f"/api/projects/{PROJECT_ID}/artifacts/ART-404/download")
     finally:
         client.app.dependency_overrides.clear()
 

@@ -155,9 +155,9 @@ FastAPI Router 영역입니다.
 예시:
 
 ```text
-POST /generate/requirement
-POST /upload
-GET /health
+POST /api/generate/requirement
+POST /api/upload
+GET /api/health
 ```
 
 주의:
