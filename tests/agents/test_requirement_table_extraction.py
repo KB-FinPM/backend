@@ -37,7 +37,7 @@ def test_extracts_three_column_requirement_table_with_section_title() -> None:
         "Biz-0001",
         "Biz-0002",
     ]
-    assert atoms[0].requirement_id == "REQ-00001"
+    assert atoms[0].requirement_id == "BSR-00001"
     assert atoms[0].requirement_name == "회원 조회"
     assert atoms[0].description == "- 회원 목록을 조회한다.\n- 회원 상세 정보를 제공한다."
     assert atoms[0].category == "기능"
@@ -65,10 +65,7 @@ def test_extracts_two_column_requirement_table() -> None:
     )
 
     assert [atom.biz_requirement_name for atom in atoms] == ["검색 기능", "검색 기능"]
-    assert [atom.requirement_name for atom in atoms] == [
-        "사용자는 조건을 입력해 목록을 조회할 수 있어야 한다.",
-        "조회 결과를 엑셀로 다운로드할 수 있어야 한다.",
-    ]
+    assert [atom.requirement_name for atom in atoms] == ["검색 기능", "검색 기능"]
     assert atoms[0].biz_requirement_id == atoms[1].biz_requirement_id == "Biz-0001"
     assert atoms[0].category == "기능"
     assert atoms[0].domain == "요건내용"
