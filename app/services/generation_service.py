@@ -3,13 +3,10 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.core.logger import get_logger
 from app.orchestrator.generation_orchestrator import GenerationOrchestrator
 from app.schemas.artifact import ArtifactType, DocumentType
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
-
-logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -84,6 +81,7 @@ class GenerationService:
         if target_artifact_type in {
             ArtifactType.WBS,
             ArtifactType.SCREEN_DESIGN,
+            ArtifactType.UNITTEST_SPEC,
         }:
             return DocumentType.REQUIREMENT_SPEC
         return None
@@ -146,12 +144,6 @@ class GenerationService:
         template_service: Any = None,
         document_service: Any = None,
     ) -> GenerationResponse:
-        logger.info(
-            f"!!! GenerationService generate_requirement | project_id={request.project_id} | "
-            f"target_artifact_type={request.target_artifact_type.value} | "
-            f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
-            f"source_document_ids={request.source_document_ids or []}"
-        )
         return await self.orchestrator.generate_requirement(
             request,
             artifact_service=artifact_service,
@@ -169,12 +161,6 @@ class GenerationService:
         template_service: Any = None,
         document_service: Any = None,
     ) -> GenerationResponse:
-        logger.info(
-            f"!!! GenerationService generate_artifact | project_id={request.project_id} | "
-            f"target_artifact_type={request.target_artifact_type.value} | "
-            f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
-            f"source_document_ids={request.source_document_ids or []}"
-        )
         return await self.orchestrator.generate_artifact(
             request,
             artifact_service=artifact_service,
