@@ -955,7 +955,9 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     else:
                         biz_name = compact_cells[0] or "공통"
                         top_bullet_items = _split_description_by_top_bullet(content_value)
-                        split_items = top_bullet_items or _split_two_column_requirement_items(content_value)
+                        split_items = top_bullet_items or [
+                            (biz_name, _clean_description_cell_text(content_value))
+                        ]
                     for req_name, detail in split_items:
                         if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
                             continue
@@ -1075,7 +1077,9 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     raw_values = [cell for cell in raw_cells if _clean_cell_text(cell)]
                     content_value = raw_values[1] if len(raw_values) > 1 else compact_cells[1]
                     top_bullet_items = _split_description_by_top_bullet(content_value)
-                    split_items = top_bullet_items or _split_two_column_requirement_items(content_value)
+                    split_items = top_bullet_items or [
+                        (biz_name, _clean_description_cell_text(content_value))
+                    ]
                     for req_name, detail in split_items:
                         if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
                             continue
@@ -1245,7 +1249,7 @@ def deduplicate_requirement_atoms(atoms: Iterable[RequirementAtom]) -> list[Requ
 
 
 def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[RequirementAtom]:
-    """Assign Biz/REQ IDs in reference-compatible Biz-0001 / REQ-00001 format."""
+    """Assign Biz/BSR IDs in reference-compatible Biz-0001 / BSR-00001 format."""
     biz_seq: dict[str, int] = {}
     result: list[RequirementAtom] = []
     for idx, atom in enumerate(list(atoms or []), start=1):
@@ -1258,7 +1262,7 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
         if not atom.biz_requirement_id:
             atom.biz_requirement_id = f"Biz-{biz_seq[biz_name]:04d}"
         # Preserve source requirement IDs such as BFE-21000 from existing
-        # requirement tables. Only assign REQ-00001 style IDs when the source did
+        # requirement tables. Only assign REQ-0001 style IDs when the source did
         # not provide one or when it is a generated placeholder.
         current_id = (atom.requirement_id or '').strip()
         if (
@@ -1266,7 +1270,7 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             or current_id.startswith(('RQ-', 'Requirement'))
             or re.fullmatch(r'REQ-?\d+', current_id or '', flags=re.IGNORECASE)
         ):
-            atom.requirement_id = f"REQ-{idx:05d}"
+            atom.requirement_id = f"BSR-{idx:05d}"
         else:
             atom.requirement_id = current_id
         if not atom.requirement_name:
