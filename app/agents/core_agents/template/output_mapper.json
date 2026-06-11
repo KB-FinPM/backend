@@ -382,6 +382,27 @@
           "default_column": 4
         },
         {
+          "field": "start_date",
+          "header_names": [
+            "시작예정일"
+          ],
+          "default_column": 5
+        },
+        {
+          "field": "end_date",
+          "header_names": [
+            "종료예정일"
+          ],
+          "default_column": 6
+        },
+        {
+          "field": "worker",
+          "header_names": [
+            "작업자"
+          ],
+          "default_column": 7
+        },
+        {
           "field": "deliverable",
           "header_names": [
             "산출물"

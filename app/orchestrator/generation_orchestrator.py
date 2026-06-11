@@ -150,6 +150,8 @@ class GenerationOrchestrator:
                 "source_document_ids": request.source_document_ids,
                 "document_ids": request.document_ids,
                 "project_name": request.project_name,
+                "start_date": request.start_date,
+                "project_period": request.project_period,
                 "source_document_type": (
                     generation_flow.source_document_type.value
                     if generation_flow.source_document_type
