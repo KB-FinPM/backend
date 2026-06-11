@@ -93,9 +93,9 @@ Routers must not:
 Example:
 
 ```text
-POST /generate/requirement
-POST /generate/wbs
-POST /generate/screen-design
+POST /api/generate/requirement
+POST /api/generate/wbs
+POST /api/generate/screen-design
 ```
 
 These are implemented in:
@@ -260,7 +260,7 @@ Agent -> DB
 ### Requirement Generation
 
 ```text
-POST /generate/requirement
+POST /api/generate/requirement
 -> generation.py
 -> _validate_source_documents()
 -> InputOrchestrator.normalize()
@@ -278,7 +278,7 @@ POST /generate/requirement
 ### WBS Generation
 
 ```text
-POST /generate/wbs
+POST /api/generate/wbs
 -> validates source document type REQUIREMENT_SPEC
 -> target_artifact_type = WBS
 -> same GenerationService / GenerationOrchestrator path
@@ -294,7 +294,7 @@ WbsAgent is a placeholder and returns success=False.
 ### Screen Design Generation
 
 ```text
-POST /generate/screen-design
+POST /api/generate/screen-design
 -> validates source document type REQUIREMENT_SPEC
 -> target_artifact_type = SCREEN_DESIGN
 -> same GenerationService / GenerationOrchestrator path
@@ -310,7 +310,7 @@ ScreenDesignAgent is a placeholder and returns success=False.
 ### Schedule Todo Extraction
 
 ```text
-POST /schedule/todos
+POST /api/schedule/todos
 -> InputOrchestrator.normalize(MEETING_NOTES)
 -> ScheduleService.extract_todos()
 -> ScheduleOrchestrator.extract_todos()

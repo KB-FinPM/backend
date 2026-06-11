@@ -26,6 +26,7 @@ from app.db.session import init_db
 from app.schemas.response import ErrorResponse
 
 logger = get_logger(__name__)
+API_PREFIX = "/api"
 
 app = FastAPI(
     title="FINPM Agent API",
@@ -162,12 +163,12 @@ async def sqlalchemy_error_handler(
         ).model_dump(mode="json"),
     )
 
-app.include_router(health.router, tags=["health"])
-app.include_router(upload.router, prefix="/upload", tags=["upload"])
-app.include_router(generation.router, prefix="/generate", tags=["generation"])
-app.include_router(schedule.router, prefix="/schedule", tags=["schedule"])
-app.include_router(chat.router, prefix="/chat", tags=["chat"])
-app.include_router(documents.router, tags=["documents"])
-app.include_router(artifacts.router, tags=["artifacts"])
-app.include_router(templates.router, tags=["templates"])
-app.include_router(traceability.router, tags=["traceability"])
+app.include_router(health.router, prefix=API_PREFIX, tags=["health"])
+app.include_router(upload.router, prefix=f"{API_PREFIX}/upload", tags=["upload"])
+app.include_router(generation.router, prefix=f"{API_PREFIX}/generate", tags=["generation"])
+app.include_router(schedule.router, prefix=f"{API_PREFIX}/schedule", tags=["schedule"])
+app.include_router(chat.router, prefix=f"{API_PREFIX}/chat", tags=["chat"])
+app.include_router(documents.router, prefix=API_PREFIX, tags=["documents"])
+app.include_router(artifacts.router, prefix=API_PREFIX, tags=["artifacts"])
+app.include_router(templates.router, prefix=API_PREFIX, tags=["templates"])
+app.include_router(traceability.router, prefix=API_PREFIX, tags=["traceability"])
