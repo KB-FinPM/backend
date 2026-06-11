@@ -64,6 +64,8 @@ WBS_EXAMPLE = {
         "source_document_ids": ["DOC-REQ-001"],
         "source_document_type": "REQUIREMENT_SPEC",
         "target_artifact_type": "WBS",
+        "start_date": "2024.01.10",
+        "project_period": "6개월",
         "query": "Create a WBS from the requirement specification.",
         "author": "작성자",
         "permission_scope": ["project:read"],
@@ -90,7 +92,7 @@ UNITTEST_EXAMPLE = {
         "project_name": "테스트 구축 프로젝트",
         "author": "김국민",
         "source_document_ids": ["DOC-ADA194C012AF"],
-        "source_document_type": "CONSTRUCTION_UNITTEST_DEFINITION",
+        "source_document_type": "REQUIREMENT_SPEC",
         "target_artifact_type": "UNITTEST_SPEC",
         "query": "단위테스트케이스를 생성해줘",
         "permission_scope": ["project:read"],
@@ -224,7 +226,7 @@ async def generate_unittest(
     logger.info(f"generate_unittest | project_id={request.project_id}")
     request.target_artifact_type = ArtifactType.UNITTEST_SPEC
     request.source_document_type = request.source_document_type or (
-        DocumentType.CONSTRUCTION_UNITTEST_DEFINITION
+        DocumentType.REQUIREMENT_SPEC
     )
 
     return await _generate_artifact_response(
@@ -284,9 +286,18 @@ async def _normalize_generation_input(
             input_type=InputType.ARTIFACT_REQUEST,
             raw_payload=request.model_dump(mode="json"),
             context={
+                "project_id": request.project_id,
+                "project_name": request.project_name,
+                "source_document_type": (
+                    request.source_document_type.value
+                    if request.source_document_type
+                    else None
+                ),
                 "target_artifact_type": request.target_artifact_type.value,
                 "source_document_ids": request.source_document_ids,
                 "query": request.query,
+                "start_date": request.start_date,
+                "project_period": request.project_period,
             },
         )
     )
@@ -356,6 +367,13 @@ async def _format_generation_response(
         )
     )
     if isinstance(response.result, dict):
+        exported_document = response.result.get("exported_document")
+        if isinstance(exported_document, dict):
+            response.document_id = exported_document.get("document_id")
+            document_type = exported_document.get("document_type")
+            response.document_type = (
+                document_type.value if hasattr(document_type, "value") else document_type
+            )
         response.result = {
             **response.result,
             "display": output_response.display_payload,

@@ -81,6 +81,7 @@ class GenerationService:
         if target_artifact_type in {
             ArtifactType.WBS,
             ArtifactType.SCREEN_DESIGN,
+            ArtifactType.UNITTEST_SPEC,
         }:
             return DocumentType.REQUIREMENT_SPEC
         return None

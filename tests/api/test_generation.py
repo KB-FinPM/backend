@@ -24,8 +24,9 @@ from app.services.generation_service import GenerationSourceValidationResult
 
 
 class StubGenerationOrchestrator:
-    def __init__(self) -> None:
+    def __init__(self, result: dict | None = None) -> None:
         self.received_request: GenerationRequest | None = None
+        self.result = result or {"source": "stub-orchestrator"}
 
     async def generate_artifact(
         self,
@@ -38,7 +39,7 @@ class StubGenerationOrchestrator:
         self.received_request = request
         return GenerationResponse(
             project_id=request.project_id,
-            result={"source": "stub-orchestrator"},
+            result=self.result,
         )
 
     async def validate_source_documents(
@@ -57,10 +58,18 @@ class StubGenerationOrchestrator:
 
 class StubInputOrchestrator:
     def __init__(self) -> None:
+        self.received_project_id: str | None = None
+        self.received_permission_scope: list[str] | None = None
         self.received_input_type: str | None = None
+        self.received_context: dict | None = None
+        self.received_raw_payload: dict | None = None
 
     async def normalize(self, request):
+        self.received_project_id = request.project_id
+        self.received_permission_scope = request.permission_scope
         self.received_input_type = request.input_type
+        self.received_context = request.context
+        self.received_raw_payload = request.raw_payload
         return InputAgentResponse(
             agent_name="StubInputOrchestrator",
             normalized_request_type=NormalizedRequestType.ARTIFACT_GENERATION,
@@ -117,7 +126,15 @@ class StubDocumentService:
 def test_generate_requirement_delegates_to_orchestrator(
     client: TestClient,
 ) -> None:
-    stub_generation_service = StubGenerationOrchestrator()
+    stub_generation_service = StubGenerationOrchestrator(
+        result={
+            "source": "stub-orchestrator",
+            "exported_document": {
+                "document_id": "DOC-GEN-001",
+                "document_type": "REQUIREMENT_SPEC",
+            },
+        }
+    )
     stub_input_orchestrator = StubInputOrchestrator()
     stub_output_orchestrator = StubOutputOrchestrator()
     client.app.dependency_overrides[get_generation_service] = (
@@ -150,9 +167,12 @@ def test_generate_requirement_delegates_to_orchestrator(
         client.app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json()["project_id"] == "PRJ-001"
-    assert response.json()["result"]["source"] == "stub-orchestrator"
-    assert response.json()["result"]["display"] == {"formatted": True}
+    body = response.json()
+    assert body["project_id"] == "PRJ-001"
+    assert body["document_id"] == "DOC-GEN-001"
+    assert body["document_type"] == "REQUIREMENT_SPEC"
+    assert body["result"]["source"] == "stub-orchestrator"
+    assert body["result"]["display"] == {"formatted": True}
     assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
     assert stub_generation_service.received_request is not None
@@ -186,9 +206,14 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
             "/generate/wbs",
             json={
                 "project_id": "PRJ-001",
+                "project_name": "WBS Project",
                 "source_document_ids": ["DOC-REQ-001"],
                 "source_document_type": "REQUIREMENT_SPEC",
                 "target_artifact_type": "REQUIREMENT_SPEC",
+                "query": "Create a WBS",
+                "permission_scope": ["project:read", "artifact:generate"],
+                "start_date": "2024.01.10",
+                "project_period": "6개월",
             },
         )
     finally:
@@ -197,7 +222,29 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
     assert response.status_code == 200
     assert stub_generation_service.received_request is not None
     assert stub_generation_service.received_request.target_artifact_type == "WBS"
+    assert stub_generation_service.received_request.start_date == "2024.01.10"
+    assert stub_generation_service.received_request.project_period == "6개월"
+    assert stub_input_orchestrator.received_project_id == "PRJ-001"
+    assert stub_input_orchestrator.received_permission_scope == [
+        "project:read",
+        "artifact:generate",
+    ]
     assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
+    assert stub_input_orchestrator.received_context is not None
+    assert stub_input_orchestrator.received_context["project_id"] == "PRJ-001"
+    assert stub_input_orchestrator.received_context["project_name"] == "WBS Project"
+    assert stub_input_orchestrator.received_context["source_document_ids"] == [
+        "DOC-REQ-001"
+    ]
+    assert stub_input_orchestrator.received_context["source_document_type"] == (
+        "REQUIREMENT_SPEC"
+    )
+    assert stub_input_orchestrator.received_context["target_artifact_type"] == "WBS"
+    assert stub_input_orchestrator.received_context["query"] == "Create a WBS"
+    assert stub_input_orchestrator.received_context["start_date"] == "2024.01.10"
+    assert stub_input_orchestrator.received_context["project_period"] == "6개월"
+    assert stub_input_orchestrator.received_raw_payload is not None
+    assert stub_input_orchestrator.received_raw_payload["start_date"] == "2024.01.10"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
 
 
@@ -236,6 +283,49 @@ def test_generate_screen_design_sets_target_artifact_type(client: TestClient) ->
     assert stub_generation_service.received_request is not None
     assert stub_generation_service.received_request.target_artifact_type == (
         "SCREEN_DESIGN"
+    )
+    assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
+    assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
+
+
+def test_generate_unittest_uses_requirement_spec_source(client: TestClient) -> None:
+    stub_generation_service = StubGenerationOrchestrator()
+    stub_input_orchestrator = StubInputOrchestrator()
+    stub_output_orchestrator = StubOutputOrchestrator()
+    client.app.dependency_overrides[get_generation_service] = (
+        lambda: stub_generation_service
+    )
+    client.app.dependency_overrides[get_artifact_service] = lambda: object()
+    client.app.dependency_overrides[get_document_service] = lambda: StubDocumentService()
+    client.app.dependency_overrides[get_retrieval_service] = lambda: object()
+    client.app.dependency_overrides[get_template_service] = lambda: object()
+    client.app.dependency_overrides[get_input_orchestrator] = (
+        lambda: stub_input_orchestrator
+    )
+    client.app.dependency_overrides[get_output_orchestrator] = (
+        lambda: stub_output_orchestrator
+    )
+
+    try:
+        response = client.post(
+            "/generate/unittest",
+            json={
+                "project_id": "PRJ-001",
+                "source_document_ids": ["DOC-REQ-001"],
+                "source_document_type": "REQUIREMENT_SPEC",
+                "target_artifact_type": "REQUIREMENT_SPEC",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert stub_generation_service.received_request is not None
+    assert stub_generation_service.received_request.source_document_type == (
+        "REQUIREMENT_SPEC"
+    )
+    assert stub_generation_service.received_request.target_artifact_type == (
+        "UNITTEST_SPEC"
     )
     assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
@@ -300,3 +390,17 @@ def test_generate_action_items_route_is_not_exposed(client: TestClient) -> None:
     )
 
     assert response.status_code == 404
+
+
+def test_generate_requirement_rejects_invalid_artifact_type(client: TestClient) -> None:
+    response = client.post(
+        "/generate/requirement",
+        json={
+            "project_id": "PRJ-001",
+            "source_document_ids": ["DOC-001"],
+            "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+            "target_artifact_type": "NOT_A_REAL_ARTIFACT",
+        },
+    )
+
+    assert response.status_code == 422

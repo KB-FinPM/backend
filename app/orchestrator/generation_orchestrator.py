@@ -159,6 +159,8 @@ class GenerationOrchestrator:
                 "project_name": request.project_name or request.project_id,
                 "template": template_context,
                 "query": request.query,
+                "start_date": request.start_date,
+                "project_period": request.project_period,
                 "author": request.author_value(),
                 "writer": request.writer,
                 "created_by": request.created_by,

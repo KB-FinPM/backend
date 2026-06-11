@@ -25,6 +25,13 @@ def _norm(value: str) -> str:
     return unicodedata.normalize("NFC", value)
 
 
+def _zip_escaped_unicode_name(value: str) -> str:
+    return "".join(
+        char if ord(char) < 128 else f"#U{ord(char):04x}"
+        for char in _norm(value)
+    )
+
+
 def _relative_template_path(path_or_name: str) -> str:
     raw = str(path_or_name or "").replace("\\", "/").lstrip("/")
     if raw.startswith("template/"):
@@ -38,9 +45,12 @@ def _resolve_local_template_file(path_or_name: str) -> Path:
     if candidate.exists():
         return candidate
     target = _norm(Path(relative).name)
+    escaped_target = _zip_escaped_unicode_name(target)
     if TEMPLATE_DIR.exists():
         for item in TEMPLATE_DIR.rglob("*"):
-            if item.is_file() and _norm(item.name) == target:
+            if item.is_file() and (
+                _norm(item.name) == target or item.name == escaped_target
+            ):
                 return item
     raise FileNotFoundError(f"template file not found: {path_or_name}")
 
@@ -129,6 +139,37 @@ def load_wbs_template() -> dict[str, Any]:
     mapper = load_output_mapper()
     path = get_nested(mapper, "wbs", "common_template_path", default="wbs_template.json")
     return load_template_json(path, {"common_items": []})
+
+
+def load_wbs_common_rows(
+    *,
+    start_row: int = 2,
+    end_row: int | None = 86,
+) -> list[dict[str, Any]]:
+    """Load the static WBS prefix rows from the bundled JSON template."""
+    template = load_wbs_template()
+    common_items = template.get("common_items", [])
+    rows: list[dict[str, Any]] = []
+    max_count = (
+        max((end_row or start_row) - start_row + 1, 0)
+        if end_row is not None
+        else len(common_items)
+    )
+    for item in common_items[:max_count]:
+        if not isinstance(item, dict):
+            continue
+        wbs_name = str(item.get("wbs_name") or "").strip()
+        if not wbs_name:
+            continue
+        rows.append(
+            {
+                "level": "" if item.get("level") is None else str(item.get("level")),
+                "wbs_id": "" if item.get("wbs_id") is None else str(item.get("wbs_id")),
+                "wbs_name": wbs_name,
+                "deliverable": "" if item.get("deliverable") is None else str(item.get("deliverable")),
+            }
+        )
+    return rows
 
 
 def get_nested(config: dict[str, Any], *keys: str, default: Any = None) -> Any:

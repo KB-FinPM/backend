@@ -49,6 +49,14 @@ class GenerationRequest(BaseModel):
         None,
         description="Template version to use for generation",
     )
+    start_date: Optional[str] = Field(
+        None,
+        description="WBS planned project start date",
+    )
+    project_period: Optional[str] = Field(
+        None,
+        description="WBS total project period",
+    )
     query: Optional[str] = Field(None, description="Additional generation request")
     author: Optional[str] = Field(None, description="Artifact author name")
     writer: Optional[str] = Field(None, description="Deprecated alias for author")

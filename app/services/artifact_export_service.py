@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date
 from io import BytesIO
 from pathlib import PurePath
 from typing import Any
@@ -222,6 +223,7 @@ class ArtifactExportService:
         columns = sheet_cfg.get("columns") or []
         context = build_template_context(project_id=str((result_json.get("metadata") or {}).get("project_id") or ""), context=result_json.get("metadata") or {})
         tasks = self._normalize_wbs_hierarchy(result_json.get("tasks", []), project_name=context.get("project_name") or "프로젝트명")
+        self._apply_wbs_schedule_defaults(tasks, result_json)
 
         template_path = wbs_mapper.get("template_path")
         if template_path:
@@ -229,17 +231,44 @@ class ArtifactExportService:
             ws = wb[sheet_cfg.get("sheet_name", "WBS")]
             self._write_mapped_rows(ws, tasks, sheet_cfg, columns, context, self._wbs_source)
             self._write_wbs_display_ids(ws, tasks, sheet_cfg, columns)
+            self._write_wbs_required_schedule_fields(ws, tasks, sheet_cfg)
+            self._apply_wbs_visual_formatting(ws, tasks, sheet_cfg)
             return self._save_workbook(wb)
 
         wb = Workbook()
         ws = wb.active
         ws.title = sheet_cfg.get("sheet_name") or "WBS"
-        headers = [(column.get("header_names") or [column.get("field", "")])[0] for column in columns] or ["NO", "레벨", "ID", "WBS명", "산출물"]
+        headers = [(column.get("header_names") or [column.get("field", "")])[0] for column in columns] or [
+            "NO",
+            "레벨",
+            "ID",
+            "WBS명",
+            "시작예정일",
+            "종료예정일",
+            "작업자",
+            "산출물",
+        ]
         ws.append(headers)
         for row_number, task in enumerate(tasks, start=1):
             source = self._wbs_source(task)
-            ws.append([get_value(source, column.get("field"), context=context, row_number=row_number) for column in columns] if columns else [row_number, source.get("level", ""), source.get("id", ""), source.get("wbs_name", ""), source.get("deliverable", "")])
+            ws.append(
+                [get_value(source, column.get("field"), context=context, row_number=row_number) for column in columns]
+                if columns
+                else [
+                    row_number,
+                    source.get("level", ""),
+                    source.get("id", ""),
+                    source.get("wbs_name", ""),
+                    source.get("start_date", ""),
+                    source.get("end_date", ""),
+                    source.get("worker", ""),
+                    source.get("deliverable", ""),
+                ]
+            )
+        self._write_wbs_display_ids(ws, tasks, sheet_cfg, columns)
+        self._write_wbs_required_schedule_fields(ws, tasks, sheet_cfg)
         self._style_sheet(ws, widths=[10, 10, 18, 48, 34, 20, 20, 34, 20])
+        self._apply_wbs_visual_formatting(ws, tasks, sheet_cfg)
         return self._save_workbook(wb)
 
     def _build_unit_test_xlsx(self, result_json: dict[str, Any]) -> bytes:
@@ -564,7 +593,10 @@ class ArtifactExportService:
             except ValueError:
                 level = 0
             level = max(level, 0)
-            if level == 0:
+            explicit_id = str(metadata.get("wbs_id") or task.get("wbs_id") or task.get("id") or "").strip()
+            if explicit_id:
+                wbs_id = explicit_id
+            elif level == 0:
                 counters = [0]
                 wbs_id = "0"
                 if not str(task.get("name") or "").strip() or str(task.get("name")).strip() in {"프로젝트", "프로젝트명"}:
@@ -595,7 +627,192 @@ class ArtifactExportService:
             "id": task.get("wbs_id") or metadata.get("wbs_id") or task.get("task_id", ""),
             "wbs_name": task.get("name", ""),
             "deliverable": metadata.get("deliverable", ""),
+            "planned_start_date": (
+                task.get("planned_start_date")
+                or metadata.get("planned_start_date")
+                or metadata.get("start_date")
+                or ""
+            ),
+            "planned_end_date": (
+                task.get("planned_end_date")
+                or metadata.get("planned_end_date")
+                or metadata.get("end_date")
+                or ""
+            ),
+            "start_date": (
+                task.get("start_date")
+                or metadata.get("start_date")
+                or task.get("planned_start_date")
+                or metadata.get("planned_start_date")
+                or ""
+            ),
+            "end_date": (
+                task.get("end_date")
+                or metadata.get("end_date")
+                or task.get("planned_end_date")
+                or metadata.get("planned_end_date")
+                or ""
+            ),
         }
+
+    def _apply_wbs_schedule_defaults(
+        self,
+        tasks: list[dict[str, Any]],
+        result_json: dict[str, Any],
+    ) -> None:
+        """Backfill schedule columns so the Excel export never leaves them blank."""
+        artifact_metadata = result_json.get("metadata") or {}
+        today_text = date.today().strftime("%Y.%m.%d")
+        project_start_date = str(artifact_metadata.get("project_start_date") or today_text).strip()
+        project_end_date = str(artifact_metadata.get("project_end_date") or today_text).strip()
+
+        for task in tasks:
+            metadata = task.setdefault("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+                task["metadata"] = metadata
+            try:
+                level = int(str(metadata.get("level", task.get("level", "0"))).strip() or "0")
+            except ValueError:
+                level = 0
+
+            start_date_value = str(
+                task.get("start_date")
+                or metadata.get("start_date")
+                or task.get("planned_start_date")
+                or metadata.get("planned_start_date")
+                or project_start_date
+                or today_text
+            ).strip()
+            end_date_value = str(
+                task.get("end_date")
+                or metadata.get("end_date")
+                or task.get("planned_end_date")
+                or metadata.get("planned_end_date")
+                or project_end_date
+                or today_text
+            ).strip()
+
+            if start_date_value:
+                metadata["start_date"] = start_date_value
+                task["start_date"] = start_date_value
+                metadata.setdefault("planned_start_date", start_date_value)
+                task.setdefault("planned_start_date", start_date_value)
+            if end_date_value:
+                metadata["end_date"] = end_date_value
+                task["end_date"] = end_date_value
+                metadata.setdefault("planned_end_date", end_date_value)
+                task.setdefault("planned_end_date", end_date_value)
+
+            explicit_worker = str(metadata.get("worker") or task.get("worker") or "").strip()
+            if level > 1 or explicit_worker:
+                metadata["worker"] = explicit_worker or "작업자"
+                task["worker"] = metadata["worker"]
+            else:
+                metadata.pop("worker", None)
+                task.pop("worker", None)
+
+    def _write_wbs_required_schedule_fields(
+        self,
+        ws: Any,
+        tasks: list[dict[str, Any]],
+        data_mapper: dict[str, Any],
+    ) -> None:
+        """Force-fill WBS schedule/worker columns using the actual workbook."""
+        from openpyxl.cell.cell import MergedCell
+
+        header_row = int(data_mapper.get("header_row", 1))
+        start_row = int(data_mapper.get("start_row", 2))
+        headers = self._header_map(ws, header_row=header_row)
+        column_by_header = {
+            str(header).replace("\n", "").strip(): column
+            for header, column in headers.items()
+        }
+        fallback_columns = {
+            "시작예정일": 5,
+            "종료예정일": 6,
+            "작업자": 7,
+        }
+        forced_fields = [
+            ("시작예정일", "start_date|planned_start_date"),
+            ("종료예정일", "end_date|planned_end_date"),
+            ("작업자", "worker|assignee|owner"),
+        ]
+
+        for row_offset, task in enumerate(tasks or []):
+            source = self._wbs_source(task)
+            excel_row = start_row + row_offset
+            for header, field_expr in forced_fields:
+                column = column_by_header.get(header) or fallback_columns.get(header)
+                if column is None:
+                    continue
+                cell = ws.cell(row=excel_row, column=column)
+                if isinstance(cell, MergedCell):
+                    continue
+                cell.value = get_value(source, field_expr)
+
+    def _apply_wbs_visual_formatting(
+        self,
+        ws: Any,
+        tasks: list[dict[str, Any]],
+        data_mapper: dict[str, Any],
+    ) -> None:
+        """Apply WBS indentation and section highlight fills."""
+        from copy import copy
+        from openpyxl.cell.cell import MergedCell
+        from openpyxl.styles import Alignment, Color, PatternFill
+
+        header_row = int(data_mapper.get("header_row", 1))
+        start_row = int(data_mapper.get("start_row", 2))
+        headers = self._header_map(ws, header_row=header_row)
+        name_column = None
+        for candidate in ("WBS명", "wbs_name"):
+            if candidate in headers:
+                name_column = headers[candidate]
+                break
+        if name_column is None:
+            name_column = 4
+
+        orange_fill = PatternFill(fill_type="solid")
+        orange_fill.fgColor = Color(theme=5, tint=0.7999816888943144)
+        yellow_fill = PatternFill(fill_type="solid", fgColor="FFFFFF00")
+        orange_names = {"관리영역", "개발영역"}
+        yellow_names = {"요구사항정의", "분석", "설계", "구현", "테스트", "이행", "안정화"}
+
+        for row_offset, task in enumerate(tasks or []):
+            excel_row = start_row + row_offset
+            source = self._wbs_source(task)
+            level_raw = str(source.get("level") or task.get("level") or "0").strip()
+            try:
+                level = max(int(level_raw), 0)
+            except ValueError:
+                level = 0
+            indent_level = level if level <= 1 else level + 1
+
+            name_cell = ws.cell(row=excel_row, column=name_column)
+            if not isinstance(name_cell, MergedCell):
+                alignment = copy(name_cell.alignment)
+                alignment = alignment or Alignment()
+                alignment.indent = float(indent_level)
+                alignment.wrap_text = True
+                name_cell.alignment = alignment
+
+            row_name = str(source.get("wbs_name") or task.get("name") or "").strip()
+            if row_name in orange_names:
+                fill = orange_fill
+            elif row_name in yellow_names:
+                fill = yellow_fill
+            else:
+                fill = None
+
+            if fill is None:
+                continue
+
+            for column in range(1, min(12, ws.max_column) + 1):
+                cell = ws.cell(row=excel_row, column=column)
+                if isinstance(cell, MergedCell):
+                    continue
+                cell.fill = fill
 
     def _screen_source(self, screen: dict[str, Any]) -> dict[str, Any]:
         metadata = screen.get("metadata") or {}

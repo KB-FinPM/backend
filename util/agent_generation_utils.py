@@ -955,7 +955,9 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     else:
                         biz_name = compact_cells[0] or "공통"
                         top_bullet_items = _split_description_by_top_bullet(content_value)
-                        split_items = top_bullet_items or _split_two_column_requirement_items(content_value)
+                        split_items = top_bullet_items or [
+                            (biz_name, _clean_description_cell_text(content_value))
+                        ]
                     for req_name, detail in split_items:
                         if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
                             continue
@@ -1075,7 +1077,9 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                     raw_values = [cell for cell in raw_cells if _clean_cell_text(cell)]
                     content_value = raw_values[1] if len(raw_values) > 1 else compact_cells[1]
                     top_bullet_items = _split_description_by_top_bullet(content_value)
-                    split_items = top_bullet_items or _split_two_column_requirement_items(content_value)
+                    split_items = top_bullet_items or [
+                        (biz_name, _clean_description_cell_text(content_value))
+                    ]
                     for req_name, detail in split_items:
                         if not _looks_like_requirement_detail(f"{biz_name} {req_name} {detail}"):
                             continue

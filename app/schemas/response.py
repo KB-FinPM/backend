@@ -21,6 +21,14 @@ class ErrorResponse(BaseResponse):
 
 class GenerationResponse(BaseResponse):
     project_id: str
+    document_id: Optional[str] = Field(
+        None,
+        description="Generated document ID when the artifact export registers a document",
+    )
+    document_type: Optional[str] = Field(
+        None,
+        description="Generated document type when the artifact export registers a document",
+    )
     result: Any = Field(None, description="Generated artifact result JSON")
 
 
