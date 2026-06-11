@@ -25,6 +25,14 @@ class UploadRequest(BaseModel):
 class GenerationRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
     project_name: Optional[str] = Field(None, description="Project display name")
+    start_date: Optional[str] = Field(
+        None,
+        description="Optional project start date for WBS generation",
+    )
+    project_period: Optional[str] = Field(
+        None,
+        description="Optional project period for WBS generation",
+    )
     source_document_ids: list[str] = Field(
         default_factory=list,
         description="Source document IDs used to generate the target artifact",
