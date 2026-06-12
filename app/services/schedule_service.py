@@ -196,12 +196,10 @@ class ScheduleService:
                 project_id=project_id,
             )
             for artifact in artifacts:
-                if artifact.artifact_type != ArtifactType.WBS.value:
+                if str(artifact.artifact_type or "").upper() != ArtifactType.WBS.value:
                     continue
                 result_json = artifact.result_json or {}
-                artifact_tasks = result_json.get("tasks") or (
-                    result_json.get("wbs") or {}
-                ).get("tasks")
+                artifact_tasks = self._extract_generated_wbs_tasks(result_json)
                 if isinstance(artifact_tasks, list):
                     source_name = artifact.name or artifact.artifact_id
                     source_documents.append(source_name)
@@ -210,6 +208,9 @@ class ScheduleService:
                             **task,
                             "source_artifact_id": artifact.artifact_id,
                             "source_artifact_type": ArtifactType.WBS.value,
+                            "artifact_type": ArtifactType.WBS.value,
+                            "document_type": DocumentType.WBS.value,
+                            "source_type": "generated",
                             "source_document_name": source_name,
                         }
                         for task in artifact_tasks
@@ -227,7 +228,7 @@ class ScheduleService:
                 project_id=project_id,
             )
             for document in documents:
-                if document.document_type != DocumentType.WBS:
+                if str(document.document_type or "").upper() != DocumentType.WBS.value:
                     continue
                 source_documents.append(document.file_name)
                 chunks = await self.document_repository.list_chunks_by_document(
@@ -268,6 +269,35 @@ class ScheduleService:
             "rows": self._dedupe_wbs_rows(rows),
             "tasks": self._dedupe_wbs_rows(tasks),
         }
+
+    def _extract_generated_wbs_tasks(self, result_json: dict[str, Any]) -> list[dict[str, Any]]:
+        candidate_lists = [
+            result_json.get("tasks"),
+            result_json.get("rows"),
+            result_json.get("wbs_items"),
+            result_json.get("items"),
+            result_json.get("work_items"),
+        ]
+        for nested_key in ("wbs", "generated", "result", "data"):
+            nested = result_json.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
+            candidate_lists.extend(
+                [
+                    nested.get("tasks"),
+                    nested.get("rows"),
+                    nested.get("wbs_items"),
+                    nested.get("items"),
+                    nested.get("work_items"),
+                ]
+            )
+
+        for candidate in candidate_lists:
+            if isinstance(candidate, list) and any(
+                isinstance(item, dict) for item in candidate
+            ):
+                return [item for item in candidate if isinstance(item, dict)]
+        return []
 
     async def _persist_wbs_todos(
         self,

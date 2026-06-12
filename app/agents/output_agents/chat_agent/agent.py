@@ -227,7 +227,10 @@ class ChatOutputAgent:
         metadata = result.get("metadata") or {}
         required_context = str(metadata.get("required_context") or "").upper()
         missing_fields = result.get("missing_fields") or []
-        if required_context == "WBS" or "wbs" in missing_fields:
+        if result.get("assistant_message"):
+            message = str(result.get("assistant_message"))
+            upload_request = None
+        elif required_context == "WBS" or "wbs" in missing_fields:
             message = (
                 "현재 프로젝트에서 참고할 WBS 문서를 찾지 못했습니다. "
                 "WBS를 업로드하거나, 요구사항 명세서를 기준으로 WBS를 먼저 생성해 주세요."
