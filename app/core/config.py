@@ -43,9 +43,11 @@ class Settings(BaseSettings):
     S3_TEMPLATE_PREFIX: str = "storage/template_files"
     S3_GENERATED_PREFIX: str = "storage/generated_files"
 
-    BEDROCK_MODEL_ID: str = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
-    BEDROCK_INFERENCE_PROFILE_ID: str = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
+    BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-4-5"
+    BEDROCK_INFERENCE_PROFILE_ID: str = ""
+
     DATABASE_URL: str = "sqlite+aiosqlite:///./finpm.db"
+    DATABASE_SSL_VERIFY: bool = True
 
     VECTOR_STORE_TYPE: str = "pgvector"
 

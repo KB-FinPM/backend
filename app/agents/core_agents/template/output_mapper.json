@@ -382,31 +382,25 @@
           "default_column": 4
         },
         {
-          "field": "start_date|planned_start_date",
+          "field": "start_date",
           "header_names": [
-            "시작예정일",
-            "시작일"
+            "시작예정일"
           ],
-          "default_column": 5,
-          "optional": true
+          "default_column": 5
         },
         {
-          "field": "end_date|planned_end_date",
+          "field": "end_date",
           "header_names": [
-            "종료예정일",
-            "종료일"
+            "종료예정일"
           ],
-          "default_column": 6,
-          "optional": true
+          "default_column": 6
         },
         {
-          "field": "worker|assignee|owner",
+          "field": "worker",
           "header_names": [
-            "작업자",
-            "담당자"
+            "작업자"
           ],
-          "default_column": 7,
-          "optional": true
+          "default_column": 7
         },
         {
           "field": "deliverable",
@@ -414,15 +408,6 @@
             "산출물"
           ],
           "default_column": 8
-        },
-        {
-          "field": "status|work_status",
-          "header_names": [
-            "작업상태",
-            "상태"
-          ],
-          "default_column": 12,
-          "optional": true
         }
       ]
     },
