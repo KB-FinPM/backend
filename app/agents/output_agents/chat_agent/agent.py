@@ -244,7 +244,17 @@ class ChatOutputAgent:
             upload_request = {
                 "required": True,
                 "label": "회의록 업로드",
-                "acceptedTypes": [".docx", ".md", ".txt", ".csv", ".log"],
+                "acceptedTypes": [
+                    ".pdf",
+                    "application/pdf",
+                    ".docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ".md",
+                    ".txt",
+                    "text/plain",
+                    ".csv",
+                    ".log",
+                ],
                 "documentType": "MEETING_NOTES",
                 "originalMessage": "회의록 보고 TODO 정리해줘",
             }
@@ -291,7 +301,21 @@ class ChatOutputAgent:
         return {
             "required": True,
             "label": "구축요건 정의서 업로드",
-            "acceptedTypes": [".docx", ".md", ".txt", ".csv", ".json", ".log"],
+            "acceptedTypes": [
+                ".pdf",
+                "application/pdf",
+                ".docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".md",
+                ".txt",
+                "text/plain",
+                ".csv",
+                ".json",
+                "application/json",
+                ".log",
+            ],
             "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
             "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
         }

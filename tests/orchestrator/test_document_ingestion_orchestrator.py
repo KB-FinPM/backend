@@ -72,9 +72,9 @@ async def test_document_ingestion_orchestrator_keeps_unsupported_file_uploaded(
             document_id="DOC-001",
             project_id="PRJ-001",
             document_type=DocumentType.REQUIREMENT_SPEC,
-            file_name="requirements.pdf",
-            storage_path="s3://bucket/requirements.pdf",
-            file_bytes=b"%PDF",
+            file_name="requirements.exe",
+            storage_path="s3://bucket/requirements.exe",
+            file_bytes=b"binary",
         )
         chunks = await repository.list_chunks_by_document(
             project_id="PRJ-001",
