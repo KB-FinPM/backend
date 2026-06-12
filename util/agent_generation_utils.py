@@ -362,6 +362,65 @@ def _requirement_dedupe_key(atom: RequirementAtom) -> tuple[str, str, str, str, 
     )
 
 
+def _build_requirement_acceptance_criteria(atom: RequirementAtom) -> list[str]:
+    corpus = " ".join(
+        str(value or "").lower()
+        for value in (
+            atom.requirement_name,
+            atom.title,
+            atom.description,
+            atom.biz_requirement_name,
+            atom.domain,
+            atom.feature,
+        )
+    )
+    criteria: list[str] = []
+    if any(keyword in corpus for keyword in ("조회", "검색", "list", "find")):
+        criteria.extend(
+            [
+                "검색 조건을 입력하면 대상 데이터 목록을 조회할 수 있다.",
+                "조회 결과는 목록 또는 응답으로 정상 표시된다.",
+            ]
+        )
+    if any(keyword in corpus for keyword in ("등록", "저장", "추가", "create", "insert")):
+        criteria.extend(
+            [
+                "필수 항목 검증 후 등록 또는 저장 처리를 수행할 수 있다.",
+                "저장 완료 시 신규 데이터가 즉시 반영된다.",
+            ]
+        )
+    if any(keyword in corpus for keyword in ("수정", "변경", "update", "edit")):
+        criteria.extend(
+            [
+                "선택한 대상의 정보를 수정할 수 있다.",
+                "수정 결과는 목록 또는 상세 화면에 반영된다.",
+            ]
+        )
+    if any(keyword in corpus for keyword in ("삭제", "remove", "delete")):
+        criteria.extend(
+            [
+                "삭제 대상 선택 후 삭제 처리를 수행할 수 있다.",
+                "삭제 완료 시 대상 데이터가 목록에서 제거된다.",
+            ]
+        )
+    if any(keyword in corpus for keyword in ("승인", "반려", "결재", "approve", "reject")):
+        criteria.extend(
+            [
+                "승인 권한이 있는 사용자만 승인 또는 반려 처리를 할 수 있다.",
+                "승인 또는 반려 시 처리 결과와 사유가 저장된다.",
+            ]
+        )
+    if any(keyword in corpus for keyword in ("권한", "인증", "보안")):
+        criteria.append("권한이 없는 사용자는 해당 기능에 접근할 수 없다.")
+    if not criteria:
+        criteria.append(f"{atom.requirement_id} 요구사항이 충족된다.")
+
+    unique: list[str] = []
+    for item in criteria:
+        if item not in unique:
+            unique.append(item)
+    return unique[:4]
+
 
 def _normalize_header_name(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "").replace("\n", "").strip()).lower()
@@ -1276,7 +1335,7 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             atom.title = atom.requirement_name
         else:
             atom.title = _clean_requirement_name_text(atom.title)
-        atom.acceptance_criteria = [f"{atom.requirement_id} 요구사항이 충족된다."]
+        atom.acceptance_criteria = _build_requirement_acceptance_criteria(atom)
         atom.metadata = {
             **(atom.metadata or {}),
             'category': atom.category,

@@ -494,6 +494,15 @@ class ArtifactExportService:
 
     def _requirement_source(self, item: dict[str, Any]) -> dict[str, Any]:
         metadata = item.get("metadata") or {}
+        source_doc = (
+            metadata.get("source_doc")
+            or item.get("source_doc")
+            or metadata.get("source_file_name")
+            or item.get("source_file_name")
+            or item.get("source_document_id")
+            or metadata.get("source_document_id")
+            or ""
+        )
         return {
             **metadata,
             **item,
@@ -502,6 +511,7 @@ class ArtifactExportService:
             "requirement_id": item.get("requirement_id") or metadata.get("requirement_id", ""),
             "requirement_name": metadata.get("requirement_name") or item.get("title", ""),
             "description": metadata.get("description") or item.get("description", ""),
+            "source_doc": source_doc,
             "note": metadata.get("note") or "",
         }
 
