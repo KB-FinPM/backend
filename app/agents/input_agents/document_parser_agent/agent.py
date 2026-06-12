@@ -2,11 +2,15 @@
 # KO: 지원되는 업로드 파일을 구조화된 텍스트로 변환하는 Input Agent입니다.
 
 from io import BytesIO
-from pathlib import PurePath
 import re
 from datetime import date, datetime
 from typing import Any
 
+from app.core.supported_files import (
+    SUPPORTED_FILE_EXTENSIONS,
+    SUPPORTED_FILE_TYPE_MESSAGE,
+    resolve_supported_file_type,
+)
 from app.schemas.io_agent import (
     InputAgentRequest,
     InputAgentResponse,
@@ -18,16 +22,17 @@ from app.schemas.io_agent import (
 class DocumentParserAgent:
     """Converts external document bytes into structured text for ingestion."""
 
-    SUPPORTED_EXTENSIONS = {
-        ".txt",
-        ".md",
-        ".markdown",
-        ".csv",
-        ".json",
-        ".log",
-        ".docx",
-        ".xlsx",
-    }
+    SUPPORTED_EXTENSIONS = SUPPORTED_FILE_EXTENSIONS
+    PDF_PARSE_ERROR_MESSAGE = (
+        "PDF 문서를 읽는 중 오류가 발생했습니다. 암호화된 PDF이거나 "
+        "텍스트 추출이 불가능한 스캔본일 수 있습니다."
+    )
+    PDF_EMPTY_TEXT_MESSAGE = (
+        "PDF에서 텍스트를 추출하지 못했습니다. 텍스트가 없는 스캔본 PDF일 수 있습니다."
+    )
+    EMPTY_TEXT_MESSAGE = (
+        "문서에서 텍스트를 추출하지 못했습니다. 내용이 비어 있거나 텍스트 추출이 어려운 파일입니다."
+    )
     AGENT_NAME = "DocumentParserAgent"
 
     async def parse(self, request: InputAgentRequest) -> InputAgentResponse:
@@ -41,15 +46,19 @@ class DocumentParserAgent:
             )
 
         file_payload = request.files[0]
-        extension = PurePath(file_payload.file_name).suffix.lower()
-        if extension not in self.SUPPORTED_EXTENSIONS:
+        file_type = resolve_supported_file_type(
+            file_name=file_payload.file_name,
+            content_type=file_payload.content_type,
+        )
+        if file_type is None:
             return InputAgentResponse(
                 success=False,
                 agent_name=self.AGENT_NAME,
                 normalized_request_type=NormalizedRequestType.DOCUMENT_INGESTION,
-                error="unsupported file extension",
-                validation_errors=["unsupported file extension"],
+                error=SUPPORTED_FILE_TYPE_MESSAGE,
+                validation_errors=[SUPPORTED_FILE_TYPE_MESSAGE],
             )
+        extension = file_type.extension
 
         try:
             extra_metadata: dict[str, Any] = {}
@@ -64,22 +73,28 @@ class DocumentParserAgent:
             else:
                 text = self._extract_text(file_payload.file_bytes, extension)
         except Exception as exc:
+            error_message = self._parse_failure_message(extension, exc)
             return InputAgentResponse(
                 success=False,
                 agent_name=self.AGENT_NAME,
                 normalized_request_type=NormalizedRequestType.DOCUMENT_INGESTION,
-                error="document parse failed",
-                validation_errors=[f"document parse failed: {exc}"],
+                error=error_message,
+                validation_errors=[error_message],
             )
 
         text = self._remove_postgresql_unsafe_chars(text)
         if not text.strip():
+            error_message = (
+                self.PDF_EMPTY_TEXT_MESSAGE
+                if extension == ".pdf"
+                else self.EMPTY_TEXT_MESSAGE
+            )
             return InputAgentResponse(
                 success=False,
                 agent_name=self.AGENT_NAME,
                 normalized_request_type=NormalizedRequestType.DOCUMENT_INGESTION,
-                error="empty parsed text",
-                validation_errors=["empty parsed text"],
+                error=error_message,
+                validation_errors=[error_message],
             )
 
         metadata = {
@@ -103,9 +118,81 @@ class DocumentParserAgent:
         )
 
     def _extract_text(self, file_bytes: bytes, extension: str) -> str:
+        if extension == ".pdf":
+            return self._extract_pdf_text(file_bytes)
         if extension == ".docx":
             return self._extract_docx_text(file_bytes)
         return self._decode_text(file_bytes)
+
+    def _extract_pdf_text(self, file_bytes: bytes) -> str:
+        errors: list[Exception] = []
+        for module_name in ("pypdf", "PyPDF2"):
+            try:
+                module = __import__(module_name, fromlist=["PdfReader"])
+            except ImportError:
+                continue
+
+            try:
+                return self._extract_pdf_text_with_reader(
+                    module.PdfReader,
+                    file_bytes,
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        try:
+            import pdfplumber
+        except ImportError:
+            pdfplumber = None
+        if pdfplumber is not None:
+            try:
+                with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+                    return "\n".join(
+                        page.extract_text() or "" for page in pdf.pages
+                    )
+            except Exception as exc:
+                errors.append(exc)
+
+        try:
+            import fitz
+        except ImportError:
+            fitz = None
+        if fitz is not None:
+            try:
+                with fitz.open(stream=file_bytes, filetype="pdf") as document:
+                    return "\n".join(page.get_text("text") or "" for page in document)
+            except Exception as exc:
+                errors.append(exc)
+
+        if errors:
+            raise errors[-1]
+        raise RuntimeError("PDF parser library is not installed")
+
+    def _extract_pdf_text_with_reader(self, reader_factory: Any, file_bytes: bytes) -> str:
+        reader = reader_factory(BytesIO(file_bytes))
+        if getattr(reader, "is_encrypted", False):
+            decrypt = getattr(reader, "decrypt", None)
+            if not callable(decrypt):
+                raise ValueError("encrypted PDF")
+            try:
+                decrypt_result = decrypt("")
+            except Exception as exc:
+                raise ValueError("encrypted PDF") from exc
+            if decrypt_result in (0, False):
+                raise ValueError("encrypted PDF")
+
+        pages = getattr(reader, "pages", [])
+        return "\n".join(page.extract_text() or "" for page in pages)
+
+    def _parse_failure_message(self, extension: str, exc: Exception) -> str:
+        if extension == ".pdf":
+            if "parser library is not installed" in str(exc):
+                return (
+                    "PDF 문서를 읽기 위한 파서가 설치되어 있지 않습니다. "
+                    "관리자에게 pypdf 설치를 요청해주세요."
+                )
+            return self.PDF_PARSE_ERROR_MESSAGE
+        return f"문서를 읽는 중 오류가 발생했습니다. 파일 형식과 내용을 확인해주세요. ({type(exc).__name__})"
 
     def _extract_docx_text(self, file_bytes: bytes) -> str:
         try:

@@ -1,6 +1,10 @@
 # EN: Tests for API request schema behavior.
 # KO: API 요청 스키마 동작을 검증하는 테스트입니다.
 
+import pytest
+
+from pydantic import ValidationError
+
 from app.schemas.request import GenerationRequest, ScheduleTodoRequest
 
 
@@ -45,10 +49,16 @@ def test_generation_request_accepts_optional_wbs_schedule_fields() -> None:
     )
     legacy_request = GenerationRequest(project_id="PRJ-002")
 
-    assert request.start_date == "2024.01.10"
+    assert request.start_date == "2024-01-10"
     assert request.project_period == "6개월"
     assert legacy_request.start_date is None
     assert legacy_request.project_period is None
+
+
+@pytest.mark.parametrize("start_date", ["20266-01-01", "02026-01-01", "2024-02-30"])
+def test_generation_request_rejects_invalid_start_date(start_date) -> None:
+    with pytest.raises(ValidationError):
+        GenerationRequest(project_id="PRJ-001", start_date=start_date)
 
 
 def test_generation_request_accepts_requirement_generation_payload() -> None:

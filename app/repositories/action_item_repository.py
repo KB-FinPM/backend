@@ -1,7 +1,7 @@
 from datetime import date, datetime
 import re
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +38,76 @@ class ActionItemRepository:
             )
             self.session.add(action_item)
             saved_items.append(self._to_todo_dict(action_item))
+
+        await self.session.commit()
+        return saved_items
+
+    async def upsert_wbs_todos(
+        self,
+        *,
+        project_id: str,
+        todos: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        await ensure_project(self.session, project_id=project_id)
+        saved_items: list[dict[str, Any]] = []
+        for todo in todos:
+            title = str(todo.get("title") or "").strip()
+            if not title:
+                continue
+
+            action_item_id = self._stable_wbs_todo_id(
+                project_id=project_id,
+                todo=todo,
+            )
+            statement = select(ActionItemModel).where(
+                ActionItemModel.project_id == project_id,
+                ActionItemModel.action_item_id == action_item_id,
+            )
+            result = await self.session.execute(statement)
+            action_item = result.scalar_one_or_none()
+            if action_item is None:
+                action_item = ActionItemModel(
+                    action_item_id=action_item_id,
+                    project_id=project_id,
+                    title=title,
+                    source_type="WBS",
+                    status=str(todo.get("status") or "TODO"),
+                )
+                self.session.add(action_item)
+
+            action_item.title = title
+            action_item.description = todo.get("description")
+            action_item.owner = todo.get("assignee")
+            due_date = todo.get("due_date") or todo.get("planned_end_date")
+            action_item.due_date = self._parse_iso_date(due_date)
+            action_item.due_date_text = due_date
+            action_item.related_document = (
+                todo.get("related_document")
+                or todo.get("related_artifact")
+                or "WBS"
+            )
+            action_item.source_type = "WBS"
+            action_item.source_document_id = todo.get("source_document_id")
+            if action_item.status != "DONE":
+                action_item.status = str(todo.get("status") or "TODO")
+            action_item.updated_at = datetime.utcnow()
+
+            saved_items.append(
+                {
+                    **todo,
+                    **self._to_todo_dict(action_item),
+                    "related_artifact": todo.get("related_artifact") or "WBS",
+                    "planned_start_date": todo.get("planned_start_date"),
+                    "planned_end_date": todo.get("planned_end_date"),
+                    "assignee_display": todo.get("assignee_display"),
+                    "status_display": (
+                        "완료"
+                        if action_item.status == "DONE"
+                        else todo.get("status_display")
+                    ),
+                    "metadata": todo.get("metadata") or {},
+                }
+            )
 
         await self.session.commit()
         return saved_items
@@ -128,6 +198,26 @@ class ActionItemRepository:
     def _new_todo_id(self) -> str:
         return f"TODO-{uuid4().hex[:12].upper()}"
 
+    def _stable_wbs_todo_id(
+        self,
+        *,
+        project_id: str,
+        todo: dict[str, Any],
+    ) -> str:
+        identity = "|".join(
+            str(value or "")
+            for value in [
+                project_id,
+                todo.get("source_document_id"),
+                todo.get("source_document_name"),
+                todo.get("wbs_id"),
+                todo.get("row_number"),
+                todo.get("todo_id"),
+                todo.get("title"),
+            ]
+        )
+        return f"TODO-WBS-{uuid5(NAMESPACE_URL, identity).hex[:12].upper()}"
+
     def _parse_iso_date(self, value: Any) -> date | None:
         if not value:
             return None
@@ -137,7 +227,28 @@ class ActionItemRepository:
             return None
 
     def _normalize_text(self, value: str) -> str:
-        return "".join(str(value).lower().split())
+        text = str(value or "").lower()
+        for token in (
+            "완료했습니다",
+            "완료했어",
+            "완료",
+            "끝났어",
+            "끝냈어",
+            "끝",
+            "처리했어",
+            "처리",
+            "했습니다",
+            "했어",
+            "done",
+            "complete",
+            "todo",
+            "업무",
+        ):
+            text = text.replace(token, " ")
+        compact = re.sub(r"[^0-9a-z가-힣]+", "", text)
+        for token in ("그리고", "및", "and", "와", "과"):
+            compact = compact.replace(token, "")
+        return compact
 
     def _match_score(self, normalized_query: str, title: str) -> int:
         normalized_title = self._normalize_text(title)
@@ -146,8 +257,8 @@ class ActionItemRepository:
         if normalized_title in normalized_query or normalized_query in normalized_title:
             return len(normalized_title)
 
-        query_text = str(normalized_query).replace("완료", " ")
-        query_tokens = {token for token in query_text.split() if token}
+        query_text = self._normalize_text(normalized_query)
+        query_tokens = {token for token in re.split(r"[^0-9a-z가-힣]+", query_text) if token}
         title_tokens = {token for token in title.lower().split() if token}
         if not query_tokens or not title_tokens:
             compact_title_tokens = [

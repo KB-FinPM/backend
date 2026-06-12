@@ -1,9 +1,11 @@
 # EN: Request schemas for upload and artifact generation APIs.
 # KO: 업로드 및 산출물 생성 API 요청 스키마입니다.
 
+from datetime import date
+import re
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.artifact import (
     ArtifactType,
@@ -66,6 +68,27 @@ class GenerationRequest(BaseModel):
         default_factory=lambda: ["project:read"],
         description="Permission scope used for project-scoped retrieval",
     )
+
+    @field_validator("start_date")
+    @classmethod
+    def validate_start_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+
+        match = re.fullmatch(r"(\d{4})[-./](\d{2})[-./](\d{2})", text)
+        if not match:
+            raise ValueError("프로젝트 시작일은 YYYY-MM-DD 형식으로 입력해주세요.")
+
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError as exc:
+            raise ValueError(
+                "프로젝트 시작일은 YYYY-MM-DD 형식으로 입력해주세요."
+            ) from exc
 
     @model_validator(mode="after")
     def sync_document_id_aliases(self) -> "GenerationRequest":

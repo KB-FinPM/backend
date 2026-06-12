@@ -212,7 +212,7 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
                 "target_artifact_type": "REQUIREMENT_SPEC",
                 "query": "Create a WBS",
                 "permission_scope": ["project:read", "artifact:generate"],
-                "start_date": "2024.01.10",
+                "start_date": "2024-01-10",
                 "project_period": "6개월",
             },
         )
@@ -222,7 +222,7 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
     assert response.status_code == 200
     assert stub_generation_service.received_request is not None
     assert stub_generation_service.received_request.target_artifact_type == "WBS"
-    assert stub_generation_service.received_request.start_date == "2024.01.10"
+    assert stub_generation_service.received_request.start_date == "2024-01-10"
     assert stub_generation_service.received_request.project_period == "6개월"
     assert stub_input_orchestrator.received_project_id == "PRJ-001"
     assert stub_input_orchestrator.received_permission_scope == [
@@ -241,10 +241,10 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
     )
     assert stub_input_orchestrator.received_context["target_artifact_type"] == "WBS"
     assert stub_input_orchestrator.received_context["query"] == "Create a WBS"
-    assert stub_input_orchestrator.received_context["start_date"] == "2024.01.10"
+    assert stub_input_orchestrator.received_context["start_date"] == "2024-01-10"
     assert stub_input_orchestrator.received_context["project_period"] == "6개월"
     assert stub_input_orchestrator.received_raw_payload is not None
-    assert stub_input_orchestrator.received_raw_payload["start_date"] == "2024.01.10"
+    assert stub_input_orchestrator.received_raw_payload["start_date"] == "2024-01-10"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
 
 
