@@ -46,7 +46,7 @@ jobs:
             pip install -r requirements.txt || exit 1
             
             # Stop existing FastAPI process
-            pkill -f "uvicorn\|gunicorn" || true
+            pkill -f "uvicorn|gunicorn" || true
             
             # Start FastAPI
             nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &

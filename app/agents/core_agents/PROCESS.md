@@ -150,11 +150,11 @@ WBS -> WBS.xlsx
 SCREEN_DESIGN -> 화면설계서.pptx
 ```
 
-요구사항명세서는 WBS와 화면설계서의 선행 문서가 되어야 하므로, export 후 `documents`에도 `DocumentType.REQUIREMENT_SPEC`으로 등록합니다. 따라서 WBS와 화면설계서는 `/generate/requirement` 응답의 `result.exported_document.document_id`를 `source_document_ids`에 넣어 호출합니다.
+요구사항명세서는 WBS와 화면설계서의 선행 문서가 되어야 하므로, export 후 `documents`에도 `DocumentType.REQUIREMENT_SPEC`으로 등록합니다. 따라서 WBS와 화면설계서는 `/api/generate/requirement` 응답의 `result.exported_document.document_id`를 `source_document_ids`에 넣어 호출합니다.
 
 ## S3 템플릿 기반 산출물 생성
 
-1. `/generate/requirement`, `/generate/wbs`, `/generate/screen-design` 호출이 성공하면 Agent 결과 JSON을 생성합니다.
+1. `/api/generate/requirement`, `/api/generate/wbs`, `/api/generate/screen-design` 호출이 성공하면 Agent 결과 JSON을 생성합니다.
 2. `output_mapper.json`을 로딩합니다. S3 모드에서는 `S3_TEMPLATE_PREFIX/output_mapper.json`을 우선 사용합니다.
 3. 산출물 유형별 템플릿을 S3에서 다운로드합니다.
    - 요구사항명세서: `S3_TEMPLATE_PREFIX/탬플릿_요구사항명세서.xlsx`
@@ -164,7 +164,7 @@ SCREEN_DESIGN -> 화면설계서.pptx
 5. 완성된 파일을 `S3_GENERATED_PREFIX/{project_id}/{artifact_type}/{artifact_id}/` 아래 업로드합니다.
 
 ## Requirement extraction process parity
-1. `/generate/requirement` 호출 시 선택된 `source_document_ids`의 chunk 전체를 조회합니다.
+1. `/api/generate/requirement` 호출 시 선택된 `source_document_ids`의 chunk 전체를 조회합니다.
 2. Core Agent 내부 전처리로 pipe table 행과 section title을 정규화합니다.
 3. 표 기반 요구사항이 있으면 LLM을 거치지 않고 행 단위로 atom을 생성합니다.
 4. 표 기반 요구사항이 없으면 각 chunk를 기존 sample_0605의 extraction prompt 형식으로 LLM에 전달합니다.

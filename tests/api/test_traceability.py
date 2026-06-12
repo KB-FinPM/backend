@@ -60,7 +60,7 @@ def test_create_artifact_link_uses_path_project_id(client: TestClient) -> None:
 
     try:
         response = client.post(
-            "/projects/PRJ-001/artifact-links",
+            "/api/projects/PRJ-001/artifact-links",
             json={
                 "project_id": "WRONG",
                 "source_artifact_id": "ART-REQ-001",
@@ -82,7 +82,7 @@ def test_list_project_artifact_links(client: TestClient) -> None:
     client.app.dependency_overrides[get_traceability_service] = StubTraceabilityService
 
     try:
-        response = client.get("/projects/PRJ-001/artifact-links")
+        response = client.get("/api/projects/PRJ-001/artifact-links")
     finally:
         client.app.dependency_overrides.clear()
 
@@ -94,7 +94,7 @@ def test_list_artifact_links(client: TestClient) -> None:
     client.app.dependency_overrides[get_traceability_service] = StubTraceabilityService
 
     try:
-        response = client.get("/projects/PRJ-001/artifacts/ART-REQ-001/links")
+        response = client.get("/api/projects/PRJ-001/artifacts/ART-REQ-001/links")
     finally:
         client.app.dependency_overrides.clear()
 

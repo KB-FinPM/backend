@@ -188,7 +188,7 @@ def test_user_flow_uploads_rfp_then_receives_document_id(
 
     try:
         response = client.post(
-            "/upload",
+            "/api/upload",
             data={
                 "project_id": PROJECT_ID,
                 "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",

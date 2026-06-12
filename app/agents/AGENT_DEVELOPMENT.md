@@ -392,7 +392,7 @@ until the schedule-management spec is clarified.
 The backend route is already wired:
 
 ```text
-POST /schedule/todos
+POST /api/schedule/todos
 ```
 
 This route passes through `InputOrchestrator(MEETING_NOTES)`,
