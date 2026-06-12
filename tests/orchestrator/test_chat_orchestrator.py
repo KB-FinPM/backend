@@ -3,8 +3,19 @@
 import pytest
 
 from app.orchestrator.chat_orchestrator import ChatOrchestrator
-from app.schemas.artifact import DocumentMetadata, DocumentType
-from app.schemas.chat import ChatMessageRequest
+from app.schemas.artifact import (
+    ArtifactMetadata,
+    ArtifactType,
+    DocumentMetadata,
+    DocumentType,
+)
+from app.schemas.chat import (
+    ChatActionStatus,
+    ChatActionType,
+    ChatMessageRequest,
+    ChatRole,
+)
+from app.schemas.io_agent import InputAgentResponse, NormalizedRequestType
 from app.schemas.response import GenerationResponse
 from app.services.generation_service import GenerationSourceValidationResult
 
@@ -34,6 +45,16 @@ class StubConversationRepository:
         message = ChatMessageMetadata(**kwargs)
         self.messages.append(message)
         return message
+
+    async def get_latest_message_by_role(self, *, project_id, conversation_id, role):
+        for message in reversed(self.messages):
+            if (
+                message.project_id == project_id
+                and message.conversation_id == conversation_id
+                and message.role == role
+            ):
+                return message
+        return None
 
     async def create_action(self, **kwargs):
         from app.schemas.chat import ChatActionMetadata, ChatActionStatus
@@ -90,6 +111,17 @@ class StubDocumentService:
             storage_path="s3://bucket/requirement.txt",
         )
 
+    async def list_documents(self, *, project_id):
+        return [
+            DocumentMetadata(
+                document_id="DOC-REQ-001",
+                project_id=project_id,
+                document_type=DocumentType.REQUIREMENT_SPEC,
+                file_name="requirement.txt",
+                storage_path="s3://bucket/requirement.txt",
+            )
+        ]
+
 
 class StubGenerationService:
     def __init__(self) -> None:
@@ -140,6 +172,48 @@ class StubScheduleService:
     pass
 
 
+class StubArtifactService:
+    async def list_artifacts(self, *, project_id):
+        return [
+            ArtifactMetadata(
+                artifact_id="ART-WBS-001",
+                project_id=project_id,
+                artifact_type=ArtifactType.WBS,
+                name="프로젝트 WBS",
+                source_document_ids=["DOC-REQ-001"],
+            )
+        ]
+
+
+class StubActionItemRepository:
+    async def list_project_todos(self, *, project_id):
+        return [
+            {
+                "todo_id": "TODO-001",
+                "title": "설계 및 테스트",
+                "status": "TODO",
+            }
+        ]
+
+
+class StubScheduleServiceWithTodos:
+    def __init__(self) -> None:
+        self.action_item_repository = StubActionItemRepository()
+
+
+class SpyInputNormalizer:
+    def __init__(self) -> None:
+        self.received_request = None
+
+    async def normalize(self, request):
+        self.received_request = request
+        return InputAgentResponse(
+            agent_name="SpyInputNormalizer",
+            normalized_request_type=NormalizedRequestType.CHAT_MESSAGE,
+            structured_context={"intent": "GENERAL_QA"},
+        )
+
+
 @pytest.mark.anyio
 async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> None:
     repository = StubConversationRepository()
@@ -175,3 +249,66 @@ async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> No
     assert second_response.state == "COMPLETED"
     assert generation_service.received_request is not None
     assert generation_service.received_request.target_artifact_type == "WBS"
+
+
+@pytest.mark.anyio
+async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
+    repository = StubConversationRepository()
+    conversation = await repository.create_conversation(
+        conversation_id="CONV-001",
+        project_id="PRJ-001",
+        user_id="USER-001",
+    )
+    pending_action = await repository.create_action(
+        action_id="ACT-001",
+        conversation_id=conversation.conversation_id,
+        project_id=conversation.project_id,
+        action_type=ChatActionType.GENERATE_WBS,
+        status=ChatActionStatus.WAITING_CONFIRMATION,
+        payload={"target_artifact_type": "WBS"},
+    )
+    await repository.add_message(
+        message_id="MSG-AST-001",
+        conversation_id=conversation.conversation_id,
+        project_id=conversation.project_id,
+        role=ChatRole.ASSISTANT,
+        content="이번 주 TODO 1건을 찾았습니다.",
+        structured_payload={
+            "state": "COMPLETED",
+            "display_type": "schedule_todos",
+            "result": {
+                "action": "SHOW_THIS_WEEK_TODOS",
+                "status": "SUCCESS",
+                "metadata": {"todo_count": 1},
+            },
+        },
+    )
+    input_normalizer = SpyInputNormalizer()
+    orchestrator = ChatOrchestrator(
+        conversation_repository=repository,
+        generation_service=StubGenerationService(),
+        schedule_service=StubScheduleServiceWithTodos(),
+        document_service=StubDocumentService(),
+        artifact_service=StubArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+        input_normalizer=input_normalizer,
+    )
+
+    await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            conversation_id=conversation.conversation_id,
+            user_id="USER-001",
+            message="WBS 기준으로 할 일 알려줘",
+        )
+    )
+
+    context = input_normalizer.received_request.context
+    assert context["current_project_id"] == "PRJ-001"
+    assert context["uploaded_documents"][0]["document_id"] == "DOC-REQ-001"
+    assert context["generated_artifacts"][0]["artifact_type"] == "WBS"
+    assert context["recent_todos"][0]["title"] == "설계 및 테스트"
+    assert context["pending_action"]["action_id"] == pending_action.action_id
+    assert context["last_agent_response_summary"]["action"] == "SHOW_THIS_WEEK_TODOS"
+    assert context["last_agent_response_summary"]["todo_count"] == 1

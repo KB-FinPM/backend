@@ -49,6 +49,8 @@ class ChatOutputAgent:
                 "message": "요청을 취소했습니다.",
                 "suggested_actions": [],
             }
+        if event == "CLARIFICATION_REQUIRED":
+            return self._clarification_payload(result_json)
         if event == "REQUIRED_INFO":
             return self._required_info_payload(result_json)
         if event == "GENERAL_QA":
@@ -182,6 +184,19 @@ class ChatOutputAgent:
         return {
             "state": ChatState.IDLE.value,
             "message": f"현재 {verb} 작업이 없습니다. 진행할 작업을 다시 입력해 주세요.",
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
+
+    def _clarification_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "state": ChatState.WAITING_REQUIRED_INFO.value,
+            "message": result_json.get("question")
+            or "어떤 문서나 업무를 기준으로 처리할까요?",
+            "result": {
+                "semantic_slots": result_json.get("semantic_slots") or {},
+                "clarification_required": True,
+            },
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
