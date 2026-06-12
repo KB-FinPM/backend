@@ -220,6 +220,27 @@ async def test_schedule_management_agent_requests_wbs_when_this_week_needs_wbs()
 
 
 @pytest.mark.anyio
+async def test_schedule_management_agent_requests_wbs_before_project_date_when_wbs_missing() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "SHOW_THIS_WEEK_TODOS",
+                "current_date": "2026-06-10",
+                "normalized_input": {"needs_context": ["WBS", "TODO_LIST"]},
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "REQUIRED_INFO"
+    assert response.result["missing_fields"] == ["wbs"]
+    assert response.result["metadata"]["required_context"] == "WBS"
+
+
+@pytest.mark.anyio
 async def test_schedule_management_agent_includes_wbs_tasks_for_this_week() -> None:
     agent = ScheduleManagementAgent()
 
@@ -248,6 +269,49 @@ async def test_schedule_management_agent_includes_wbs_tasks_for_this_week() -> N
     assert response.result["status"] == "SUCCESS"
     assert response.result["todos"][0]["todo_id"] == "WBS-001"
     assert response.result["todos"][0]["source_type"] == "WBS"
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_infers_week_context_from_wbs_task_dates() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "SHOW_THIS_WEEK_TODOS",
+                "current_date": "2026-06-10",
+                "normalized_input": {"needs_context": ["WBS", "TODO_LIST"]},
+                "wbs_tasks": [
+                    {
+                        "task_id": "WBS-001",
+                        "title": "설계 및 테스트",
+                        "start_date": "2026-06-08",
+                        "end_date": "2026-06-14",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "SUCCESS"
+    assert response.result["week_context"]["project_start_date"] == "2026-06-08"
+    assert response.result["week_context"]["week_start_date"] == "2026-06-08"
+    assert response.result["week_context"]["week_end_date"] == "2026-06-14"
+    assert response.result["todos"][0]["title"] == "설계 및 테스트"
+
+
+def test_schedule_management_agent_period_bounds_fallback_when_week_dates_missing() -> None:
+    agent = ScheduleManagementAgent()
+
+    week_start, week_end = agent._period_bounds(
+        {"current_date": "2026-06-10", "current_week": 2},
+        "THIS_WEEK",
+    )
+
+    assert week_start.isoformat() == "2026-06-08"
+    assert week_end.isoformat() == "2026-06-14"
 
 
 @pytest.mark.anyio
