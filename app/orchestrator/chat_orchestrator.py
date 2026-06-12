@@ -77,6 +77,10 @@ class ChatOrchestrator:
             },
         )
 
+        input_context = await self._build_input_context(
+            conversation=conversation,
+            request=request,
+        )
         input_response = await self.input_normalizer.normalize(
             InputAgentRequest(
                 project_id=request.project_id,
@@ -89,7 +93,7 @@ class ChatOrchestrator:
                     if request.action
                     else None,
                 },
-                context=request.context,
+                context=input_context,
             )
         )
         if not input_response.success:
@@ -117,6 +121,17 @@ class ChatOrchestrator:
                 conversation=conversation,
                 project_id=request.project_id,
                 action_id=structured_context.get("action_id"),
+            )
+
+        if intent == "CLARIFICATION_REQUIRED":
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                result_json={
+                    "event": "CLARIFICATION_REQUIRED",
+                    "question": structured_context.get("clarification_question"),
+                    "semantic_slots": structured_context.get("semantic_slots") or {},
+                },
             )
 
         if intent == "GENERATE_ARTIFACT":
@@ -203,6 +218,77 @@ class ChatOrchestrator:
             user_id=request.user_id,
             title=request.message[:80],
         )
+
+    async def _build_input_context(
+        self,
+        *,
+        conversation: ConversationMetadata,
+        request: ChatMessageRequest,
+    ) -> dict[str, Any]:
+        context = dict(request.context or {})
+        context.setdefault("current_project_id", request.project_id)
+        context.setdefault("project_id", request.project_id)
+
+        if "pending_action" not in context:
+            pending_action = await self.conversation_repository.get_latest_waiting_action(
+                project_id=request.project_id,
+                conversation_id=conversation.conversation_id,
+            )
+            if pending_action is not None:
+                context["pending_action"] = pending_action.model_dump(mode="json")
+
+        if "uploaded_documents" not in context and hasattr(
+            self.document_service,
+            "list_documents",
+        ):
+            try:
+                documents = await self.document_service.list_documents(
+                    project_id=request.project_id,
+                )
+            except Exception:
+                documents = []
+            if documents:
+                context["uploaded_documents"] = [
+                    document.model_dump(mode="json")
+                    if hasattr(document, "model_dump")
+                    else document
+                    for document in documents
+                ]
+
+        if "generated_artifacts" not in context and hasattr(
+            self.artifact_service,
+            "list_artifacts",
+        ):
+            try:
+                artifacts = await self.artifact_service.list_artifacts(
+                    project_id=request.project_id,
+                )
+            except Exception:
+                artifacts = []
+            if artifacts:
+                context["generated_artifacts"] = [
+                    artifact.model_dump(mode="json")
+                    if hasattr(artifact, "model_dump")
+                    else artifact
+                    for artifact in artifacts
+                ]
+
+        action_item_repository = getattr(
+            self.schedule_service,
+            "action_item_repository",
+            None,
+        )
+        if "recent_todos" not in context and action_item_repository is not None:
+            try:
+                todos = await action_item_repository.list_project_todos(
+                    project_id=request.project_id,
+                )
+            except Exception:
+                todos = []
+            if todos:
+                context["recent_todos"] = todos[:10]
+
+        return context
 
     async def _prepare_generation_action(
         self,

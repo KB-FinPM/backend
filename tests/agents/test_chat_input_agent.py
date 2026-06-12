@@ -356,3 +356,164 @@ async def test_chat_input_agent_requests_meeting_notes_when_only_asked_to_extrac
     assert response.success is True
     assert response.structured_context["intent"] == "EXTRACT_ACTION_ITEMS"
     assert response.structured_context["missing_slots"] == ["meeting_notes"]
+
+
+def test_chat_input_agent_normalizes_typos_and_extracts_semantic_slots() -> None:
+    agent = ChatInputAgent()
+
+    normalized = agent.normalize_text("구축요건저의서로 요구사항명새서 뽀바줘")
+    slots = agent.extract_semantic_slots(
+        "구축요건저의서로 요구사항명새서 뽀바줘",
+        {
+            "uploaded_documents": [
+                {
+                    "document_id": "DOC-RFP-001",
+                    "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+                    "file_name": "RFP.PDF",
+                }
+            ]
+        },
+    )
+
+    assert "구축요건정의서" in normalized
+    assert "요구사항명세서" in normalized
+    assert "뽑아줘" in normalized
+    assert slots["source_type"] == "CONSTRUCTION_REQUIREMENT_DEFINITION"
+    assert slots["target_type"] == "REQUIREMENT_SPEC"
+    assert slots["action"] == "GENERATE"
+    assert slots["artifact_type"] == "REQUIREMENT_SPEC"
+    assert slots["context_snapshot"]["uploaded_document_types"] == [
+        "CONSTRUCTION_REQUIREMENT_DEFINITION"
+    ]
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_routes_meeting_todo_semantics_before_weekly_schedule() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "TODO 필요한데 이번주 회의록 기반으로 알려줘."},
+            context={
+                "uploaded_documents": [
+                    {
+                        "document_id": "DOC-MEETING-001",
+                        "document_type": "MEETING_NOTES",
+                        "file_name": "weekly-meeting.pdf",
+                    }
+                ]
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["intent"] == "EXTRACT_ACTION_ITEMS"
+    assert response.structured_context["schedule_action"] == "EXTRACT_TODOS_FROM_MEETING"
+    assert response.structured_context["source_document_ids"] == ["DOC-MEETING-001"]
+    assert response.structured_context["missing_slots"] == []
+    assert response.structured_context["semantic_slots"]["source_type"] == "MEETING_NOTES"
+    assert response.structured_context["semantic_slots"]["target_type"] == "TODO"
+    assert response.structured_context["semantic_slots"]["time_range"] == "THIS_WEEK"
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_uses_generated_wbs_context_for_schedule_query() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "WBS 기준으로 할 일 알려줘"},
+            context={
+                "generated_artifacts": [
+                    {
+                        "artifact_id": "ART-WBS-001",
+                        "artifact_type": "WBS",
+                        "name": "프로젝트 WBS",
+                    }
+                ]
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["intent"] == "SCHEDULE_QUERY"
+    assert response.structured_context["schedule_action"] == "ASSISTANT_BRIEFING"
+    assert response.structured_context["semantic_slots"]["source_type"] == "WBS"
+    assert response.structured_context["semantic_slots"]["target_type"] == "TODO"
+    assert response.structured_context["context_snapshot"]["generated_artifact_types"] == [
+        "WBS"
+    ]
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_matches_spacing_free_todo_completion() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "설계및테스트 완료"},
+            context={
+                "recent_todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "설계 및 테스트",
+                        "status": "TODO",
+                    }
+                ]
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["intent"] == "COMPLETE_TODO"
+    assert response.structured_context["todo_title_query"] == "설계및테스트"
+    assert response.structured_context["semantic_slots"]["action"] == "COMPLETE"
+    assert response.structured_context["context_snapshot"]["recent_todo_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_preserves_ambiguous_todo_completion_context() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "완료했어"},
+            context={
+                "recent_todos": [
+                    {"todo_id": "TODO-001", "title": "요구사항 검토"},
+                    {"todo_id": "TODO-002", "title": "화면설계서 작성"},
+                ]
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["intent"] == "COMPLETE_TODO"
+    assert response.structured_context["todo_title_query"] == ""
+    assert response.structured_context["context_snapshot"]["recent_todo_count"] == 2
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_asks_clarification_for_low_confidence_command() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "알려줘"},
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["intent"] == "CLARIFICATION_REQUIRED"
+    assert response.structured_context["clarification_required"] is True
+    assert response.structured_context["semantic_slots"]["clarification_required"] is True
