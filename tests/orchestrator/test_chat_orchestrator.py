@@ -13,6 +13,7 @@ from app.schemas.chat import (
     ChatActionStatus,
     ChatActionType,
     ChatMessageRequest,
+    ChatRole,
 )
 from app.schemas.io_agent import InputAgentResponse, NormalizedRequestType
 from app.schemas.response import GenerationResponse
@@ -44,6 +45,16 @@ class StubConversationRepository:
         message = ChatMessageMetadata(**kwargs)
         self.messages.append(message)
         return message
+
+    async def get_latest_message_by_role(self, *, project_id, conversation_id, role):
+        for message in reversed(self.messages):
+            if (
+                message.project_id == project_id
+                and message.conversation_id == conversation_id
+                and message.role == role
+            ):
+                return message
+        return None
 
     async def create_action(self, **kwargs):
         from app.schemas.chat import ChatActionMetadata, ChatActionStatus
@@ -256,6 +267,22 @@ async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
         status=ChatActionStatus.WAITING_CONFIRMATION,
         payload={"target_artifact_type": "WBS"},
     )
+    await repository.add_message(
+        message_id="MSG-AST-001",
+        conversation_id=conversation.conversation_id,
+        project_id=conversation.project_id,
+        role=ChatRole.ASSISTANT,
+        content="이번 주 TODO 1건을 찾았습니다.",
+        structured_payload={
+            "state": "COMPLETED",
+            "display_type": "schedule_todos",
+            "result": {
+                "action": "SHOW_THIS_WEEK_TODOS",
+                "status": "SUCCESS",
+                "metadata": {"todo_count": 1},
+            },
+        },
+    )
     input_normalizer = SpyInputNormalizer()
     orchestrator = ChatOrchestrator(
         conversation_repository=repository,
@@ -283,3 +310,5 @@ async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
     assert context["generated_artifacts"][0]["artifact_type"] == "WBS"
     assert context["recent_todos"][0]["title"] == "설계 및 테스트"
     assert context["pending_action"]["action_id"] == pending_action.action_id
+    assert context["last_agent_response_summary"]["action"] == "SHOW_THIS_WEEK_TODOS"
+    assert context["last_agent_response_summary"]["todo_count"] == 1

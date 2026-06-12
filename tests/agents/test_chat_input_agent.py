@@ -387,6 +387,42 @@ def test_chat_input_agent_normalizes_typos_and_extracts_semantic_slots() -> None
     ]
 
 
+def test_chat_input_agent_stays_semantic_parser_only() -> None:
+    agent = ChatInputAgent()
+
+    assert not any(
+        hasattr(agent, attribute)
+        for attribute in (
+            "generation_agent",
+            "generation_service",
+            "schedule_agent",
+            "schedule_service",
+            "validator",
+            "output_agent",
+            "output_formatter",
+        )
+    )
+
+
+def test_chat_input_agent_uses_last_agent_response_summary_as_context() -> None:
+    agent = ChatInputAgent()
+
+    slots = agent.extract_semantic_slots(
+        "방금 말한 TODO 완료",
+        {
+            "last_agent_response_summary": {
+                "action": "SHOW_THIS_WEEK_TODOS",
+                "todo_count": 1,
+            }
+        },
+    )
+
+    assert slots["source_type"] == "LAST_AGENT_RESPONSE"
+    assert slots["target_type"] == "TODO"
+    assert slots["action"] == "COMPLETE"
+    assert slots["context_snapshot"]["last_agent_response_summary"]["todo_count"] == 1
+
+
 @pytest.mark.anyio
 async def test_chat_input_agent_routes_meeting_todo_semantics_before_weekly_schedule() -> None:
     agent = ChatInputAgent()

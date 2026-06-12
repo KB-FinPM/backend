@@ -14,7 +14,12 @@ from app.schemas.io_agent import (
 
 
 class ChatInputAgent:
-    """Maps natural PM chat text to stable internal intents and slots."""
+    """Semantic parser for PM chat text.
+
+    This agent only returns normalized intent/slot data. It must not call
+    generation, schedule, validation, or output agents; orchestration and
+    downstream agent selection belong to the PM orchestrator.
+    """
 
     AGENT_NAME = "ChatInputAgent"
     GENERATION_TOKENS = (
@@ -231,7 +236,7 @@ class ChatInputAgent:
             }
 
         slots = self.extract_semantic_slots(message, request_context)
-        return self._route_semantic_slots(
+        return self._classify_semantic_intent(
             message=message,
             request_context=request_context,
             slots=slots,
@@ -355,7 +360,7 @@ class ChatInputAgent:
             "context_snapshot": context_snapshot,
         }
 
-    def _route_semantic_slots(
+    def _classify_semantic_intent(
         self,
         *,
         message: str,
@@ -574,6 +579,8 @@ class ChatInputAgent:
                 return "UPLOADED_DOCUMENT"
             if context_snapshot.get("generated_artifact_types"):
                 return "GENERATED_ARTIFACT"
+            if context_snapshot.get("last_agent_response_summary"):
+                return "LAST_AGENT_RESPONSE"
         return None
 
     def _detect_target_type(
@@ -748,6 +755,7 @@ class ChatInputAgent:
             or context_snapshot.get("generated_artifact_types")
             or context_snapshot.get("recent_todo_count")
             or context_snapshot.get("pending_action")
+            or context_snapshot.get("last_agent_response_summary")
         ):
             score += 0.05
         return min(score, 0.98)
@@ -801,6 +809,7 @@ class ChatInputAgent:
         )
         selected_document_ids = self._extract_source_document_ids(context)
         pending_action = context.get("pending_action")
+        last_agent_response_summary = context.get("last_agent_response_summary")
         return {
             "current_project_id": context.get("current_project_id")
             or context.get("project_id"),
@@ -822,6 +831,11 @@ class ChatInputAgent:
             ),
             "recent_todo_count": len(recent_todos),
             "pending_action": self._summarize_pending_action(pending_action),
+            "last_agent_response_summary": (
+                last_agent_response_summary
+                if isinstance(last_agent_response_summary, dict)
+                else None
+            ),
             "selected_document_ids": selected_document_ids,
         }
 
