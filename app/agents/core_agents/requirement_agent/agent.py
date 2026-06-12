@@ -38,6 +38,9 @@ EXTRACTION_SYSTEM_PROMPT = """
 - 표 형태 입력은 행 단위의 주요내용/상세를 각각 요구사항 후보로 분리한다.
 - 중복 요구사항은 최대한 만들지 않는다.
 - Biz요건명은 실제 요구사항명세서/WBS 그룹핑의 기준이 되므로 명확히 작성한다.
+- description은 원문을 그대로 줄이는 수준이 아니라 기능 목적, 처리 방식,
+  운영/제약 포인트를 포함해 조금 더 구체적으로 작성한다.
+- acceptance_criteria는 검증 가능한 문장으로 2~4개 작성한다.
 - 인프라 구축 프로젝트에서는 OCP, Kafka, EFK, CDC, API Gateway, Service Mesh, Monitoring, Logging, DB, 보안, 백업 등을 Biz요건명 후보로 본다.
 - 개발 프로젝트에서는 업무, 화면, 기능, 인터페이스, 데이터, 권한, 배치 등을 Biz요건명 후보로 본다.
 - 기능 구현과 직접 관련 있으면 기능요구사항으로 분류한다.
@@ -58,10 +61,39 @@ TABLE_EXTRACTION_SYSTEM_PROMPT = """
   {"category":"기능 | 비기능 | 인터페이스 | 데이터 | 정책 | 인프라 | 보안 | 운영","biz_requirement_id":"Biz요건ID 또는 빈 문자열","biz_requirement_name":"Biz요건명 또는 업무영역","requirement_name":"요구사항명","requirement_type":"기능요구사항 | 비기능요구사항","domain":"업무영역","feature":"기능명 또는 구축항목","description":"요구사항 설명","note":"검토의견 또는 비고","source_document_id":"문서ID","source_chunk_id":"chunkID"}
 ]
 규칙:
-- 표 후보에 없는 내용을 새로 만들지 않는다.
 - 원문 또는 후보에 있는 ID와 업무영역은 최대한 보존한다.
 - 중복 요구사항은 병합한다.
-- 각 description은 120자 이내로 요약한다.
+- 각 description은 표와 원문 맥락을 반영해 1~2문장으로 구체화한다.
+- acceptance_criteria는 실제 검증 가능한 문장으로 2~4개 작성한다.
+- JSON 외의 설명 문장은 절대 출력하지 않는다.
+""".strip()
+
+
+TABLE_REFINEMENT_SYSTEM_PROMPT = """
+너는 PM Agent의 구축요건정의서 행 단위 보정기다.
+입력으로 주어지는 후보 1건만 보고, 같은 의미를 유지한 채 요구사항명세서용 내용을 다듬어라.
+반드시 JSON 객체 1개만 반환한다.
+
+스키마:
+{
+  "category":"기능 | 비기능 | 인터페이스 | 데이터 | 정책 | 인프라 | 보안 | 운영",
+  "biz_requirement_id":"Biz요건ID 또는 빈 문자열",
+  "biz_requirement_name":"Biz요건명 또는 업무영역",
+  "requirement_name":"요구사항명",
+  "requirement_type":"기능요구사항 | 비기능요구사항",
+  "domain":"업무영역",
+  "feature":"기능명 또는 구축항목",
+  "description":"요구사항 설명",
+  "note":"검토의견 또는 비고",
+  "acceptance_criteria":["검증 가능한 문장"]
+}
+
+규칙:
+- 후보 1건의 범위만 유지하고 다른 행, 다른 화면, 문서 전체를 섞지 않는다.
+- description은 후보 내용을 바탕으로 목적/처리/제약을 1~2문장으로 구체화한다.
+- description 길이는 120자 이내로 유지한다.
+- requirement_name과 biz_requirement_name은 후보 값을 최대한 보존한다.
+- acceptance_criteria는 2~4개만 작성한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
 """.strip()
 
@@ -145,21 +177,67 @@ class RequirementAgent:
         if table_atoms:
             logger.info(
                 f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} table path -> LLM | "
-                f"project_id={request.project_id}"
+                f"project_id={request.project_id} | candidate_count={len(table_atoms)}"
             )
-            prompt = self._build_table_prompt(request, documents, table_atoms)
-            llm_result = await orchestrator.invoke_agent_llm(
-                system_prompt=TABLE_EXTRACTION_SYSTEM_PROMPT,
-                user_prompt=prompt,
-                max_tokens=6000,
-            )
-            chunk_items = parse_json_array(llm_result)
-            if not chunk_items:
+            chunk_items = []
+            for index, atom in enumerate(table_atoms, start=1):
+                prompt = self._build_table_item_prompt(request, atom, index, len(table_atoms))
+                llm_result = await orchestrator.invoke_agent_llm(
+                    system_prompt=TABLE_REFINEMENT_SYSTEM_PROMPT,
+                    user_prompt=prompt,
+                    max_tokens=1800,
+                )
                 parsed_obj = parse_json_object(llm_result)
-                if parsed_obj and isinstance(parsed_obj.get("requirements"), list):
-                    chunk_items = [
-                        item for item in parsed_obj["requirements"] if isinstance(item, dict)
-                    ]
+                parsed_items = parse_json_array(llm_result)
+                parsed_item: dict[str, Any] | None = None
+                if parsed_obj:
+                    parsed_item = parsed_obj
+                elif parsed_items:
+                    parsed_item = parsed_items[0]
+
+                if parsed_item is None:
+                    chunk_items.append(
+                        {
+                            "requirement_id": atom.requirement_id,
+                            "title": atom.title,
+                            "description": atom.description,
+                            "priority": atom.priority,
+                            "source_document_id": atom.source_document_id,
+                            "source_chunk_ids": atom.source_chunk_ids,
+                            "source_doc": atom.metadata.get("source_doc") or atom.metadata.get("source_file_name") or atom.source_document_id,
+                            "source_file_name": atom.metadata.get("source_file_name") or atom.metadata.get("source_doc") or atom.source_document_id,
+                            "acceptance_criteria": atom.acceptance_criteria,
+                            "rationale": atom.rationale,
+                            "category": atom.category,
+                            "requirement_type": atom.requirement_type,
+                            "biz_requirement_id": atom.biz_requirement_id,
+                            "biz_requirement_name": atom.biz_requirement_name,
+                            "domain": atom.domain,
+                            "feature": atom.feature,
+                            "note": atom.rationale,
+                        }
+                    )
+                    continue
+
+                parsed_item.setdefault("requirement_id", atom.requirement_id)
+                parsed_item.setdefault("title", atom.title)
+                parsed_item.setdefault("description", atom.description)
+                parsed_item.setdefault("priority", atom.priority)
+                parsed_item.setdefault("source_document_id", atom.source_document_id)
+                parsed_item.setdefault("source_chunk_ids", atom.source_chunk_ids)
+                parsed_item.setdefault("source_doc", atom.metadata.get("source_doc") or atom.metadata.get("source_file_name") or atom.source_document_id)
+                parsed_item.setdefault("source_file_name", atom.metadata.get("source_file_name") or atom.metadata.get("source_doc") or atom.source_document_id)
+                parsed_item.setdefault("acceptance_criteria", atom.acceptance_criteria)
+                parsed_item.setdefault("rationale", atom.rationale)
+                parsed_item.setdefault("category", atom.category)
+                parsed_item.setdefault("requirement_type", atom.requirement_type)
+                parsed_item.setdefault("biz_requirement_id", atom.biz_requirement_id)
+                parsed_item.setdefault("biz_requirement_name", atom.biz_requirement_name)
+                parsed_item.setdefault("domain", atom.domain)
+                parsed_item.setdefault("feature", atom.feature)
+                parsed_item.setdefault("note", atom.rationale)
+                chunk_items.append(parsed_item)
+
             atoms = normalize_requirement_atoms(chunk_items, documents=None) if chunk_items else table_atoms
             atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
             result = atoms_to_requirement_artifact(
@@ -268,6 +346,43 @@ Template mapper summary:
 
 원문 chunk:
 {json.dumps(source_chunks, ensure_ascii=False, default=str)}
+""".strip()
+
+    def _build_table_item_prompt(
+        self,
+        request: AgentRequest,
+        atom: Any,
+        index: int,
+        total: int,
+    ) -> str:
+        context = {
+            key: value
+            for key, value in (request.context or {}).items()
+            if key != "generation_orchestrator"
+        }
+        candidate = {
+            "requirement_id": atom.requirement_id,
+            "category": atom.category,
+            "biz_requirement_id": atom.biz_requirement_id,
+            "biz_requirement_name": atom.biz_requirement_name,
+            "requirement_name": atom.requirement_name or atom.title,
+            "requirement_type": atom.requirement_type,
+            "domain": atom.domain,
+            "feature": atom.feature,
+            "description": atom.description,
+            "note": atom.rationale,
+            "source_document_id": atom.source_document_id,
+            "source_chunk_ids": atom.source_chunk_ids,
+            "acceptance_criteria": atom.acceptance_criteria,
+        }
+        return f"""
+Project ID: {request.project_id}
+Item: {index}/{total}
+Context:
+{json.dumps(context, ensure_ascii=False, default=str)}
+
+Candidate:
+{json.dumps(candidate, ensure_ascii=False, default=str)}
 """.strip()
 
     def _apply_request_metadata(
