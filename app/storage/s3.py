@@ -28,6 +28,8 @@ class S3Service:
             self.client = boto3.client(
                 "s3",
                 region_name=settings.AWS_REGION,
+                aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
                 verify=self._ssl_verify_setting(),
             )
 

@@ -43,7 +43,7 @@ def test_list_artifacts_returns_project_artifacts(client: TestClient) -> None:
     client.app.dependency_overrides[get_artifact_service] = StubArtifactService
 
     try:
-        response = client.get("/projects/PRJ-001/artifacts")
+        response = client.get("/api/projects/PRJ-001/artifacts")
     finally:
         client.app.dependency_overrides.clear()
 
@@ -56,7 +56,7 @@ def test_get_artifact_returns_404_when_missing(client: TestClient) -> None:
     client.app.dependency_overrides[get_artifact_service] = StubArtifactService
 
     try:
-        response = client.get("/projects/PRJ-001/artifacts/ART-404")
+        response = client.get("/api/projects/PRJ-001/artifacts/ART-404")
     finally:
         client.app.dependency_overrides.clear()
 

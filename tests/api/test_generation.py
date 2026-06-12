@@ -153,7 +153,7 @@ def test_generate_requirement_delegates_to_orchestrator(
 
     try:
         response = client.post(
-            "/generate/requirement",
+            "/api/generate/requirement",
             json={
                 "project_id": "PRJ-001",
                 "source_document_ids": ["DOC-001"],
@@ -203,7 +203,7 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
 
     try:
         response = client.post(
-            "/generate/wbs",
+            "/api/generate/wbs",
             json={
                 "project_id": "PRJ-001",
                 "project_name": "WBS Project",
@@ -268,7 +268,7 @@ def test_generate_screen_design_sets_target_artifact_type(client: TestClient) ->
 
     try:
         response = client.post(
-            "/generate/screen-design",
+            "/api/generate/screen-design",
             json={
                 "project_id": "PRJ-001",
                 "source_document_ids": ["DOC-REQ-001"],
@@ -308,7 +308,7 @@ def test_generate_unittest_uses_requirement_spec_source(client: TestClient) -> N
 
     try:
         response = client.post(
-            "/generate/unittest",
+            "/api/generate/unittest",
             json={
                 "project_id": "PRJ-001",
                 "source_document_ids": ["DOC-REQ-001"],
@@ -340,7 +340,7 @@ def test_generate_wbs_returns_404_when_source_document_is_missing(
 
     try:
         response = client.post(
-            "/generate/wbs",
+            "/api/generate/wbs",
             json={
                 "project_id": "PRJ-001",
                 "source_document_ids": ["DOC-MISSING"],
@@ -364,7 +364,7 @@ def test_generate_screen_design_rejects_non_requirement_spec_source(
 
     try:
         response = client.post(
-            "/generate/screen-design",
+            "/api/generate/screen-design",
             json={
                 "project_id": "PRJ-001",
                 "source_document_ids": ["DOC-001"],
@@ -382,7 +382,7 @@ def test_generate_screen_design_rejects_non_requirement_spec_source(
 
 def test_generate_action_items_route_is_not_exposed(client: TestClient) -> None:
     response = client.post(
-        "/generate/action-items",
+        "/api/generate/action-items",
         json={
             "project_id": "PRJ-001",
             "source_document_ids": ["DOC-001"],
@@ -394,7 +394,7 @@ def test_generate_action_items_route_is_not_exposed(client: TestClient) -> None:
 
 def test_generate_requirement_rejects_invalid_artifact_type(client: TestClient) -> None:
     response = client.post(
-        "/generate/requirement",
+        "/api/generate/requirement",
         json={
             "project_id": "PRJ-001",
             "source_document_ids": ["DOC-001"],

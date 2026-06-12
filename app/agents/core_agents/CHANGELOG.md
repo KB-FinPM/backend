@@ -53,10 +53,10 @@ util/agent_generation_utils.py
 
 ## 2026-06-06 산출물 파일 Export 연동
 
-- `/generate/requirement` 성공 시 요구사항명세서 `.xlsx` 파일을 생성하고 `S3_GENERATED_PREFIX` 하위로 업로드하도록 연결했습니다.
+- `/api/generate/requirement` 성공 시 요구사항명세서 `.xlsx` 파일을 생성하고 `S3_GENERATED_PREFIX` 하위로 업로드하도록 연결했습니다.
 - 요구사항명세서 생성 결과는 `DocumentType.REQUIREMENT_SPEC` 문서로도 등록하여 WBS/화면설계서의 입력 문서로 사용할 수 있게 했습니다.
-- `/generate/wbs` 성공 시 WBS `.xlsx` 파일을 생성하고 S3에 업로드하도록 연결했습니다.
-- `/generate/screen-design` 성공 시 화면설계서 `.pptx` 파일을 생성하고 S3에 업로드하도록 연결했습니다.
+- `/api/generate/wbs` 성공 시 WBS `.xlsx` 파일을 생성하고 S3에 업로드하도록 연결했습니다.
+- `/api/generate/screen-design` 성공 시 화면설계서 `.pptx` 파일을 생성하고 S3에 업로드하도록 연결했습니다.
 - 생성 API 응답에 `exported_file.storage_path`와, 요구사항명세서의 경우 `exported_document.document_id`를 포함하도록 변경했습니다.
 
 ## S3 Template Export Fix
@@ -69,7 +69,7 @@ util/agent_generation_utils.py
 ## 2026-06-06 - Requirement extraction parity fix
 - 기존 sample_0605의 chunk 단위 요구사항 atom 추출 방식을 RequirementAgent에 재반영했습니다.
 - 생성 요청 문구를 RAG 검색어로 사용하지 않고 선택 문서의 전체 chunk를 로딩하도록 변경했습니다.
-- 요구사항 ID/Biz요건 ID를 템플릿 기준에 맞춰 `BSR-00001`, `Biz-0001` 형식으로 재채번합니다.
+- 요구사항 ID/Biz요건 ID를 템플릿 기준에 맞춰 `REQ-00001`, `Biz-0001` 형식으로 재채번합니다.
 - 중복 요구사항 제거 기준을 기존 샘플의 category/Biz요건명/요구사항명/요구사항유형/설명 기준으로 맞췄습니다.
 
 ## 2026-06-06 requirement atomic split restore

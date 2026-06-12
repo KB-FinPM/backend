@@ -123,7 +123,7 @@ def test_upload_document_returns_document_metadata(
 
     try:
         response = client.post(
-            "/upload",
+            "/api/upload",
             data={
                 "project_id": "PRJ-001",
                 "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
@@ -172,7 +172,7 @@ def test_upload_document_rejects_empty_file(
     client: TestClient,
 ) -> None:
     response = client.post(
-        "/upload",
+        "/api/upload",
         data={
             "project_id": "PRJ-001",
             "document_type": "REQUIREMENT_SPEC",
@@ -194,7 +194,7 @@ def test_upload_document_returns_422_when_input_normalization_fails(
     )
     try:
         response = client.post(
-            "/upload",
+            "/api/upload",
             data={
                 "project_id": "PRJ-001",
                 "document_type": "REQUIREMENT_SPEC",

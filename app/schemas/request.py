@@ -27,6 +27,14 @@ class UploadRequest(BaseModel):
 class GenerationRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
     project_name: Optional[str] = Field(None, description="Project display name")
+    start_date: Optional[str] = Field(
+        None,
+        description="Optional project start date for WBS generation",
+    )
+    project_period: Optional[str] = Field(
+        None,
+        description="Optional project period for WBS generation",
+    )
     source_document_ids: list[str] = Field(
         default_factory=list,
         description="Source document IDs used to generate the target artifact",
@@ -50,14 +58,6 @@ class GenerationRequest(BaseModel):
     template_version: Optional[str] = Field(
         None,
         description="Template version to use for generation",
-    )
-    start_date: Optional[str] = Field(
-        None,
-        description="WBS planned project start date",
-    )
-    project_period: Optional[str] = Field(
-        None,
-        description="WBS total project period",
     )
     query: Optional[str] = Field(None, description="Additional generation request")
     author: Optional[str] = Field(None, description="Artifact author name")

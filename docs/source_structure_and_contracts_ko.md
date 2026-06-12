@@ -93,9 +93,9 @@ Router가 하면 안 되는 일:
 예시 API:
 
 ```text
-POST /generate/requirement
-POST /generate/wbs
-POST /generate/screen-design
+POST /api/generate/requirement
+POST /api/generate/wbs
+POST /api/generate/screen-design
 ```
 
 구현 위치:
@@ -258,7 +258,7 @@ Agent -> DB
 ### 요구사항 생성
 
 ```text
-POST /generate/requirement
+POST /api/generate/requirement
 -> generation.py
 -> _validate_source_documents()
 -> InputOrchestrator.normalize()
@@ -276,7 +276,7 @@ POST /generate/requirement
 ### WBS 생성
 
 ```text
-POST /generate/wbs
+POST /api/generate/wbs
 -> source document type이 REQUIREMENT_SPEC인지 검증
 -> target_artifact_type = WBS
 -> 동일한 GenerationService / GenerationOrchestrator 경로 사용
@@ -292,7 +292,7 @@ WbsAgent는 placeholder이며 success=False를 반환한다.
 ### 화면설계 생성
 
 ```text
-POST /generate/screen-design
+POST /api/generate/screen-design
 -> source document type이 REQUIREMENT_SPEC인지 검증
 -> target_artifact_type = SCREEN_DESIGN
 -> 동일한 GenerationService / GenerationOrchestrator 경로 사용
@@ -308,7 +308,7 @@ ScreenDesignAgent는 placeholder이며 success=False를 반환한다.
 ### 일정 Todo 추출
 
 ```text
-POST /schedule/todos
+POST /api/schedule/todos
 -> InputOrchestrator.normalize(MEETING_NOTES)
 -> ScheduleService.extract_todos()
 -> ScheduleOrchestrator.extract_todos()

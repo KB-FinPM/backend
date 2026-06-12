@@ -1,8 +1,10 @@
 # EN: Async SQLAlchemy engine, session factory, and FastAPI DB dependency.
 # KO: async SQLAlchemy 엔진, 세션 팩토리, FastAPI DB 의존성입니다.
 
+import ssl
 from collections.abc import AsyncGenerator
 
+import certifi
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -13,10 +15,22 @@ from sqlalchemy.ext.asyncio import (
 from app.core.config import normalize_async_database_url, settings
 from app.db.base import Base
 
+database_url = normalize_async_database_url(settings.DATABASE_URL)
+connect_args: dict[str, object] = {}
+if database_url.startswith("postgresql"):
+    if settings.DATABASE_SSL_VERIFY:
+        ssl_context = ssl.create_default_context(
+            cafile=settings.AWS_CA_BUNDLE or certifi.where()
+        )
+    else:
+        ssl_context = ssl._create_unverified_context()
+    connect_args["ssl"] = ssl_context
+
 engine = create_async_engine(
-    normalize_async_database_url(settings.DATABASE_URL),
+    database_url,
     echo=settings.DEBUG,
     pool_pre_ping=True,
+    connect_args=connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(
