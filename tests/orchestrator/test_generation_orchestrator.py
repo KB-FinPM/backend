@@ -240,7 +240,7 @@ async def test_generate_artifact_dispatches_wbs_agent_adapter() -> None:
     request = GenerationRequest(
         project_id="PRJ-001",
         target_artifact_type="WBS",
-        start_date="2024.01.10",
+        start_date="2024-01-10",
         project_period="6개월",
     )
 
@@ -255,7 +255,7 @@ async def test_generate_artifact_dispatches_wbs_agent_adapter() -> None:
     assert calls == ["retrieval", "WbsAgent"]
     assert wbs_agent.received_request is not None
     assert wbs_agent.received_request.context["target_artifact_type"] == "WBS"
-    assert wbs_agent.received_request.context["start_date"] == "2024.01.10"
+    assert wbs_agent.received_request.context["start_date"] == "2024-01-10"
     assert wbs_agent.received_request.context["project_period"] == "6개월"
 
 

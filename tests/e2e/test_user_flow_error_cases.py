@@ -100,7 +100,7 @@ def test_user_flow_unsupported_upload_returns_422_without_500(
     body = response.json()
     assert response.status_code == 422
     assert body["success"] is False
-    assert body["error_code"] == "DOCUMENT_INPUT_NORMALIZATION_FAILED"
+    assert body["error_code"] == "UNSUPPORTED_UPLOAD_FILE_TYPE"
     assert "traceback" not in str(body).lower()
 
 

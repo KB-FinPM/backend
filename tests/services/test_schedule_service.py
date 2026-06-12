@@ -1,7 +1,10 @@
 # EN: Tests for schedule service delegation behavior.
 
+from types import SimpleNamespace
+
 import pytest
 
+from app.orchestrator.schedule_orchestrator import ScheduleOrchestrator
 from app.schemas.request import ScheduleTodoRequest
 from app.schemas.response import ScheduleTodoResponse
 from app.services.schedule_service import ScheduleService
@@ -40,3 +43,76 @@ async def test_schedule_service_delegates_to_orchestrator() -> None:
     assert response.project_id == "PRJ-001"
     assert response.result == {"source": "stub-orchestrator"}
     assert orchestrator.received_context == {"normalized": True}
+
+
+class StubActionItemRepository:
+    def __init__(self) -> None:
+        self.saved_wbs_todos: list[dict] = []
+
+    async def list_project_todos(self, *, project_id: str) -> list[dict]:
+        return []
+
+    async def upsert_wbs_todos(
+        self,
+        *,
+        project_id: str,
+        todos: list[dict],
+    ) -> list[dict]:
+        self.saved_wbs_todos = [
+            {**todo, "todo_id": f"TODO-WBS-{index:03d}", "status": "TODO"}
+            for index, todo in enumerate(todos, start=1)
+        ]
+        return self.saved_wbs_todos
+
+
+class StubArtifactRepository:
+    async def list_artifacts_by_project(self, *, project_id: str) -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(
+                artifact_id="ART-WBS-001",
+                artifact_type="WBS",
+                name="generated-wbs.xlsx",
+                result_json={
+                    "artifact_type": "WBS",
+                    "tasks": [
+                        {
+                            "task_id": "WBS-001",
+                            "name": "설계 및 테스트",
+                            "planned_start_date": "2026-06-08",
+                            "planned_end_date": "2026-06-14",
+                            "metadata": {
+                                "level": "2",
+                                "worker": "PM",
+                                "wbs_id": "1.1",
+                            },
+                        }
+                    ],
+                },
+            )
+        ]
+
+
+@pytest.mark.anyio
+async def test_schedule_service_uses_generated_wbs_artifact_without_upload() -> None:
+    action_item_repository = StubActionItemRepository()
+    service = ScheduleService(
+        orchestrator=ScheduleOrchestrator(),
+        action_item_repository=action_item_repository,
+        artifact_repository=StubArtifactRepository(),
+    )
+
+    response = await service.run_query(
+        project_id="PRJ-001",
+        schedule_action="SHOW_THIS_WEEK_TODOS",
+        context={
+            "current_date": "2026-06-10",
+            "normalized_input": {"needs_context": ["WBS", "TODO_LIST"]},
+        },
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "SUCCESS"
+    assert response.result["todos"][0]["todo_id"] == "TODO-WBS-001"
+    assert response.result["todos"][0]["title"] == "설계 및 테스트"
+    assert response.result["metadata"]["wbs_todos_saved"] is True
+    assert action_item_repository.saved_wbs_todos
