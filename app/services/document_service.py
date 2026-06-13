@@ -108,6 +108,14 @@ class DocumentService:
         project_id: str,
         document_id: str,
     ) -> bool:
+        document = await self.document_repository.get_document(
+            project_id=project_id,
+            document_id=document_id,
+        )
+        if document is None:
+            return False
+        if hasattr(self.storage_service, "delete_by_storage_path"):
+            await self.storage_service.delete_by_storage_path(document.storage_path)
         return await self.document_repository.delete_document(
             project_id=project_id,
             document_id=document_id,

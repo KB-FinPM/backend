@@ -226,10 +226,17 @@ class ChatOutputAgent:
                 "요구사항 정의서를 생성하려면 구축요건정의서 또는 RFP가 필요합니다. "
                 "구축요건 정의서를 업로드해주세요."
             ),
-            "WBS": "WBS 생성을 위해 기준이 되는 요구사항 명세서 문서를 먼저 선택해 주세요.",
+            "WBS": (
+                "WBS 생성을 위해 기준 문서가 필요합니다. 요구사항 정의서를 업로드하거나 "
+                "먼저 생성해 주세요."
+            ),
             "SCREEN_DESIGN": (
-                "화면설계서 생성을 위해 요구사항 명세서 또는 관련 화면 기준 문서를 "
-                "먼저 선택해 주세요."
+                "화면설계서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서를 "
+                "업로드하거나 먼저 생성해 주세요."
+            ),
+            "UNITTEST_SPEC": (
+                "단위테스트계획서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서나 "
+                "화면설계서를 업로드하거나 선행 산출물을 먼저 생성해 주세요."
             ),
         }
         upload_request = self._upload_request_payload(
@@ -244,6 +251,9 @@ class ChatOutputAgent:
         }
         if upload_request:
             result["upload_request"] = upload_request
+        command_actions = self._missing_source_command_actions(artifact_type)
+        if command_actions:
+            result["command_actions"] = command_actions
 
         return {
             "state": ChatState.WAITING_REQUIRED_INFO.value,
@@ -263,47 +273,73 @@ class ChatOutputAgent:
         if result.get("assistant_message"):
             message = str(result.get("assistant_message"))
             upload_request = None
+            command_actions = []
         elif required_context == "WBS" or "wbs" in missing_fields:
-            message = (
-                "현재 프로젝트에서 참고할 WBS 문서를 찾지 못했습니다. "
-                "WBS를 업로드하거나, 요구사항 명세서를 기준으로 WBS를 먼저 생성해 주세요."
-            )
-            upload_request = {
-                "required": True,
-                "label": "WBS 업로드",
-                "acceptedTypes": [".xlsx"],
-                "documentType": "WBS",
-                "originalMessage": "WBS 기준으로 일정 알려줘",
-            }
+            if metadata.get("has_requirement_source"):
+                message = (
+                    "현재 프로젝트에서 WBS를 찾지 못했습니다. 기존 WBS를 업로드하거나, "
+                    "등록된 요구사항 정의서를 기준으로 WBS를 생성할 수 있습니다."
+                )
+                upload_request = {
+                    "required": True,
+                    "label": "WBS 업로드",
+                    "acceptedTypes": [
+                        ".xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        ".xls",
+                        "application/vnd.ms-excel",
+                    ],
+                    "documentType": "WBS",
+                    "originalMessage": "WBS 기준으로 일정 알려줘",
+                }
+                command_actions = [
+                    {
+                        "label": "WBS 생성",
+                        "message": "요구사항 정의서를 기준으로 WBS 생성해줘",
+                    }
+                ]
+            else:
+                message = (
+                    "WBS 생성을 위해 기준 문서가 필요합니다. 요구사항 정의서를 업로드하거나 "
+                    "먼저 생성해 주세요."
+                )
+                upload_request = {
+                    "required": True,
+                    "label": "요구사항 정의서 업로드",
+                    "acceptedTypes": self._document_upload_accept_types(),
+                    "documentType": "REQUIREMENT_SPEC",
+                    "originalMessage": "WBS 기준으로 일정 알려줘",
+                }
+                command_actions = [
+                    {
+                        "label": "요구사항 정의서 생성",
+                        "message": "요구사항 정의서 생성해줘",
+                    }
+                ]
         elif required_context == "MEETING_NOTES" or "meeting_notes" in missing_fields:
             message = "회의록 내용을 붙여넣거나 주간회의 문서를 업로드해 주세요."
             upload_request = {
                 "required": True,
                 "label": "회의록 업로드",
-                "acceptedTypes": [
-                    ".pdf",
-                    "application/pdf",
-                    ".docx",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    ".md",
-                    ".txt",
-                    "text/plain",
-                    ".csv",
-                    ".log",
-                ],
+                "acceptedTypes": self._meeting_upload_accept_types(),
                 "documentType": "MEETING_NOTES",
                 "originalMessage": "회의록 보고 TODO 정리해줘",
             }
+            command_actions = []
         elif required_context == "ASSIGNEE" or "assignee" in missing_fields:
             message = "담당자 이름을 알려주시면 남은 업무를 확인해 드릴게요."
             upload_request = None
+            command_actions = []
         else:
             message = "일정 확인에 필요한 프로젝트 기준 정보가 부족합니다."
             upload_request = None
+            command_actions = []
 
         payload_result = dict(result)
         if upload_request:
             payload_result["upload_request"] = upload_request
+        if command_actions:
+            payload_result["command_actions"] = command_actions
         return {
             "state": ChatState.WAITING_REQUIRED_INFO.value,
             "message": message,
@@ -333,28 +369,81 @@ class ChatOutputAgent:
         original_message: Any,
     ) -> dict[str, Any] | None:
         if artifact_type != "REQUIREMENT_SPEC":
+            if artifact_type in {"WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"}:
+                return {
+                    "required": True,
+                    "label": "요구사항 정의서 업로드",
+                    "acceptedTypes": self._document_upload_accept_types(),
+                    "documentType": "REQUIREMENT_SPEC",
+                    "originalMessage": str(
+                        original_message or f"{self._artifact_label(artifact_type)} 생성해줘"
+                    ),
+                }
             return None
         return {
             "required": True,
             "label": "구축요건 정의서 업로드",
-            "acceptedTypes": [
-                ".pdf",
-                "application/pdf",
-                ".docx",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".md",
-                ".txt",
-                "text/plain",
-                ".csv",
-                ".json",
-                "application/json",
-                ".log",
-            ],
+            "acceptedTypes": self._document_upload_accept_types(),
             "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
             "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
         }
+
+    def _document_upload_accept_types(self) -> list[str]:
+        return [
+            ".pdf",
+            "application/pdf",
+            ".docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls",
+            "application/vnd.ms-excel",
+            ".md",
+            ".txt",
+            "text/plain",
+            ".csv",
+            ".json",
+            "application/json",
+            ".log",
+        ]
+
+    def _meeting_upload_accept_types(self) -> list[str]:
+        return [
+            ".pdf",
+            "application/pdf",
+            ".docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls",
+            "application/vnd.ms-excel",
+            ".txt",
+            "text/plain",
+        ]
+
+    def _missing_source_command_actions(
+        self,
+        artifact_type: str | None,
+    ) -> list[dict[str, str]]:
+        if artifact_type in {"WBS", "SCREEN_DESIGN"}:
+            return [
+                {
+                    "label": "요구사항 정의서 생성",
+                    "message": "요구사항 정의서 생성해줘",
+                }
+            ]
+        if artifact_type == "UNITTEST_SPEC":
+            return [
+                {
+                    "label": "화면설계서 생성",
+                    "message": "요구사항 정의서를 기준으로 화면설계서 생성해줘",
+                },
+                {
+                    "label": "요구사항 정의서 생성",
+                    "message": "요구사항 정의서 생성해줘",
+                },
+            ]
+        return []
 
     def _pm_concept_answer(self, *, topic: Any, query: Any) -> str:
         topic_value = str(topic or "")
@@ -545,7 +634,10 @@ class ChatOutputAgent:
             title = items[0]["title"] if items else "선택한 TODO"
             return {
                 "state": ChatState.COMPLETED.value,
-                "message": f'"{title}" 업무를 완료 처리했습니다.',
+                "message": (
+                    f'"{title}" 업무를 완료 처리했습니다. '
+                    f"남은 업무는 {len(result.get('remaining_todos') or [])}건입니다."
+                ),
                 "result": {
                     **result,
                     "items": items,
@@ -738,7 +830,7 @@ class ChatOutputAgent:
             "REQUIREMENT_SPEC": "요구사항 정의서",
             "WBS": "WBS",
             "SCREEN_DESIGN": "화면설계서",
-            "UNITTEST_SPEC": "단위테스트케이스",
+            "UNITTEST_SPEC": "단위테스트계획서",
         }
         return labels.get(artifact_type or "", "산출물")
 
