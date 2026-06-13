@@ -361,7 +361,10 @@ Requirement summary:
                 lines.append(truncate_text(screen_description, 260))
             elif requirement_text:
                 lines.append(truncate_text(requirement_text, 260))
-            return "\n".join(line for line in lines if line).strip()
+            return self._number_test_content_lines("\n".join(line for line in lines if line).strip())
+
+        if not requirement_text:
+            return " "
 
         if requirement_text:
             lines = [
@@ -369,9 +372,26 @@ Requirement summary:
                 f"{requirement_name}의 예외/경계 조건 및 입력값 검증을 확인한다.",
                 truncate_text(requirement_text, 260),
             ]
-            return "\n".join(line for line in lines if line).strip()
+            return self._number_test_content_lines("\n".join(line for line in lines if line).strip())
 
-        return f"{label_text}{requirement_name}의 동작을 검증한다."
+        return self._number_test_content_lines(f"{label_text}{requirement_name}의 동작을 검증한다.")
+
+    def _number_test_content_lines(self, value: Any) -> str:
+        text = str(value or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not text or "\n" not in text:
+            return text
+
+        numbered_lines: list[str] = []
+        for line in text.split("\n"):
+            cleaned = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", line).strip()
+            if not cleaned:
+                continue
+            numbered_lines.append(cleaned)
+
+        if len(numbered_lines) <= 1:
+            return numbered_lines[0] if numbered_lines else text
+
+        return "\n".join(f"{index}. {line}" for index, line in enumerate(numbered_lines, start=1))
 
     def _scenario_specs(
         self,

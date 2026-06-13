@@ -60,15 +60,21 @@ async def test_unit_test_agent_creates_cases_from_requirements() -> None:
     assert [case["test_case_id"] for case in response.result["test_cases"]] == [
         "TEST-0001-001",
         "TEST-0001-002",
+        "TEST-0001-003",
+        "TEST-0001-004",
         "TEST-0002-001",
+        "TEST-0002-002",
+        "TEST-0002-003",
     ]
     assert response.result["test_cases"][0]["requirement_id"] == "BSR-00001"
     assert response.result["test_cases"][0]["requirement_name"] == "회원 조회"
-    assert response.result["test_cases"][0]["scenario_id"] == "Biz-0001"
-    assert response.result["test_cases"][0]["test_case_name"] == "회원 조회 화면"
+    assert response.result["test_cases"][0]["scenario_id"] == "Biz-0001-01"
+    assert response.result["test_cases"][0]["test_case_name"] == "회원 조회 정상"
     assert response.result["test_cases"][0]["test_content"] == (
-        "- 회원 목록을 조회한다.\n"
-        "- 회원 상세를 조회한다."
+        "1. 정상 회원 조회의 정상 처리 결과를 검증한다.\n"
+        "2. 회원 조회의 예외/경계 조건 및 입력값 검증을 확인한다.\n"
+        "3. 회원 목록을 조회한다.\n"
+        "4. 회원 상세를 조회한다."
     )
 
 

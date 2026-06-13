@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date
 from io import BytesIO
@@ -652,7 +653,23 @@ class ArtifactExportService:
             .replace("\r\n", "\n")
             .replace("\r", "\n")
         )
-        return text if text.strip() else " "
+        text = text.strip()
+        if not text:
+            return " "
+        if "\n" not in text:
+            return text
+
+        lines: list[str] = []
+        for line in text.split("\n"):
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            cleaned = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", cleaned).strip()
+            if cleaned:
+                lines.append(cleaned)
+        if len(lines) <= 1:
+            return lines[0] if lines else text
+        return "\n".join(f"{index}. {line}" for index, line in enumerate(lines, start=1))
 
     def _format_unit_test_content_column(
         self,
