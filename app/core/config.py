@@ -53,12 +53,14 @@ class Settings(BaseSettings):
     GENERATION_MAX_SOURCE_CHUNKS: int = 80
     GENERATION_REQUIREMENT_BATCH_SIZE: int = 8
 
+    EMBEDDING_MODEL_NAME: str = "intfloat/multilingual-e5-large"
+    EMBEDDING_DIMENSIONS: int = 1024
+    EMBEDDING_NORMALIZE: bool = True
+
     DATABASE_URL: str = "sqlite+aiosqlite:///./finpm.db"
     DATABASE_SSL_VERIFY: bool = True
     SQLALCHEMY_ECHO: bool = False
     SQLALCHEMY_HIDE_PARAMETERS: bool = True
-
-    VECTOR_STORE_TYPE: str = "pgvector"
 
     @field_validator("DEBUG", mode="before")
     @classmethod

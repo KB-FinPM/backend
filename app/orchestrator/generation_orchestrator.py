@@ -155,6 +155,7 @@ class GenerationOrchestrator:
             query=retrieval_query,
             top_k=top_k,
             document_ids=request.source_document_ids or None,
+            search_mode="text",
         )
 
         agent_request = AgentRequest(
@@ -260,14 +261,16 @@ class GenerationOrchestrator:
         self,
         system_prompt: str,
         user_prompt: str,
-        max_tokens: int = 4000,
+        *,
+        call_index: int | None = None,
+        call_total: int | None = None,
+        call_label: str | None = None,
     ) -> str:
         """Delegates agent LLM execution through the orchestrator boundary.
 
         Core agents must not instantiate Bedrock or other model clients directly.
         The current backend LLM service accepts a single prompt, so the system
-        and user prompts are composed here. max_tokens is kept for future LLM
-        adapters and caller intent, but the active service may ignore it.
+        and user prompts are composed here.
         """
         prompt = (
             f"System instruction:\n{system_prompt.strip()}\n\n"
@@ -275,16 +278,22 @@ class GenerationOrchestrator:
         )
         logger.info(
             f"[Orchestrator] {LLM_LOG_PREFIX} invoke request | "
-            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)} | max_tokens={max_tokens}"
+            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)}"
         )
         logger.debug(
             f"[Orchestrator] {LLM_LOG_PREFIX} prompt preview | "
             f"text={prompt[:300]}"
         )
-        response = await llm_service.invoke(prompt)
+        response = await llm_service.invoke(
+            prompt,
+            call_index=call_index,
+            call_total=call_total,
+            call_label=call_label,
+        )
         logger.info(
             f"[Orchestrator] {LLM_LOG_PREFIX} invoke response | "
-            f"response_chars={len(response)}"
+            f"response_chars={len(response)} | "
+            f"progress={(f'{call_index}/{call_total}' if call_total is not None and call_index is not None else 'n/a')}"
         )
         logger.debug(
             f"[Orchestrator] {LLM_LOG_PREFIX} response preview | "
@@ -314,6 +323,7 @@ class GenerationOrchestrator:
             permission_scope=permission_scope,
             query=query,
             document_ids=document_ids,
+            search_mode="vector",
         )
 
     def _not_implemented_response(

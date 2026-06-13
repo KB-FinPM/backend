@@ -46,7 +46,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def initialize_database_schema() -> None:
-    await init_db()
+    try:
+        await init_db()
+    except Exception as e:
+        logger.exception("DB init failed")
 
 
 @app.exception_handler(ApiError)

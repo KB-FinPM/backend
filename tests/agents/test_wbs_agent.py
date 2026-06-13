@@ -1,6 +1,7 @@
 # EN: Tests for WBS agent input validation behavior.
 # KO: WBS Agent 입력 검증 동작 테스트입니다.
 
+import json
 from datetime import date, timedelta
 
 import pytest
@@ -8,6 +9,110 @@ import pytest
 from app.agents.core_agents.wbs_agent.agent import WbsAgent
 from app.schemas.agent import AgentRequest
 from util.agent_template_utils import load_wbs_common_rows
+
+
+class StubWbsOrchestrator:
+    def __init__(self, task_name: str = "상세 개발 작업") -> None:
+        self.task_name = task_name
+        self.calls: list[dict[str, str]] = []
+
+    async def invoke_agent_llm(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_index: int | None = None,
+        call_total: int | None = None,
+        call_label: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "call_index": str(call_index or ""),
+                "call_total": str(call_total or ""),
+                "call_label": str(call_label or ""),
+            }
+        )
+        return json.dumps(
+            {
+                "artifact_type": "WBS",
+                "development_tasks": [
+                    {
+                        "phase": "구현",
+                        "tasks": [
+                            {
+                                "level": 3,
+                                "name": self.task_name,
+                                "description": f"{self.task_name} 세부 작업을 LLM으로 생성한다.",
+                                "source_requirement_ids": ["REQ-001"],
+                                "deliverable": "구현 산출물",
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+
+class FlatWbsOrchestrator(StubWbsOrchestrator):
+    async def invoke_agent_llm(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_index: int | None = None,
+        call_total: int | None = None,
+        call_label: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "call_index": str(call_index or ""),
+                "call_total": str(call_total or ""),
+                "call_label": str(call_label or ""),
+            }
+        )
+        return json.dumps(
+            {
+                "artifact_type": "WBS",
+                "tasks": [
+                    {
+                        "phase": "구현",
+                        "level": 3,
+                        "name": self.task_name,
+                        "description": f"{self.task_name}를 평면 구조로 생성한다.",
+                        "source_requirement_ids": ["REQ-001"],
+                        "deliverable": "구현 산출물",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+
+class EmptyWbsOrchestrator(StubWbsOrchestrator):
+    async def invoke_agent_llm(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_index: int | None = None,
+        call_total: int | None = None,
+        call_label: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "call_index": str(call_index or ""),
+                "call_total": str(call_total or ""),
+                "call_label": str(call_label or ""),
+            }
+        )
+        return ""
 
 
 @pytest.mark.anyio
@@ -24,6 +129,7 @@ async def test_wbs_agent_requires_requirement_context() -> None:
 @pytest.mark.anyio
 async def test_wbs_agent_applies_planned_dates_from_context() -> None:
     agent = WbsAgent()
+    orchestrator = StubWbsOrchestrator()
 
     response = await agent.generate(
         AgentRequest(
@@ -49,6 +155,7 @@ async def test_wbs_agent_applies_planned_dates_from_context() -> None:
                         },
                     ],
                 },
+                "generation_orchestrator": orchestrator,
             },
         )
     )
@@ -130,6 +237,7 @@ def test_wbs_agent_parses_month_end_period_boundary() -> None:
 @pytest.mark.anyio
 async def test_wbs_agent_defaults_missing_project_period_to_six_months() -> None:
     agent = WbsAgent()
+    orchestrator = StubWbsOrchestrator()
 
     response = await agent.generate(
         AgentRequest(
@@ -148,6 +256,7 @@ async def test_wbs_agent_defaults_missing_project_period_to_six_months() -> None
                         },
                     ],
                 },
+                "generation_orchestrator": orchestrator,
             },
         )
     )
@@ -169,6 +278,7 @@ async def test_wbs_agent_defaults_invalid_schedule_context_to_today(monkeypatch)
 
     monkeypatch.setattr("app.agents.core_agents.wbs_agent.agent.date", FixedDate)
     agent = WbsAgent()
+    orchestrator = StubWbsOrchestrator()
 
     response = await agent.generate(
         AgentRequest(
@@ -188,6 +298,7 @@ async def test_wbs_agent_defaults_invalid_schedule_context_to_today(monkeypatch)
                         },
                     ],
                 },
+                "generation_orchestrator": orchestrator,
             },
         )
     )
@@ -201,12 +312,14 @@ async def test_wbs_agent_defaults_invalid_schedule_context_to_today(monkeypatch)
 @pytest.mark.anyio
 async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_tasks() -> None:
     agent = WbsAgent()
+    orchestrator = StubWbsOrchestrator(task_name="접근관리")
 
     response = await agent.generate(
         AgentRequest(
             project_id="PRJ-001",
             context={
                 "project_name": "테스트 프로젝트",
+                "generation_orchestrator": orchestrator,
                 "requirement_artifact": {
                     "requirements": [
                         {
@@ -223,9 +336,14 @@ async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_task
 
     assert response.success is True
     tasks = response.result["tasks"]
-    template_rows = load_wbs_common_rows()
+    template_rows = [
+        row
+        for row in load_wbs_common_rows()
+        if not agent._is_development_detail_row(row)
+    ]
+    assert orchestrator.calls
 
-    assert len(tasks) > len(template_rows)
+    assert len(tasks) == len(template_rows) + 1
     for task, template_row in zip(tasks[: len(template_rows)], template_rows, strict=True):
         assert task["metadata"]["level"] == template_row["level"]
         assert task["metadata"]["wbs_id"] == template_row["wbs_id"]
@@ -237,8 +355,76 @@ async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_task
 
 
 @pytest.mark.anyio
+async def test_wbs_agent_accepts_flat_llm_tasks_payload() -> None:
+    agent = WbsAgent()
+    orchestrator = FlatWbsOrchestrator(task_name="접근관리")
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "project_name": "테스트 프로젝트",
+                "generation_orchestrator": orchestrator,
+                "requirement_artifact": {
+                    "requirements": [
+                        {
+                            "requirement_id": "RQ-001",
+                            "title": "로그인",
+                            "description": "로그인 기능",
+                            "biz_requirement_name": "접근관리",
+                        }
+                    ]
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    assert orchestrator.calls
+    task_names = [task["name"] for task in response.result["tasks"]]
+    assert task_names.index("구현") < task_names.index("접근관리") < task_names.index("테스트")
+
+
+@pytest.mark.anyio
+async def test_wbs_agent_falls_back_to_template_rows_when_llm_returns_nothing() -> None:
+    agent = WbsAgent()
+    orchestrator = EmptyWbsOrchestrator()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "project_name": "테스트 프로젝트",
+                "generation_orchestrator": orchestrator,
+                "requirement_artifact": {
+                    "requirements": [
+                        {
+                            "requirement_id": "RQ-001",
+                            "title": "로그인",
+                            "description": "로그인 기능",
+                            "biz_requirement_name": "접근관리",
+                        }
+                    ]
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    assert orchestrator.calls
+    assert response.result["artifact_type"] == "WBS"
+    assert len(response.result["tasks"]) > 0
+    assert all(
+        task["metadata"].get("generation_source") != "llm"
+        for task in response.result["tasks"]
+        if "metadata" in task
+    )
+
+
+@pytest.mark.anyio
 async def test_wbs_agent_applies_special_schedule_rules_by_id_hierarchy() -> None:
     agent = WbsAgent()
+    orchestrator = StubWbsOrchestrator()
 
     response = await agent.generate(
         AgentRequest(
@@ -247,6 +433,7 @@ async def test_wbs_agent_applies_special_schedule_rules_by_id_hierarchy() -> Non
                 "start_date": "2026.01.01",
                 "project_period": "6개월",
                 "project_name": "테스트 프로젝트",
+                "generation_orchestrator": orchestrator,
                 "requirement_artifact": {
                     "requirements": [
                         {

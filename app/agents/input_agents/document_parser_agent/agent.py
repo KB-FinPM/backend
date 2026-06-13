@@ -2,6 +2,7 @@
 # KO: 지원되는 업로드 파일을 구조화된 텍스트로 변환하는 Input Agent입니다.
 
 from io import BytesIO
+from typing import Any
 import re
 
 from app.core.supported_files import (

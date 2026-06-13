@@ -19,6 +19,7 @@ from app.repositories.document_repository import DocumentRepository
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.template_repository import TemplateRepository
 from app.orchestrator.generation_orchestrator import generation_orchestrator
+from app.rag.embedding import embedding_service
 from app.rag.retrieval import RetrievalService
 from app.services.artifact_service import ArtifactService
 from app.services.chat_service import ChatService
@@ -110,7 +111,7 @@ def get_schedule_service(
 def get_retrieval_service(
     document_repository: DocumentRepository = Depends(get_document_repository),
 ) -> RetrievalService:
-    return RetrievalService(document_repository)
+    return RetrievalService(document_repository, embedding_service=embedding_service)
 
 
 def get_template_service(

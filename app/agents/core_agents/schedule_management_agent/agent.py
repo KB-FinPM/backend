@@ -1199,7 +1199,7 @@ class ScheduleManagementAgent:
 
         if planned_tasks:
             lines.extend(["", f"{period_label}에 우선 챙길 업무는 다음과 같습니다."])
-            for index, task in enumerate(planned_tasks[:8], start=1):
+            for index, task in enumerate(planned_tasks, start=1):
                 start_date = task.get("planned_start_date") or "기간 확인 필요"
                 end_date = task.get("planned_end_date") or "기간 확인 필요"
                 lines.extend(
@@ -1217,7 +1217,7 @@ class ScheduleManagementAgent:
         if ongoing_management_tasks:
             ongoing_titles = ", ".join(
                 str(task.get("title"))
-                for task in ongoing_management_tasks[:5]
+                for task in ongoing_management_tasks
                 if task.get("title")
             )
             if ongoing_titles:

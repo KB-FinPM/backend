@@ -39,10 +39,10 @@ class DummyClient:
 def test_llm_service_builds_bedrock_request_body() -> None:
     service = LLMService()
 
-    body = service._build_request_body("hello", system="sys", max_tokens=123)
+    body = service._build_request_body("hello", system="sys")
 
     assert body["anthropic_version"] == "bedrock-2023-05-31"
-    assert body["max_tokens"] == 123
+    assert body["max_tokens"] == service.default_max_tokens
     assert body["system"] == "sys"
     assert body["messages"][0]["role"] == "user"
     assert body["messages"][0]["content"][0]["text"] == "hello"
@@ -56,7 +56,7 @@ async def test_llm_service_invokes_bedrock_and_parses_text(monkeypatch) -> None:
     before_success = llm_service.successful_invocations
     before_failure = llm_service.failed_invocations
 
-    response = await llm_service.invoke("hello", system="sys", max_tokens=321)
+    response = await llm_service.invoke("hello", system="sys")
 
     assert response == "LLM 응답"
     assert llm_service.total_invocations == before_total + 1
@@ -69,6 +69,6 @@ async def test_llm_service_invokes_bedrock_and_parses_text(monkeypatch) -> None:
     assert call["accept"] == "application/json"
 
     payload = json.loads(call["body"])
-    assert payload["max_tokens"] == 321
+    assert payload["max_tokens"] == llm_service.default_max_tokens
     assert payload["system"] == "sys"
     assert payload["messages"][0]["content"][0]["text"] == "hello"

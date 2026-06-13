@@ -219,63 +219,9 @@
       "deliverable": ""
     },
     {
-      "level": "3",
-      "wbs_id": "3.1.1",
-      "wbs_name": "요건정의",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.1.1.1",
-      "wbs_name": "요구사항분석및정의",
-      "deliverable": ""
-    },
-    {
       "level": "2",
       "wbs_id": "3.2",
       "wbs_name": "분석",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.2.1",
-      "wbs_name": "데이터분석",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.2.1.1",
-      "wbs_name": "업무ERD작성",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.2.1.22",
-      "wbs_name": "업무인스턴스및코드분석",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.2.2",
-      "wbs_name": "사용자인터페이스분석",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.2.2.1",
-      "wbs_name": "사용자인터페이스식별",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.2.3",
-      "wbs_name": "시스템인터페이스분석",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.2.3.1",
-      "wbs_name": "시스템인터페이스식별및정의",
       "deliverable": ""
     },
     {
@@ -285,177 +231,15 @@
       "deliverable": ""
     },
     {
-      "level": "3",
-      "wbs_id": "3.3.1",
-      "wbs_name": "데이터설계",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.1.1",
-      "wbs_name": "물리ERD작성",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.1.2",
-      "wbs_name": "업무인스턴스및코드설계",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.1.2",
-      "wbs_name": "데이터클린징설계",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.3.2",
-      "wbs_name": "어플리케이션설계",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.2.1",
-      "wbs_name": "프로그램식별",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.2.3",
-      "wbs_name": "배치프로그램목록정의",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.3.3",
-      "wbs_name": "사용자인터페이스설계",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.3.1",
-      "wbs_name": "화면상세설계",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.3.4",
-      "wbs_name": "시스템인터페이스설계",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.4.1",
-      "wbs_name": "시스템인터페이스식별및정의",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.3.5",
-      "wbs_name": "테스트계획설계",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.3.5.1",
-      "wbs_name": "테스트계획수립",
-      "deliverable": ""
-    },
-    {
       "level": "2",
       "wbs_id": "3.4",
       "wbs_name": "구현",
       "deliverable": ""
     },
     {
-      "level": "3",
-      "wbs_id": "3.4.1",
-      "wbs_name": "데이터베이스구현",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.4.1.1",
-      "wbs_name": "데이터베이스생성",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.4.2",
-      "wbs_name": "어플리케이션구현",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.4.2.1",
-      "wbs_name": "업무공통프로그램구현",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.4.2.2",
-      "wbs_name": "온라인프로그램구현",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.4.2.3",
-      "wbs_name": "배치프로그램구현",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.4.3",
-      "wbs_name": "단위테스트",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.4.3.1",
-      "wbs_name": "단위테스트설계",
-      "deliverable": ""
-    },
-    {
       "level": "2",
       "wbs_id": "3.5",
       "wbs_name": "테스트",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.5.1",
-      "wbs_name": "통합테스트",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.5.1.1",
-      "wbs_name": "통합테스트설계",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.5.1.2",
-      "wbs_name": "통합테스트실행및결과",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.5.1.3",
-      "wbs_name": "통합테스트평가",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
-      "wbs_id": "3.5.3",
-      "wbs_name": "사용자인수테스트",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.5.3.1",
-      "wbs_name": "사용자인수테스트계획및결과",
       "deliverable": ""
     },
     {
@@ -466,50 +250,14 @@
     },
     {
       "level": "3",
-      "wbs_id": "3.6.1",
-      "wbs_name": "매뉴얼작성및교육",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.6.1.1",
-      "wbs_name": "사용자매뉴얼작성",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.6.1.2",
-      "wbs_name": "운영자매뉴얼작성",
-      "deliverable": ""
-    },
-    {
-      "level": "3",
       "wbs_id": "3.6.2",
       "wbs_name": "시스템이행",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.6.2.1",
-      "wbs_name": "이행일정계획및점검",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.6.2.3",
-      "wbs_name": "가동(오픈)",
       "deliverable": ""
     },
     {
       "level": "3",
       "wbs_id": "3.6.3",
       "wbs_name": "안정화",
-      "deliverable": ""
-    },
-    {
-      "level": "4",
-      "wbs_id": "3.6.3.1",
-      "wbs_name": "안정화 수행",
       "deliverable": ""
     }
   ]
