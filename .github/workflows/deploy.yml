@@ -20,66 +20,75 @@ jobs:
           EC2_PRIVATE_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
           EC2_PORT: ${{ secrets.EC2_PORT }}
           APP_DIRECTORY: ${{ secrets.APP_DIRECTORY }}
+
         run: |
-          # Create SSH key file
           mkdir -p ~/.ssh
           echo "$EC2_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          
-          # Add EC2 host to known_hosts
-          ssh-keyscan -p ${{ env.EC2_PORT }} ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          
-          # Deploy via SSH with error handling
-          ssh -i ~/.ssh/id_rsa -p ${{ env.EC2_PORT }} ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
-            set -e  # Exit on error
-            
-            # 로그인 환경 로딩
-            source ~/.profile || true
-            source ~/.bashrc || true
-            
-            # Navigate to project directory
-            cd "${{ env.APP_DIRECTORY }}"
-            
-            # Pull latest code
-            git pull origin main || exit 1
-            
-            # Activate virtual environment
-            source venv/bin/activate || exit 1
 
-            # 환경 점검
-            python -c "
-            from app.core.config import ENV_FILE, settings
-            print('ENV_FILE=', ENV_FILE)
-            print('ENV_EXISTS=', ENV_FILE.exists())
-            print('DATABASE_URL=', settings.DATABASE_URL)
-            print('DATABASE_SSL_VERIFY=', settings.DATABASE_SSL_VERIFY)
-            print('ALLOWED_ORIGINS=', settings.ALLOWED_ORIGINS)
-            "
-            
-            # Install dependencies
-            pip install -r requirements.txt || exit 1
-            
-            # Stop existing FastAPI process
-            pkill -f "uvicorn app.main:app" || true
+          ssh-keyscan -p ${{ env.EC2_PORT }} \
+            ${{ env.EC2_HOST }} \
+            >> ~/.ssh/known_hosts 2>/dev/null || true
 
+          ssh -i ~/.ssh/id_rsa \
+            -p ${{ env.EC2_PORT }} \
+            ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
 
-            
-            # Start FastAPI
-            nohup python -m uvicorn app.main:app \
-              --host 0.0.0.0 \
-              --port 8000 \
-              > app.log 2>&1 &
-          
-            sleep 5
-            tail -100 app.log
-                          
-            if ! pgrep -af "uvicorn app.main:app"; then
-              echo "FastAPI failed to start"
-              cat app.log
-              exit 1
-            fi
-            
-            echo "FastAPI deployment complete"
-            
-            echo "FastAPI deployment complete"
+          set -e
+
+          echo "===== CURRENT PATH ====="
+          pwd
+
+          echo "===== MOVE TO APP DIRECTORY ====="
+          cd "${{ env.APP_DIRECTORY }}"
+          pwd
+
+          echo "===== FILE CHECK ====="
+          ls -al
+          ls -al .env || true
+
+          echo "===== GIT PULL ====="
+          git pull origin main
+
+          echo "===== ACTIVATE VENV ====="
+          source venv/bin/activate
+
+          echo "===== SETTINGS CHECK ====="
+
+          python << 'PYTHON'
+from app.core.config import ENV_FILE, settings
+
+print("ENV_FILE =", ENV_FILE)
+print("ENV_EXISTS =", ENV_FILE.exists())
+print("DATABASE_URL =", settings.DATABASE_URL)
+print("DATABASE_SSL_VERIFY =", settings.DATABASE_SSL_VERIFY)
+print("ALLOWED_ORIGINS =", settings.ALLOWED_ORIGINS)
+PYTHON
+
+          echo "===== INSTALL REQUIREMENTS ====="
+          pip install -r requirements.txt
+
+          echo "===== STOP EXISTING PROCESS ====="
+          pkill -f "uvicorn app.main:app" || true
+
+          echo "===== START FASTAPI ====="
+          nohup python -m uvicorn app.main:app \
+            --host 0.0.0.0 \
+            --port 8000 \
+            > app.log 2>&1 &
+
+          sleep 5
+
+          echo "===== APP LOG ====="
+          tail -100 app.log || true
+
+          echo "===== PROCESS CHECK ====="
+          if ! pgrep -af "uvicorn app.main:app"; then
+            echo "FastAPI failed to start"
+            cat app.log
+            exit 1
+          fi
+
+          echo "FastAPI deployment complete"
+
           EOF
