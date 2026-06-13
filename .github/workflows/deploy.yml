@@ -46,10 +46,21 @@ jobs:
             pip install -r requirements.txt || exit 1
             
             # Stop existing FastAPI process
-            pkill -f "uvicorn|gunicorn" || true
+            pkill -f "uvicorn app.main:app" || true
+            sleep 1
             
             # Start FastAPI
-            nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &
+            nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &
+            
+            sleep 2
+            
+            if ! pgrep -af "uvicorn app.main:app"; then
+              echo "FastAPI failed to start"
+              cat app.log
+              exit 1
+            fi
+            
+            echo "FastAPI deployment complete"
             
             echo "FastAPI deployment complete"
           EOF
