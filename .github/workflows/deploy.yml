@@ -42,6 +42,11 @@ jobs:
             # Activate virtual environment
             source venv/bin/activate || exit 1
             
+            # .env 강제 로딩
+            set -a
+            source .env
+            set +a
+            
             # Install dependencies
             pip install -r requirements.txt || exit 1
             
