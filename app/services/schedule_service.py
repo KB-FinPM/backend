@@ -35,6 +35,7 @@ class ScheduleService:
         *,
         structured_context: dict[str, Any] | None = None,
     ) -> ScheduleTodoResponse:
+        request = await self._request_with_source_document_notes(request)
         response = await self.orchestrator.extract_todos(
             request,
             structured_context=structured_context,
@@ -113,6 +114,14 @@ class ScheduleService:
                 },
             )
 
+        remaining_todos = [
+            todo
+            for todo in await self.action_item_repository.list_project_todos(
+                project_id=project_id,
+            )
+            if str(todo.get("status") or "").upper() != "DONE"
+        ]
+
         return ScheduleTodoResponse(
             project_id=project_id,
             message="todo completed",
@@ -125,10 +134,53 @@ class ScheduleService:
                     "title": completed_todo.get("title"),
                     "next_status": "DONE",
                 },
-                "todos": [completed_todo],
-                "metadata": {"event": "TODO_COMPLETED"},
+                "todos": [completed_todo, *remaining_todos],
+                "remaining_todos": remaining_todos,
+                "metadata": {
+                    "event": "TODO_COMPLETED",
+                    "remaining_todo_count": len(remaining_todos),
+                },
             },
         )
+
+    async def _request_with_source_document_notes(
+        self,
+        request: ScheduleTodoRequest,
+    ) -> ScheduleTodoRequest:
+        if self.document_repository is None or not request.source_document_ids:
+            return request
+
+        document_text = await self._load_source_document_text(
+            project_id=request.project_id,
+            document_ids=request.source_document_ids,
+        )
+        if not document_text:
+            return request
+
+        meeting_notes = "\n".join(
+            part
+            for part in [document_text, request.meeting_notes]
+            if str(part or "").strip()
+        )
+        return request.model_copy(update={"meeting_notes": meeting_notes})
+
+    async def _load_source_document_text(
+        self,
+        *,
+        project_id: str,
+        document_ids: list[str],
+    ) -> str:
+        lines: list[str] = []
+        for document_id in document_ids:
+            chunks = await self.document_repository.list_chunks_by_document(
+                project_id=project_id,
+                document_id=document_id,
+            )
+            for chunk in chunks:
+                text = str(getattr(chunk, "text", "") or "").strip()
+                if text:
+                    lines.append(text)
+        return "\n".join(lines)
 
     async def run_query(
         self,

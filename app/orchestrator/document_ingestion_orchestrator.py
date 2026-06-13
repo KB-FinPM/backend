@@ -112,21 +112,6 @@ class DocumentIngestionOrchestrator:
                     ]
                     if value not in (None, "")
                 )
-                await document_repository.create_chunk(
-                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                    project_id=project_id,
-                    document_id=document_id,
-                    chunk_index=index,
-                    text=text or str(row.get("title") or row.get("WBS명") or "WBS"),
-                    section_title=str(row.get("title") or row.get("WBS명") or "WBS"),
-                    chunk_metadata={
-                        **base_metadata,
-                        "parser_name": parser_name or "DocumentParserAgent",
-                        "source_file_name": file_name,
-                        "wbs_context": context_summary,
-                        "wbs_row": row,
-                    },
-                )
                 row_items.append(
                     {
                         "chunk_index": index,

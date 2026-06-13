@@ -537,6 +537,7 @@ class ScheduleManagementAgent:
                 required_context="WBS",
                 missing_fields=["wbs"],
                 week_context=week_context,
+                context=context,
             )
         result = {
             "action": "SHOW_CURRENT_WEEK",
@@ -564,6 +565,7 @@ class ScheduleManagementAgent:
                 required_context="WBS",
                 missing_fields=["wbs"],
                 week_context=week_context,
+                context=context,
             )
         if missing_fields:
             return {
@@ -658,6 +660,7 @@ class ScheduleManagementAgent:
                 action="SHOW_ASSIGNEE_TODOS",
                 required_context="ASSIGNEE",
                 missing_fields=["assignee"],
+                context=context,
             )
 
         todos = [
@@ -684,6 +687,7 @@ class ScheduleManagementAgent:
                 action="COMPARE_WEEKLY_MEETING_TODOS",
                 required_context="MEETING_NOTES",
                 missing_fields=["previous_meeting_notes", "current_meeting_notes"],
+                context=context,
             )
         previous_items = [
             self._normalize_todo(todo) for todo in previous_todos if isinstance(todo, dict)
@@ -747,6 +751,7 @@ class ScheduleManagementAgent:
         required_context: str,
         missing_fields: list[str],
         week_context: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             "artifact_type": "SCHEDULE_TODO_LIST",
@@ -756,7 +761,10 @@ class ScheduleManagementAgent:
             "needs_confirmation": [],
             "missing_fields": missing_fields,
             "week_context": week_context or {},
-            "metadata": {"required_context": required_context},
+            "metadata": {
+                "required_context": required_context,
+                **self._source_availability(context or {}),
+            },
         }
 
     def _schedule_context_error_result(
@@ -1249,6 +1257,34 @@ class ScheduleManagementAgent:
                 "missing_fields": ["todos"],
             }
 
+        ordinal_match = re.search(r"(?<!\d)(\d+)\s*번", target_text)
+        active_todos = [todo for todo in todos if todo.get("status") != "DONE"]
+        if ordinal_match:
+            ordinal = int(ordinal_match.group(1))
+            if 1 <= ordinal <= len(active_todos):
+                return {
+                    "action": "COMPLETE_TODO",
+                    "status": "READY_TO_UPDATE",
+                    "matched_todo": self._matched_todo(active_todos[ordinal - 1]),
+                    "candidates": [],
+                    "metadata": {"match_strategy": "ordinal"},
+                }
+            return {
+                "action": "COMPLETE_TODO",
+                "status": "CLARIFICATION_REQUIRED",
+                "message_key": "TODO_ORDINAL_OUT_OF_RANGE",
+                "candidates": [
+                    {
+                        "todo_id": todo.get("todo_id"),
+                        "title": todo.get("title"),
+                        "assignee": todo.get("assignee"),
+                        "due_date": todo.get("due_date"),
+                        "status": todo.get("status"),
+                    }
+                    for todo in active_todos
+                ],
+            }
+
         todo_id_match = re.search(r"TODO-[A-Za-z0-9-]+", target_text, re.IGNORECASE)
         if todo_id_match:
             todo_id = todo_id_match.group(0).upper()
@@ -1295,6 +1331,31 @@ class ScheduleManagementAgent:
             "status": "NOT_FOUND",
             "message_key": "TODO_NOT_FOUND",
             "candidates": [],
+        }
+
+    def _source_availability(self, context: dict[str, Any]) -> dict[str, Any]:
+        normalized_input = context.get("normalized_input") or {}
+        snapshot = normalized_input.get("context_snapshot") or {}
+        uploaded_types = {
+            str(value or "").upper()
+            for value in snapshot.get("uploaded_document_types") or []
+        }
+        generated_types = {
+            str(value or "").upper()
+            for value in snapshot.get("generated_artifact_types") or []
+        }
+        requirement_sources = {
+            "REQUIREMENT_SPEC",
+            "CONSTRUCTION_REQUIREMENT_DEFINITION",
+            "RFP",
+        }
+        return {
+            "has_requirement_source": bool(
+                uploaded_types & requirement_sources
+                or generated_types & requirement_sources
+            ),
+            "uploaded_document_types": sorted(uploaded_types),
+            "generated_artifact_types": sorted(generated_types),
         }
 
     def _matched_todo(self, todo: dict[str, Any]) -> dict[str, Any]:
