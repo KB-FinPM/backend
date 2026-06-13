@@ -1166,12 +1166,11 @@ class ArtifactExportService:
     def _fill_description_table(self, slide: Any, source: dict[str, Any], table_mapper: dict[str, Any]) -> bool:
         start_row = int(table_mapper.get("start_row", 1))
         target_column = int(table_mapper.get("target_column", 1))
-        max_items = int(table_mapper.get("max_items", 10))
         clear_rows = bool(table_mapper.get("clear_rows_before_fill", True))
         header_text = str(table_mapper.get("header_text") or "").strip()
         min_rows = int(table_mapper.get("min_rows", 0))
         min_columns = int(table_mapper.get("min_columns", 0))
-        description_lines = self._screen_description_lines(source, max_items=max_items)
+        description_lines = self._screen_description_lines(source)
         for shape in slide.shapes:
             if not getattr(shape, "has_table", False):
                 continue
@@ -1223,7 +1222,7 @@ class ArtifactExportService:
             return True
         return False
 
-    def _screen_description_lines(self, source: dict[str, Any], max_items: int) -> list[str]:
+    def _screen_description_lines(self, source: dict[str, Any]) -> list[str]:
         description = str(source.get("description") or "").strip()
         if not description:
             return []
@@ -1234,9 +1233,7 @@ class ArtifactExportService:
         ]
         if not lines:
             return []
-        if len(lines) <= max_items:
-            return lines
-        return lines[: max_items - 1] + ["\n".join(lines[max_items - 1:])]
+        return lines
 
     def _description_table_style_cell(
         self,

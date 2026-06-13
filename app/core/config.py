@@ -46,10 +46,12 @@ class Settings(BaseSettings):
     BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-4-5"
     BEDROCK_INFERENCE_PROFILE_ID: str = ""
 
+    EMBEDDING_MODEL_NAME: str = "intfloat/multilingual-e5-large"
+    EMBEDDING_DIMENSIONS: int = 1024
+    EMBEDDING_NORMALIZE: bool = True
+
     DATABASE_URL: str = "sqlite+aiosqlite:///./finpm.db"
     DATABASE_SSL_VERIFY: bool = True
-
-    VECTOR_STORE_TYPE: str = "pgvector"
 
     @field_validator("DEBUG", mode="before")
     @classmethod

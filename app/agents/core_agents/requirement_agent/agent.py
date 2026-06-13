@@ -45,7 +45,6 @@ EXTRACTION_SYSTEM_PROMPT = """
 - 개발 프로젝트에서는 업무, 화면, 기능, 인터페이스, 데이터, 권한, 배치 등을 Biz요건명 후보로 본다.
 - 기능 구현과 직접 관련 있으면 기능요구사항으로 분류한다.
 - 성능, 보안, 권한, 로그, 접근성, 운영, 백업, 장애대응은 비기능요구사항으로 분류한다.
-- 한 번의 응답에서 최대 10개 요구사항만 추출한다.
 - 각 description은 120자 이내로 요약한다.
 - note는 50자 이내로 작성한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
@@ -175,9 +174,11 @@ class RequirementAgent:
             f"project_id={request.project_id} | table_atom_count={len(table_atoms)}"
         )
         if table_atoms:
+            total_calls = len(table_atoms)
             logger.info(
                 f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} table path -> LLM | "
-                f"project_id={request.project_id} | candidate_count={len(table_atoms)}"
+                f"project_id={request.project_id} | candidate_count={len(table_atoms)} | "
+                f"planned_calls={total_calls}"
             )
             chunk_items = []
             for index, atom in enumerate(table_atoms, start=1):
@@ -185,7 +186,9 @@ class RequirementAgent:
                 llm_result = await orchestrator.invoke_agent_llm(
                     system_prompt=TABLE_REFINEMENT_SYSTEM_PROMPT,
                     user_prompt=prompt,
-                    max_tokens=1800,
+                    call_index=index,
+                    call_total=total_calls,
+                    call_label="requirement-table",
                 )
                 parsed_obj = parse_json_object(llm_result)
                 parsed_items = parse_json_array(llm_result)
@@ -250,26 +253,32 @@ class RequirementAgent:
 
         # 2) Fallback to sample_0605 chunk-by-chunk LLM extraction when no
         # source requirement table is detected.
+        runnable_documents = [
+            document
+            for document in documents
+            if str(document.get("text") or "").strip()
+        ]
         logger.info(
             f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk fallback path -> LLM | "
-            f"project_id={request.project_id}"
+            f"project_id={request.project_id} | planned_calls={len(runnable_documents)}"
         )
         atoms = []
-        for idx, document in enumerate(documents, start=1):
+        total_calls = len(runnable_documents)
+        for idx, document in enumerate(runnable_documents, start=1):
             text = str(document.get("text") or "").strip()
-            if not text:
-                continue
             logger.info(
                 f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk LLM request | "
                 f"project_id={request.project_id} | "
-                f"chunk_index={idx} | chunk_id={document.get('chunk_id')} | "
+                f"chunk_index={idx}/{total_calls} | chunk_id={document.get('chunk_id')} | "
                 f"text_chars={len(text)}"
             )
-            prompt = self._build_chunk_prompt(request, document, idx, len(documents))
+            prompt = self._build_chunk_prompt(request, document, idx, total_calls)
             llm_result = await orchestrator.invoke_agent_llm(
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
                 user_prompt=prompt,
-                max_tokens=6000,
+                call_index=idx,
+                call_total=total_calls,
+                call_label="requirement-chunk",
             )
             chunk_items = parse_json_array(llm_result)
             if not chunk_items:
@@ -329,9 +338,9 @@ class RequirementAgent:
                 "document_id": document.get("document_id"),
                 "chunk_id": document.get("chunk_id"),
                 "section_title": document.get("section_title"),
-                "text": str(document.get("text") or "")[:2000],
+                "text": str(document.get("text") or ""),
             }
-            for document in documents[:20]
+            for document in documents
         ]
         return f"""
 Project ID: {request.project_id}

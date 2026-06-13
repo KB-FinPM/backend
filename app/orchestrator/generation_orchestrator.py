@@ -143,13 +143,24 @@ class GenerationOrchestrator:
         # chunks from the selected source document. Passing user-facing commands
         # like "요구사항명세서를 생성해줘" as keyword filters can reduce context
         # to one irrelevant chunk and degrade output quality.
-        retrieval_query = ""
+        retrieval_query = " ".join(
+            part
+            for part in [
+                request.query,
+                request.project_name,
+                generation_flow.source_document_type.value
+                if generation_flow.source_document_type
+                else None,
+                generation_flow.target_artifact_type.value,
+            ]
+            if isinstance(part, str) and part.strip()
+        )
         documents = await retrieval.search(
             project_id=request.project_id,
             permission_scope=request.permission_scope,
             query=retrieval_query,
-            top_k=200,
             document_ids=request.source_document_ids or None,
+            search_mode="vector",
         )
 
         agent_request = AgentRequest(
@@ -255,14 +266,16 @@ class GenerationOrchestrator:
         self,
         system_prompt: str,
         user_prompt: str,
-        max_tokens: int = 4000,
+        *,
+        call_index: int | None = None,
+        call_total: int | None = None,
+        call_label: str | None = None,
     ) -> str:
         """Delegates agent LLM execution through the orchestrator boundary.
 
         Core agents must not instantiate Bedrock or other model clients directly.
         The current backend LLM service accepts a single prompt, so the system
-        and user prompts are composed here. max_tokens is kept for future LLM
-        adapters and caller intent, but the active service may ignore it.
+        and user prompts are composed here.
         """
         prompt = (
             f"System instruction:\n{system_prompt.strip()}\n\n"
@@ -270,16 +283,22 @@ class GenerationOrchestrator:
         )
         logger.info(
             f"[Orchestrator] {LLM_LOG_PREFIX} invoke request | "
-            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)} | max_tokens={max_tokens}"
+            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)}"
         )
         logger.debug(
             f"[Orchestrator] {LLM_LOG_PREFIX} prompt preview | "
             f"text={prompt[:300]}"
         )
-        response = await llm_service.invoke(prompt)
+        response = await llm_service.invoke(
+            prompt,
+            call_index=call_index,
+            call_total=call_total,
+            call_label=call_label,
+        )
         logger.info(
             f"[Orchestrator] {LLM_LOG_PREFIX} invoke response | "
-            f"response_chars={len(response)}"
+            f"response_chars={len(response)} | "
+            f"progress={(f'{call_index}/{call_total}' if call_total is not None and call_index is not None else 'n/a')}"
         )
         logger.debug(
             f"[Orchestrator] {LLM_LOG_PREFIX} response preview | "
@@ -309,6 +328,7 @@ class GenerationOrchestrator:
             permission_scope=permission_scope,
             query=query,
             document_ids=document_ids,
+            search_mode="vector",
         )
 
     def _not_implemented_response(
