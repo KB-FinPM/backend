@@ -36,7 +36,13 @@ from app.services.template_service import TemplateService
 
 
 class ChatOrchestrator:
-    """Coordinates chat state while delegating PM work to existing services."""
+    """Central PM workflow controller for conversational requests.
+
+    The orchestrator owns project context lookup, Input Agent invocation,
+    downstream agent/service selection, and Output Agent rendering. Input Agent
+    results are treated as semantic analysis only, never as executable control
+    flow outside this class.
+    """
 
     def __init__(
         self,
@@ -77,6 +83,10 @@ class ChatOrchestrator:
             },
         )
 
+        input_context = await self._build_input_context(
+            conversation=conversation,
+            request=request,
+        )
         input_response = await self.input_normalizer.normalize(
             InputAgentRequest(
                 project_id=request.project_id,
@@ -89,7 +99,7 @@ class ChatOrchestrator:
                     if request.action
                     else None,
                 },
-                context=request.context,
+                context=input_context,
             )
         )
         if not input_response.success:
@@ -117,6 +127,17 @@ class ChatOrchestrator:
                 conversation=conversation,
                 project_id=request.project_id,
                 action_id=structured_context.get("action_id"),
+            )
+
+        if intent == "CLARIFICATION_REQUIRED":
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                result_json={
+                    "event": "CLARIFICATION_REQUIRED",
+                    "question": structured_context.get("clarification_question"),
+                    "semantic_slots": structured_context.get("semantic_slots") or {},
+                },
             )
 
         if intent == "GENERATE_ARTIFACT":
@@ -203,6 +224,126 @@ class ChatOrchestrator:
             user_id=request.user_id,
             title=request.message[:80],
         )
+
+    async def _build_input_context(
+        self,
+        *,
+        conversation: ConversationMetadata,
+        request: ChatMessageRequest,
+    ) -> dict[str, Any]:
+        context = dict(request.context or {})
+        context.setdefault("current_project_id", request.project_id)
+        context.setdefault("project_id", request.project_id)
+
+        if "last_agent_response_summary" not in context:
+            latest_assistant_message = await self._latest_assistant_message(
+                project_id=request.project_id,
+                conversation_id=conversation.conversation_id,
+            )
+            if latest_assistant_message is not None:
+                context["last_agent_response_summary"] = (
+                    self._summarize_agent_response(latest_assistant_message)
+                )
+
+        if "pending_action" not in context:
+            pending_action = await self.conversation_repository.get_latest_waiting_action(
+                project_id=request.project_id,
+                conversation_id=conversation.conversation_id,
+            )
+            if pending_action is not None:
+                context["pending_action"] = pending_action.model_dump(mode="json")
+
+        if "uploaded_documents" not in context and hasattr(
+            self.document_service,
+            "list_documents",
+        ):
+            try:
+                documents = await self.document_service.list_documents(
+                    project_id=request.project_id,
+                )
+            except Exception:
+                documents = []
+            if documents:
+                context["uploaded_documents"] = [
+                    document.model_dump(mode="json")
+                    if hasattr(document, "model_dump")
+                    else document
+                    for document in documents
+                ]
+
+        if "generated_artifacts" not in context and hasattr(
+            self.artifact_service,
+            "list_artifacts",
+        ):
+            try:
+                artifacts = await self.artifact_service.list_artifacts(
+                    project_id=request.project_id,
+                )
+            except Exception:
+                artifacts = []
+            if artifacts:
+                context["generated_artifacts"] = [
+                    artifact.model_dump(mode="json")
+                    if hasattr(artifact, "model_dump")
+                    else artifact
+                    for artifact in artifacts
+                ]
+
+        action_item_repository = getattr(
+            self.schedule_service,
+            "action_item_repository",
+            None,
+        )
+        if "recent_todos" not in context and action_item_repository is not None:
+            try:
+                todos = await action_item_repository.list_project_todos(
+                    project_id=request.project_id,
+                )
+            except Exception:
+                todos = []
+            if todos:
+                context["recent_todos"] = todos[:10]
+
+        return context
+
+    async def _latest_assistant_message(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+    ) -> Any | None:
+        if not hasattr(self.conversation_repository, "get_latest_message_by_role"):
+            return None
+        try:
+            return await self.conversation_repository.get_latest_message_by_role(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                role=ChatRole.ASSISTANT,
+            )
+        except Exception:
+            return None
+
+    def _summarize_agent_response(self, message: Any) -> dict[str, Any]:
+        payload = getattr(message, "structured_payload", None) or {}
+        content = str(getattr(message, "content", "") or "")
+        result = payload.get("result") if isinstance(payload, dict) else None
+        summary: dict[str, Any] = {
+            "message_id": getattr(message, "message_id", None),
+            "content": content[:500],
+        }
+        if isinstance(payload, dict):
+            for key in ("state", "display_type", "message"):
+                if payload.get(key):
+                    summary[key] = payload.get(key)
+        if isinstance(result, dict):
+            metadata = result.get("metadata") or {}
+            if result.get("action"):
+                summary["action"] = result.get("action")
+            if result.get("status"):
+                summary["status"] = result.get("status")
+            if isinstance(metadata, dict) and metadata.get("todo_count") is not None:
+                summary["todo_count"] = metadata.get("todo_count")
+        return summary
 
     async def _prepare_generation_action(
         self,

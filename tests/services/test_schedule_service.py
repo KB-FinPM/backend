@@ -92,6 +92,30 @@ class StubArtifactRepository:
         ]
 
 
+class StubNestedArtifactRepository:
+    async def list_artifacts_by_project(self, *, project_id: str) -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(
+                artifact_id="ART-WBS-002",
+                artifact_type="WBS",
+                name="generated-wbs-nested.xlsx",
+                result_json={
+                    "artifact_type": "WBS",
+                    "generated": {
+                        "rows": [
+                            {
+                                "task_id": "WBS-002",
+                                "name": "개발 및 테스트",
+                                "start_date": "2026-06-08",
+                                "end_date": "2026-06-14",
+                            }
+                        ],
+                    },
+                },
+            )
+        ]
+
+
 @pytest.mark.anyio
 async def test_schedule_service_uses_generated_wbs_artifact_without_upload() -> None:
     action_item_repository = StubActionItemRepository()
@@ -116,3 +140,27 @@ async def test_schedule_service_uses_generated_wbs_artifact_without_upload() -> 
     assert response.result["todos"][0]["title"] == "설계 및 테스트"
     assert response.result["metadata"]["wbs_todos_saved"] is True
     assert action_item_repository.saved_wbs_todos
+
+
+@pytest.mark.anyio
+async def test_schedule_service_reads_generated_wbs_rows_from_nested_artifact() -> None:
+    action_item_repository = StubActionItemRepository()
+    service = ScheduleService(
+        orchestrator=ScheduleOrchestrator(),
+        action_item_repository=action_item_repository,
+        artifact_repository=StubNestedArtifactRepository(),
+    )
+
+    response = await service.run_query(
+        project_id="PRJ-001",
+        schedule_action="SHOW_THIS_WEEK_TODOS",
+        context={
+            "current_date": "2026-06-10",
+            "normalized_input": {"needs_context": ["WBS", "TODO_LIST"]},
+        },
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "SUCCESS"
+    assert response.result["todos"][0]["title"] == "개발 및 테스트"
+    assert response.result["todos"][0]["source_artifact_id"] == "ART-WBS-002"
