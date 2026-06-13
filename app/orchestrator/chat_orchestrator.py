@@ -1,5 +1,6 @@
 # EN: Orchestrates chat messages, pending actions, and delegated PM workflows.
 
+import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -31,6 +32,10 @@ from app.schemas.response import GenerationResponse, ScheduleTodoResponse
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.generation_job_service import (
+    is_generation_action,
+    run_generation_action_job,
+)
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 
@@ -402,6 +407,9 @@ class ChatOrchestrator:
             "source_documents": request.context.get("selected_documents") or [],
             "source_document_type": structured_context.get("source_document_type"),
             "project_name": request.context.get("project_name"),
+            "start_date": self._project_context_value(request.context, "start_date"),
+            "end_date": self._project_context_value(request.context, "end_date"),
+            "project_period": request.context.get("project_period"),
             "query": request.message,
             "permission_scope": request.permission_scope,
             "template_id": request.context.get("template_id"),
@@ -484,7 +492,38 @@ class ChatOrchestrator:
             project_id=project_id,
             action_id=pending_action.action_id,
             status=ChatActionStatus.EXECUTING,
+            result_json={
+                "status": ChatActionStatus.EXECUTING.value,
+                "action_id": pending_action.action_id,
+                "job_id": pending_action.action_id,
+            },
         )
+        if is_generation_action(pending_action.action_type):
+            started_action = await self.conversation_repository.get_action(
+                project_id=project_id,
+                action_id=pending_action.action_id,
+            )
+            asyncio.create_task(
+                run_generation_action_job(
+                    project_id=project_id,
+                    action_id=pending_action.action_id,
+                )
+            )
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=project_id,
+                result_json={
+                    "event": "ACTION_STARTED",
+                    "action_id": pending_action.action_id,
+                    "pending_action": (
+                        started_action.model_dump(mode="json")
+                        if started_action is not None
+                        else pending_action.model_dump(mode="json")
+                    ),
+                },
+                pending_action=started_action or pending_action,
+            )
+
         response = await self._execute_action(pending_action)
         response_payload = response.model_dump(mode="json")
         if not response.success:
@@ -737,3 +776,16 @@ class ChatOrchestrator:
 
     def _new_id(self, prefix: str) -> str:
         return f"{prefix}-{uuid4().hex[:12].upper()}"
+
+    def _project_context_value(
+        self,
+        context: dict[str, Any],
+        field_name: str,
+    ) -> Any:
+        value = context.get(field_name)
+        if value:
+            return value
+        project = context.get("project")
+        if isinstance(project, dict):
+            return project.get(field_name)
+        return None

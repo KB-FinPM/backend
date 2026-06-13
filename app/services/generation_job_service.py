@@ -1,0 +1,126 @@
+from app.core.logger import get_logger
+from app.db.session import AsyncSessionLocal
+from app.orchestrator.generation_orchestrator import generation_orchestrator
+from app.repositories.artifact_repository import ArtifactRepository
+from app.repositories.conversation_repository import ConversationRepository
+from app.repositories.document_repository import DocumentRepository
+from app.repositories.template_repository import TemplateRepository
+from app.rag.retrieval import RetrievalService
+from app.schemas.chat import ChatActionMetadata, ChatActionStatus, ChatActionType
+from app.schemas.request import GenerationRequest
+from app.schemas.response import GenerationResponse
+from app.services.artifact_service import ArtifactService
+from app.services.document_service import DocumentService
+from app.services.generation_service import GenerationService
+from app.services.template_service import TemplateService
+from app.storage.s3 import s3_service
+
+logger = get_logger(__name__)
+
+GENERATION_ACTION_TYPES = {
+    ChatActionType.GENERATE_REQUIREMENT,
+    ChatActionType.GENERATE_WBS,
+    ChatActionType.GENERATE_SCREEN_DESIGN,
+    ChatActionType.GENERATE_UNITTEST,
+}
+
+
+def is_generation_action(action_type: ChatActionType) -> bool:
+    return action_type in GENERATION_ACTION_TYPES
+
+
+async def run_generation_action_job(*, project_id: str, action_id: str) -> None:
+    async with AsyncSessionLocal() as session:
+        conversation_repository = ConversationRepository(session)
+        action = await conversation_repository.get_action(
+            project_id=project_id,
+            action_id=action_id,
+        )
+        if action is None:
+            logger.warning(
+                "generation job skipped; action not found | "
+                f"project_id={project_id} | action_id={action_id}"
+            )
+            return
+
+        if not is_generation_action(action.action_type):
+            logger.warning(
+                "generation job skipped; action type is not generation | "
+                f"project_id={project_id} | action_id={action_id} | "
+                f"action_type={action.action_type}"
+            )
+            return
+
+        try:
+            logger.info(
+                "generation job start | "
+                f"project_id={project_id} | action_id={action_id}"
+            )
+            response = await _execute_generation_action(action)
+            await conversation_repository.update_action_status(
+                project_id=project_id,
+                action_id=action_id,
+                status=ChatActionStatus.EXECUTED
+                if response.success
+                else ChatActionStatus.FAILED,
+                result_json=response.model_dump(mode="json"),
+            )
+            logger.info(
+                "generation job done | "
+                f"project_id={project_id} | action_id={action_id} | "
+                f"success={response.success}"
+            )
+        except Exception as exc:
+            logger.exception(
+                "generation job failed | "
+                f"project_id={project_id} | action_id={action_id}"
+            )
+            response = GenerationResponse(
+                success=False,
+                message=str(exc),
+                project_id=project_id,
+                result={"error": str(exc), "action_id": action_id},
+            )
+            await conversation_repository.update_action_status(
+                project_id=project_id,
+                action_id=action_id,
+                status=ChatActionStatus.FAILED,
+                result_json=response.model_dump(mode="json"),
+            )
+
+
+async def _execute_generation_action(
+    action: ChatActionMetadata,
+) -> GenerationResponse:
+    async with AsyncSessionLocal() as session:
+        document_repository = DocumentRepository(session)
+        artifact_repository = ArtifactRepository(session)
+        template_repository = TemplateRepository(session)
+
+        document_service = DocumentService(document_repository, s3_service)
+        artifact_service = ArtifactService(artifact_repository)
+        retrieval_service = RetrievalService(document_repository)
+        template_service = TemplateService(template_repository)
+        generation_service = GenerationService(generation_orchestrator)
+
+        payload = action.payload
+        generation_request = GenerationRequest(
+            project_id=payload["project_id"],
+            project_name=payload.get("project_name"),
+            start_date=payload.get("start_date"),
+            project_period=payload.get("project_period"),
+            source_document_ids=payload.get("source_document_ids") or [],
+            source_document_type=payload.get("source_document_type"),
+            target_artifact_type=payload["target_artifact_type"],
+            template_id=payload.get("template_id"),
+            template_version=payload.get("template_version"),
+            query=payload.get("query"),
+            permission_scope=payload.get("permission_scope") or ["project:read"],
+        )
+        return await generation_service.generate_artifact(
+            generation_request,
+            artifact_service=artifact_service,
+            retrieval_service=retrieval_service,
+            template_service=template_service,
+            document_service=document_service,
+        )

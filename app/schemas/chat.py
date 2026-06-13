@@ -115,3 +115,14 @@ class ChatResponse(BaseResponse):
     suggested_actions: list[ChatSuggestedAction] = Field(default_factory=list)
     result: dict[str, Any] = Field(default_factory=dict)
     download_files: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ChatActionStatusResponse(BaseResponse):
+    project_id: str
+    action_id: str
+    conversation_id: str
+    status: ChatActionStatus
+    state: ChatState = ChatState.IDLE
+    pending_action: ChatActionMetadata | None = None
+    result: dict[str, Any] = Field(default_factory=dict)
+    download_files: list[dict[str, Any]] = Field(default_factory=list)

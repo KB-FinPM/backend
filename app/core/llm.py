@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from app.core.config import Settings, settings
 from app.core.logger import get_logger
 
@@ -22,12 +23,21 @@ class LLMService:
     """
 
     def __init__(self):
+        bedrock_config = Config(
+            connect_timeout=settings.BEDROCK_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=settings.BEDROCK_READ_TIMEOUT_SECONDS,
+            retries={
+                "max_attempts": settings.BEDROCK_MAX_ATTEMPTS,
+                "mode": "standard",
+            },
+        )
         self.client = boto3.client(
             "bedrock-runtime",
             region_name=settings.AWS_REGION,
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
             verify=settings.AWS_CA_BUNDLE or settings.AWS_VERIFY_SSL,
+            config=bedrock_config,
         )
         self.model_id = ""
         self.model_source = "unset"

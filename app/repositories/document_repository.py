@@ -4,7 +4,7 @@
 from math import sqrt
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import DocumentChunkModel, DocumentModel
@@ -90,6 +90,31 @@ class DocumentRepository:
         await self.session.refresh(document)
 
         return self._to_metadata(document)
+
+    async def delete_document(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+    ) -> bool:
+        document_statement = select(DocumentModel).where(
+            DocumentModel.project_id == project_id,
+            DocumentModel.document_id == document_id,
+        )
+        result = await self.session.execute(document_statement)
+        document = result.scalar_one_or_none()
+        if document is None:
+            return False
+
+        await self.session.execute(
+            delete(DocumentChunkModel).where(
+                DocumentChunkModel.project_id == project_id,
+                DocumentChunkModel.document_id == document_id,
+            )
+        )
+        await self.session.delete(document)
+        await self.session.commit()
+        return True
 
     async def create_chunk(
         self,

@@ -175,11 +175,9 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
         "project:read",
         "artifact:generate",
     ]
-    assert retrieval.received_query == (
-        "Create a requirement spec CONSTRUCTION_REQUIREMENT_DEFINITION REQUIREMENT_SPEC"
-    )
+    assert retrieval.received_query == ""
     assert retrieval.received_document_ids == ["DOC-001"]
-    assert retrieval.received_search_mode == "vector"
+    assert retrieval.received_search_mode == "text"
     assert requirement.received_request is not None
     assert requirement.received_request.project_id == "PRJ-001"
     assert requirement.received_request.documents == [

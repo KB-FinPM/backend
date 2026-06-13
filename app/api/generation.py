@@ -11,6 +11,7 @@ from app.dependencies import (
     get_generation_service,
     get_input_orchestrator,
     get_output_orchestrator,
+    get_project_service,
     get_retrieval_service,
     get_template_service,
 )
@@ -30,6 +31,7 @@ from app.schemas.response import ErrorResponse, GenerationResponse
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.project_service import ProjectService
 from app.services.template_service import TemplateService
 
 logger = get_logger(__name__)
@@ -114,6 +116,7 @@ async def generate_requirement(
     document_service: DocumentService = Depends(get_document_service),
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
     template_service: TemplateService = Depends(get_template_service),
+    project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
@@ -127,6 +130,7 @@ async def generate_requirement(
         document_service=document_service,
         retrieval_service=retrieval_service,
         template_service=template_service,
+        project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
     )
@@ -144,6 +148,7 @@ async def generate_wbs(
     document_service: DocumentService = Depends(get_document_service),
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
     template_service: TemplateService = Depends(get_template_service),
+    project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
@@ -161,6 +166,7 @@ async def generate_wbs(
         document_service=document_service,
         retrieval_service=retrieval_service,
         template_service=template_service,
+        project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
     )
@@ -181,6 +187,7 @@ async def generate_screen_design(
     document_service: DocumentService = Depends(get_document_service),
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
     template_service: TemplateService = Depends(get_template_service),
+    project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
@@ -198,6 +205,7 @@ async def generate_screen_design(
         document_service=document_service,
         retrieval_service=retrieval_service,
         template_service=template_service,
+        project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
     )
@@ -218,6 +226,7 @@ async def generate_unittest(
     document_service: DocumentService = Depends(get_document_service),
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
     template_service: TemplateService = Depends(get_template_service),
+    project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> GenerationResponse:
@@ -235,6 +244,7 @@ async def generate_unittest(
         document_service=document_service,
         retrieval_service=retrieval_service,
         template_service=template_service,
+        project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
     )
@@ -248,9 +258,11 @@ async def _generate_artifact_response(
     document_service: DocumentService,
     retrieval_service: RetrievalService,
     template_service: TemplateService,
+    project_service: ProjectService,
     input_orchestrator: InputOrchestrator,
     output_orchestrator: OutputOrchestrator,
 ) -> GenerationResponse:
+    await _hydrate_project_metadata(request, project_service)
     await _validate_source_documents(
         request=request,
         generation_service=generation_service,
@@ -272,6 +284,21 @@ async def _generate_artifact_response(
         document_service=document_service,
     )
     return await _format_generation_response(response, output_orchestrator)
+
+
+async def _hydrate_project_metadata(
+    request: GenerationRequest,
+    project_service: ProjectService,
+) -> None:
+    if request.project_name and request.start_date:
+        return
+    project = await project_service.get_project(request.project_id)
+    if project is None:
+        return
+    if not request.project_name:
+        request.project_name = project.project_name
+    if not request.start_date and project.start_date is not None:
+        request.start_date = project.start_date.isoformat()
 
 
 async def _normalize_generation_input(
