@@ -20,27 +20,18 @@ jobs:
           EC2_PRIVATE_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
           EC2_PORT: ${{ secrets.EC2_PORT }}
           APP_DIRECTORY: ${{ secrets.APP_DIRECTORY }}
-
         run: |
           mkdir -p ~/.ssh
           echo "$EC2_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-          ssh-keyscan -p ${{ env.EC2_PORT }} \
-            ${{ env.EC2_HOST }} \
-            >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p "$EC2_PORT" "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-          ssh -i ~/.ssh/id_rsa \
-            -p ${{ env.EC2_PORT }} \
-            ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
-
+          ssh -i ~/.ssh/id_rsa -p "$EC2_PORT" "$EC2_USER@$EC2_HOST" << EOF
           set -e
 
-          echo "===== CURRENT PATH ====="
-          pwd
-
           echo "===== MOVE TO APP DIRECTORY ====="
-          cd "${{ env.APP_DIRECTORY }}"
+          cd "${APP_DIRECTORY}"
           pwd
 
           echo "===== FILE CHECK ====="
@@ -54,16 +45,7 @@ jobs:
           source venv/bin/activate
 
           echo "===== SETTINGS CHECK ====="
-
-          python << 'PYTHON'
-from app.core.config import ENV_FILE, settings
-
-print("ENV_FILE =", ENV_FILE)
-print("ENV_EXISTS =", ENV_FILE.exists())
-print("DATABASE_URL =", settings.DATABASE_URL)
-print("DATABASE_SSL_VERIFY =", settings.DATABASE_SSL_VERIFY)
-print("ALLOWED_ORIGINS =", settings.ALLOWED_ORIGINS)
-PYTHON
+          python -c "from app.core.config import ENV_FILE, settings; print('ENV_FILE=', ENV_FILE); print('ENV_EXISTS=', ENV_FILE.exists()); print('DATABASE_URL_PREFIX=', settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else settings.DATABASE_URL); print('DATABASE_SSL_VERIFY=', settings.DATABASE_SSL_VERIFY); print('ALLOWED_ORIGINS=', settings.ALLOWED_ORIGINS)"
 
           echo "===== INSTALL REQUIREMENTS ====="
           pip install -r requirements.txt
@@ -72,10 +54,7 @@ PYTHON
           pkill -f "uvicorn app.main:app" || true
 
           echo "===== START FASTAPI ====="
-          nohup python -m uvicorn app.main:app \
-            --host 0.0.0.0 \
-            --port 8000 \
-            > app.log 2>&1 &
+          nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &
 
           sleep 5
 
@@ -90,5 +69,4 @@ PYTHON
           fi
 
           echo "FastAPI deployment complete"
-
           EOF
