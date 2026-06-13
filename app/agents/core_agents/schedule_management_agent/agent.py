@@ -826,6 +826,8 @@ class ScheduleManagementAgent:
             "raw_assignee",
             "assignee",
             "owner",
+            "worker",
+            "담당자",
             "작업자",
         )
         assignee, assignee_display = self._normalize_assignee(raw_assignee)
@@ -836,7 +838,7 @@ class ScheduleManagementAgent:
             self._task_value(task, "actual_end_date", "actualEndDate", "실제종료일")
         )
         status = self._normalize_wbs_status(
-            self._task_value(task, "raw_status", "status", "작업상태"),
+            self._task_value(task, "raw_status", "status", "work_status", "작업상태"),
             actual_start_date=actual_start_date,
             actual_end_date=actual_end_date,
         )
@@ -866,6 +868,9 @@ class ScheduleManagementAgent:
         return {
             "todo_id": todo_id,
             "project_id": task.get("project_id"),
+            "source_document_id": task.get("source_document_id"),
+            "source_document_name": source_document_name,
+            "source_artifact_id": task.get("source_artifact_id"),
             "row_number": row_number,
             "wbs_id": wbs_id,
             "title": title,
@@ -880,7 +885,7 @@ class ScheduleManagementAgent:
             else None,
             "actual_end_date": actual_end_date.isoformat() if actual_end_date else None,
             "due_date": end_date.isoformat() if end_date else None,
-            "artifact": self._task_value(task, "artifact", "산출물"),
+            "artifact": self._task_value(task, "artifact", "deliverable", "산출물"),
             "related_artifact": "WBS",
             "related_document": source_document_name or "WBS",
             "source_type": "WBS",
@@ -893,8 +898,11 @@ class ScheduleManagementAgent:
         }
 
     def _task_value(self, task: dict[str, Any], *keys: str) -> Any:
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
         for key in keys:
             value = task.get(key)
+            if value in (None, ""):
+                value = metadata.get(key)
             if value not in (None, ""):
                 return value
         return None
@@ -1225,15 +1233,45 @@ class ScheduleManagementAgent:
             return 0
         if title in query or query in title:
             return max(len(query), len(title))
+        compact_query = self._compact_match_text(query)
+        compact_title = self._compact_match_text(title)
+        if compact_query and compact_title and (
+            compact_title in compact_query or compact_query in compact_title
+        ):
+            return max(len(compact_query), len(compact_title))
         query_tokens = self._match_tokens(query)
         title_tokens = self._match_tokens(title)
         return len(query_tokens & title_tokens)
 
     def _normalize_match_text(self, value: str) -> str:
         text = str(value or "").lower()
-        for token in ("완료했어", "완료했습니다", "완료", "처리", "했어", "업무", "todo"):
+        for token in (
+            "완료했습니다",
+            "완료했어",
+            "완료",
+            "끝났어",
+            "끝냈어",
+            "끝났습니다",
+            "끝",
+            "처리했습니다",
+            "처리했어",
+            "처리",
+            "했습니다",
+            "했어",
+            "했어요",
+            "업무",
+            "todo",
+            "done",
+            "complete",
+        ):
             text = text.replace(token, " ")
         return " ".join(text.split())
+
+    def _compact_match_text(self, value: str) -> str:
+        compact = re.sub(r"[^0-9a-z가-힣]+", "", self._normalize_match_text(value))
+        for token in ("그리고", "및", "and", "와", "과"):
+            compact = compact.replace(token, "")
+        return compact
 
     def _match_tokens(self, value: str) -> set[str]:
         return {

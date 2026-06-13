@@ -144,21 +144,39 @@ class ScheduleService:
                 project_id=project_id,
             )
 
-        assembled_context = {
-            **(context or {}),
-            "todos": todos,
-            "permission_scope": permission_scope or ["project:read"],
-        }
+        assembled_context = dict(context or {})
         if not self._has_wbs_rows(assembled_context):
             wbs_context = await self._load_wbs_context(project_id=project_id)
             if wbs_context.get("rows") or wbs_context.get("tasks"):
                 assembled_context["wbs_context"] = wbs_context
 
-        return await self.orchestrator.run_schedule_action(
+        if self._has_wbs_rows(assembled_context):
+            todos = [
+                todo
+                for todo in todos
+                if str(todo.get("source_type") or "").upper() != "WBS"
+            ]
+
+        assembled_context = {
+            **assembled_context,
+            "todos": todos,
+            "permission_scope": permission_scope or ["project:read"],
+        }
+        response = await self.orchestrator.run_schedule_action(
             project_id=project_id,
             action=schedule_action,
             context=assembled_context,
         )
+        if (
+            response.success
+            and self.action_item_repository is not None
+            and isinstance(response.result, dict)
+        ):
+            response.result = await self._persist_wbs_todos(
+                project_id=project_id,
+                result=response.result,
+            )
+        return response
 
     def _has_wbs_rows(self, context: dict[str, Any]) -> bool:
         wbs_context = context.get("wbs_context")
@@ -172,6 +190,37 @@ class ScheduleService:
         rows: list[dict[str, Any]] = []
         tasks: list[dict[str, Any]] = []
         source_documents: list[str] = []
+
+        if self.artifact_repository is not None:
+            artifacts = await self.artifact_repository.list_artifacts_by_project(
+                project_id=project_id,
+            )
+            for artifact in artifacts:
+                if artifact.artifact_type != ArtifactType.WBS.value:
+                    continue
+                result_json = artifact.result_json or {}
+                artifact_tasks = result_json.get("tasks") or (
+                    result_json.get("wbs") or {}
+                ).get("tasks")
+                if isinstance(artifact_tasks, list):
+                    source_name = artifact.name or artifact.artifact_id
+                    source_documents.append(source_name)
+                    tasks.extend(
+                        {
+                            **task,
+                            "source_artifact_id": artifact.artifact_id,
+                            "source_artifact_type": ArtifactType.WBS.value,
+                            "source_document_name": source_name,
+                        }
+                        for task in artifact_tasks
+                        if isinstance(task, dict)
+                    )
+            if tasks:
+                return {
+                    "source_document_names": source_documents,
+                    "rows": [],
+                    "tasks": self._dedupe_wbs_rows(tasks),
+                }
 
         if self.document_repository is not None:
             documents = await self.document_repository.list_documents_by_project(
@@ -214,32 +263,54 @@ class ScheduleService:
                                     }
                                 )
 
-        if self.artifact_repository is not None:
-            artifacts = await self.artifact_repository.list_artifacts_by_project(
-                project_id=project_id,
-            )
-            for artifact in artifacts:
-                if artifact.artifact_type != ArtifactType.WBS.value:
-                    continue
-                result_json = artifact.result_json or {}
-                artifact_tasks = result_json.get("tasks") or (
-                    result_json.get("wbs") or {}
-                ).get("tasks")
-                if isinstance(artifact_tasks, list):
-                    source_name = artifact.name or artifact.artifact_id
-                    tasks.extend(
-                        {
-                            **task,
-                            "source_document_name": source_name,
-                        }
-                        for task in artifact_tasks
-                        if isinstance(task, dict)
-                    )
-
         return {
             "source_document_names": source_documents,
             "rows": self._dedupe_wbs_rows(rows),
             "tasks": self._dedupe_wbs_rows(tasks),
+        }
+
+    async def _persist_wbs_todos(
+        self,
+        *,
+        project_id: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        todos = result.get("todos") or []
+        if not isinstance(todos, list):
+            return result
+
+        wbs_todos = [
+            todo
+            for todo in todos
+            if isinstance(todo, dict)
+            and str(todo.get("source_type") or "").upper() == "WBS"
+        ]
+        if not wbs_todos:
+            return result
+
+        saved_wbs_todos = await self.action_item_repository.upsert_wbs_todos(
+            project_id=project_id,
+            todos=wbs_todos,
+        )
+        saved_iter = iter(saved_wbs_todos)
+        merged_todos: list[dict[str, Any]] = []
+        for todo in todos:
+            if (
+                isinstance(todo, dict)
+                and str(todo.get("source_type") or "").upper() == "WBS"
+            ):
+                merged_todos.append(next(saved_iter, todo))
+            else:
+                merged_todos.append(todo)
+
+        return {
+            **result,
+            "todos": merged_todos,
+            "metadata": {
+                **(result.get("metadata") or {}),
+                "wbs_todos_saved": True,
+                "wbs_todo_count": len(saved_wbs_todos),
+            },
         }
 
     def _dedupe_wbs_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

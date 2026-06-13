@@ -278,6 +278,43 @@ async def test_schedule_management_agent_matches_todo_completion() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "target_text",
+    [
+        "설계및테스트 완료",
+        "설계 및 테스트 완료",
+        "설계 테스트 끝났어",
+        "설계/테스트 완료했어",
+    ],
+)
+async def test_schedule_management_agent_matches_loose_korean_completion(
+    target_text,
+) -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "COMPLETE_TODO",
+                "target_text": target_text,
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "설계 및 테스트",
+                        "status": "TODO",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "READY_TO_UPDATE"
+    assert response.result["matched_todo"]["todo_id"] == "TODO-001"
+
+
+@pytest.mark.anyio
 async def test_schedule_management_agent_returns_ambiguous_completion_candidates() -> None:
     agent = ScheduleManagementAgent()
 

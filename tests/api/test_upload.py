@@ -130,7 +130,7 @@ def test_upload_document_returns_document_metadata(
             },
             files={
                 "file": (
-                    "construction-requirements.pdf",
+                    "construction-requirements.PDF",
                     b"source document bytes",
                     "application/pdf",
                 )
@@ -145,7 +145,7 @@ def test_upload_document_returns_document_metadata(
     assert body["message"] == "document uploaded"
     assert body["document"]["project_id"] == "PRJ-001"
     assert body["document"]["document_type"] == "CONSTRUCTION_REQUIREMENT_DEFINITION"
-    assert body["document"]["file_name"] == "construction-requirements.pdf"
+    assert body["document"]["file_name"] == "construction-requirements.PDF"
     assert body["document"]["status"] == "UPLOADED"
     assert body["display"] == {"formatted": True}
     assert body["document"]["document_id"].startswith("DOC-")

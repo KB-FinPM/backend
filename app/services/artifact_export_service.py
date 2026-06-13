@@ -122,6 +122,29 @@ class ArtifactExportService:
                     "parser_name": "ArtifactExportService",
                 },
             )
+        elif artifact_type == ArtifactType.WBS and document_service is not None:
+            document_id = f"DOC-{uuid4().hex[:12].upper()}"
+            wbs_context = self._wbs_context(result_json, file_name=safe_file_name)
+            generated_document = await document_service.ingest_uploaded_document(
+                document_id=document_id,
+                project_id=project_id,
+                document_type=DocumentType.WBS,
+                file_name=safe_file_name,
+                storage_path=storage_path,
+                file_bytes=file_bytes,
+                parsed_context={
+                    "text": self._wbs_text(result_json),
+                    "metadata": {
+                        "generated_from_artifact_id": artifact_id,
+                        "artifact_type": artifact_type.value,
+                        "source_file_name": safe_file_name,
+                        "content_type": content_type,
+                        "wbs_context": wbs_context,
+                    },
+                    "wbs_context": wbs_context,
+                    "parser_name": "ArtifactExportService",
+                },
+            )
 
         return ArtifactExportResult(
             storage_path=storage_path,
@@ -161,6 +184,94 @@ class ArtifactExportService:
                 )
             )
         return "\n".join(lines)
+
+    def _wbs_text(self, result_json: dict[str, Any]) -> str:
+        lines = ["# WBS"]
+        for task in result_json.get("tasks", []):
+            if not isinstance(task, dict):
+                continue
+            source = self._wbs_source(task)
+            lines.append(
+                " | ".join(
+                    str(value or "")
+                    for value in [
+                        source.get("task_id"),
+                        source.get("id"),
+                        source.get("wbs_name"),
+                        source.get("start_date"),
+                        source.get("end_date"),
+                        source.get("worker"),
+                        source.get("work_status") or source.get("status"),
+                    ]
+                )
+            )
+        return "\n".join(lines)
+
+    def _wbs_context(
+        self,
+        result_json: dict[str, Any],
+        *,
+        file_name: str,
+    ) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        for row_number, task in enumerate(result_json.get("tasks", []), start=1):
+            if not isinstance(task, dict):
+                continue
+            source = self._wbs_source(task)
+            title = str(source.get("wbs_name") or source.get("name") or "").strip()
+            if not title:
+                continue
+            start_date = source.get("start_date") or source.get("planned_start_date")
+            end_date = source.get("end_date") or source.get("planned_end_date")
+            worker = source.get("worker") or source.get("assignee") or source.get("owner")
+            deliverable = source.get("deliverable") or source.get("artifact")
+            status = (
+                source.get("work_status")
+                or source.get("status")
+                or source.get("raw_status")
+            )
+            rows.append(
+                {
+                    **task,
+                    "row_number": row_number,
+                    "no": row_number,
+                    "level": source.get("level"),
+                    "레벨": source.get("level"),
+                    "wbs_id": source.get("id"),
+                    "ID": source.get("id"),
+                    "title": title,
+                    "WBS명": title,
+                    "planned_start_date": start_date,
+                    "시작예정일": start_date,
+                    "planned_end_date": end_date,
+                    "종료예정일": end_date,
+                    "raw_assignee": worker,
+                    "작업자": worker,
+                    "artifact": deliverable,
+                    "산출물": deliverable,
+                    "raw_status": status,
+                    "작업상태": status,
+                    "source_document_name": file_name,
+                }
+            )
+
+        return {
+            "source_document_name": file_name,
+            "sheet_name": "WBS",
+            "header_row_number": 1,
+            "columns": {
+                "no": "NO",
+                "level": "레벨",
+                "id": "ID",
+                "title": "WBS명",
+                "planned_start_date": "시작예정일",
+                "planned_end_date": "종료예정일",
+                "assignee": "작업자",
+                "artifact": "산출물",
+                "status": "작업상태",
+            },
+            "rows": rows,
+        }
 
     def _build_requirement_xlsx(self, result_json: dict[str, Any]) -> bytes:
         from openpyxl import Workbook, load_workbook
