@@ -152,28 +152,40 @@ class ScheduleManagementAgent:
                 error=f"unsupported schedule action: {action}",
             )
 
-        if action == "EXTRACT_TODOS_FROM_MEETING":
-            return self._generate_todo_extraction(request, context)
-        if action == "SHOW_CURRENT_WEEK":
-            return self._success(self._current_week_result(context))
-        if action == "SHOW_THIS_WEEK_TODOS":
-            return self._success(self._this_week_todos_result(context))
-        if action == "SHOW_NEXT_WEEK_TODOS":
-            return self._success(self._period_todos_result(context, action, "NEXT_WEEK"))
-        if action == "SHOW_TODAY_TODOS":
-            return self._success(self._period_todos_result(context, action, "TODAY"))
-        if action == "ASSISTANT_BRIEFING":
-            return self._success(
-                self._period_todos_result(context, action, "THIS_WEEK")
+        try:
+            if action == "EXTRACT_TODOS_FROM_MEETING":
+                return self._generate_todo_extraction(request, context)
+            if action == "SHOW_CURRENT_WEEK":
+                return self._success(self._current_week_result(context))
+            if action == "SHOW_THIS_WEEK_TODOS":
+                return self._success(self._this_week_todos_result(context))
+            if action == "SHOW_NEXT_WEEK_TODOS":
+                return self._success(
+                    self._period_todos_result(context, action, "NEXT_WEEK")
+                )
+            if action == "SHOW_TODAY_TODOS":
+                return self._success(self._period_todos_result(context, action, "TODAY"))
+            if action == "ASSISTANT_BRIEFING":
+                return self._success(
+                    self._period_todos_result(context, action, "THIS_WEEK")
+                )
+            if action == "SHOW_OVERDUE_TODOS":
+                return self._success(self._overdue_todos_result(context))
+            if action == "SHOW_ASSIGNEE_TODOS":
+                return self._success(self._assignee_todos_result(context))
+            if action == "COMPARE_WEEKLY_MEETING_TODOS":
+                return self._success(self._weekly_meeting_comparison_result(context))
+            if action == "COMPLETE_TODO":
+                return self._success(self._complete_todo_result(context))
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "[%s] schedule context fallback returned required info | action=%s | error=%s",
+                self.AGENT_NAME,
+                action,
+                exc,
+                exc_info=True,
             )
-        if action == "SHOW_OVERDUE_TODOS":
-            return self._success(self._overdue_todos_result(context))
-        if action == "SHOW_ASSIGNEE_TODOS":
-            return self._success(self._assignee_todos_result(context))
-        if action == "COMPARE_WEEKLY_MEETING_TODOS":
-            return self._success(self._weekly_meeting_comparison_result(context))
-        if action == "COMPLETE_TODO":
-            return self._success(self._complete_todo_result(context))
+            return self._success(self._schedule_context_error_result(action, exc))
 
         return self._success(
             {
@@ -544,7 +556,15 @@ class ScheduleManagementAgent:
         action: str,
         period: str,
     ) -> dict[str, Any]:
+        wbs_tasks = self._context_wbs_tasks(context)
         week_context, missing_fields, status = self._project_week_context(context)
+        if self._requires_wbs_context(context, action) and not wbs_tasks:
+            return self._required_context_result(
+                action=action,
+                required_context="WBS",
+                missing_fields=["wbs"],
+                week_context=week_context,
+            )
         if missing_fields:
             return {
                 "artifact_type": "SCHEDULE_TODO_LIST",
@@ -554,19 +574,20 @@ class ScheduleManagementAgent:
                 "needs_confirmation": [],
                 "week_context": week_context,
                 "missing_fields": missing_fields,
-                "metadata": {},
+                "assistant_message": self._missing_period_context_message(
+                    missing_fields
+                ),
+                "metadata": {
+                    "required_context": "PROJECT_SCHEDULE",
+                    "message_key": "PERIOD_CONTEXT_REQUIRED",
+                },
             }
-        if self._requires_wbs_context(context, action) and not self._has_wbs_context(
-            context
-        ):
-            return self._required_context_result(
-                action=action,
-                required_context="WBS",
-                missing_fields=["wbs"],
-                week_context=week_context,
-            )
 
-        week_start, week_end = self._period_bounds(week_context, period)
+        week_start, week_end = self._period_bounds(
+            week_context,
+            period,
+            wbs_tasks=wbs_tasks,
+        )
         todos = []
         needs_confirmation = []
         for todo in self._context_todos(context):
@@ -577,7 +598,6 @@ class ScheduleManagementAgent:
             elif not due_date and normalized_todo.get("status") == "NEEDS_CONFIRMATION":
                 needs_confirmation.append(normalized_todo)
 
-        wbs_tasks = self._context_wbs_tasks(context)
         include_ongoing_tasks = self._include_ongoing_tasks(context)
         project_bounds = self._wbs_project_bounds(wbs_tasks, week_context)
         planned_tasks = []
@@ -604,6 +624,8 @@ class ScheduleManagementAgent:
             current_phase=current_phase,
             planned_tasks=planned_tasks,
             ongoing_management_tasks=ongoing_management_tasks,
+            period_start=week_start,
+            period_end=week_end,
         )
 
         return {
@@ -737,16 +759,65 @@ class ScheduleManagementAgent:
             "metadata": {"required_context": required_context},
         }
 
+    def _schedule_context_error_result(
+        self,
+        action: str,
+        exc: Exception,
+    ) -> dict[str, Any]:
+        return {
+            "artifact_type": "SCHEDULE_TODO_LIST",
+            "action": action,
+            "status": "REQUIRED_INFO",
+            "todos": [],
+            "needs_confirmation": [],
+            "missing_fields": ["schedule_context"],
+            "week_context": {},
+            "assistant_message": (
+                "WBS 또는 프로젝트 일정 기준 정보가 부족해 이번 주 범위를 계산할 수 없습니다. "
+                "프로젝트 시작일을 설정하거나 기간이 포함된 WBS를 생성/업로드해 주세요."
+            ),
+            "metadata": {
+                "required_context": "PROJECT_SCHEDULE",
+                "message_key": "SCHEDULE_CONTEXT_INVALID",
+                "error_type": type(exc).__name__,
+            },
+        }
+
+    def _missing_period_context_message(self, missing_fields: list[str]) -> str:
+        if "wbs.task_period" in missing_fields:
+            return (
+                "WBS는 확인했지만 작업 기간 정보가 없어 이번 주 할 일을 계산할 수 없습니다. "
+                "작업 시작일과 종료일이 포함된 WBS를 사용해 주세요."
+            )
+        return (
+            "WBS는 확인했지만 프로젝트 시작일 또는 작업 기간 정보가 없어 이번 주 범위를 "
+            "계산할 수 없습니다. 프로젝트 시작일을 먼저 설정해 주세요."
+        )
+
     def _period_bounds(
         self,
-        week_context: dict[str, Any],
+        week_context: dict[str, Any] | None,
         period: str,
+        *,
+        wbs_tasks: list[dict[str, Any]] | None = None,
     ) -> tuple[date, date]:
-        current_date = date.fromisoformat(week_context["current_date"])
+        week_context = week_context or {}
+        current_date = self._parse_date(week_context.get("current_date")) or date.today()
         if period == "TODAY":
             return current_date, current_date
-        week_start = date.fromisoformat(week_context["week_start_date"])
-        week_end = date.fromisoformat(week_context["week_end_date"])
+        week_start = self._parse_date(week_context.get("week_start_date"))
+        week_end = self._parse_date(week_context.get("week_end_date"))
+        if week_start is None or week_end is None:
+            project_start = self._parse_date(week_context.get("project_start_date"))
+            if project_start is None and wbs_tasks:
+                project_start, _ = self._wbs_project_bounds(wbs_tasks)
+            if project_start is not None:
+                week_start, week_end, _ = self._project_week_bounds(
+                    project_start=project_start,
+                    current_date=current_date,
+                )
+            else:
+                week_start, week_end = self._week_bounds(current_date)
         if period == "NEXT_WEEK":
             next_week_start = week_end + timedelta(days=1)
             return next_week_start, next_week_start + timedelta(days=6)
@@ -826,6 +897,8 @@ class ScheduleManagementAgent:
             "raw_assignee",
             "assignee",
             "owner",
+            "worker",
+            "담당자",
             "작업자",
         )
         assignee, assignee_display = self._normalize_assignee(raw_assignee)
@@ -836,7 +909,7 @@ class ScheduleManagementAgent:
             self._task_value(task, "actual_end_date", "actualEndDate", "실제종료일")
         )
         status = self._normalize_wbs_status(
-            self._task_value(task, "raw_status", "status", "작업상태"),
+            self._task_value(task, "raw_status", "status", "work_status", "작업상태"),
             actual_start_date=actual_start_date,
             actual_end_date=actual_end_date,
         )
@@ -866,6 +939,9 @@ class ScheduleManagementAgent:
         return {
             "todo_id": todo_id,
             "project_id": task.get("project_id"),
+            "source_document_id": task.get("source_document_id"),
+            "source_document_name": source_document_name,
+            "source_artifact_id": task.get("source_artifact_id"),
             "row_number": row_number,
             "wbs_id": wbs_id,
             "title": title,
@@ -880,7 +956,7 @@ class ScheduleManagementAgent:
             else None,
             "actual_end_date": actual_end_date.isoformat() if actual_end_date else None,
             "due_date": end_date.isoformat() if end_date else None,
-            "artifact": self._task_value(task, "artifact", "산출물"),
+            "artifact": self._task_value(task, "artifact", "deliverable", "산출물"),
             "related_artifact": "WBS",
             "related_document": source_document_name or "WBS",
             "source_type": "WBS",
@@ -893,8 +969,11 @@ class ScheduleManagementAgent:
         }
 
     def _task_value(self, task: dict[str, Any], *keys: str) -> Any:
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
         for key in keys:
             value = task.get(key)
+            if value in (None, ""):
+                value = metadata.get(key)
             if value not in (None, ""):
                 return value
         return None
@@ -1088,8 +1167,15 @@ class ScheduleManagementAgent:
         current_phase: dict[str, Any] | None,
         planned_tasks: list[dict[str, Any]],
         ongoing_management_tasks: list[dict[str, Any]],
+        period_start: date | None = None,
+        period_end: date | None = None,
     ) -> str:
-        period_start, period_end = self._period_bounds(week_context, period)
+        if period_start is None or period_end is None:
+            period_start, period_end = self._period_bounds(
+                week_context,
+                period,
+                wbs_tasks=planned_tasks + ongoing_management_tasks,
+            )
         period_label = {
             "TODAY": "오늘",
             "NEXT_WEEK": "다음 주",
@@ -1225,15 +1311,45 @@ class ScheduleManagementAgent:
             return 0
         if title in query or query in title:
             return max(len(query), len(title))
+        compact_query = self._compact_match_text(query)
+        compact_title = self._compact_match_text(title)
+        if compact_query and compact_title and (
+            compact_title in compact_query or compact_query in compact_title
+        ):
+            return max(len(compact_query), len(compact_title))
         query_tokens = self._match_tokens(query)
         title_tokens = self._match_tokens(title)
         return len(query_tokens & title_tokens)
 
     def _normalize_match_text(self, value: str) -> str:
         text = str(value or "").lower()
-        for token in ("완료했어", "완료했습니다", "완료", "처리", "했어", "업무", "todo"):
+        for token in (
+            "완료했습니다",
+            "완료했어",
+            "완료",
+            "끝났어",
+            "끝냈어",
+            "끝났습니다",
+            "끝",
+            "처리했습니다",
+            "처리했어",
+            "처리",
+            "했습니다",
+            "했어",
+            "했어요",
+            "업무",
+            "todo",
+            "done",
+            "complete",
+        ):
             text = text.replace(token, " ")
         return " ".join(text.split())
+
+    def _compact_match_text(self, value: str) -> str:
+        compact = re.sub(r"[^0-9a-z가-힣]+", "", self._normalize_match_text(value))
+        for token in ("그리고", "및", "and", "와", "과"):
+            compact = compact.replace(token, "")
+        return compact
 
     def _match_tokens(self, value: str) -> set[str]:
         return {
@@ -1259,54 +1375,53 @@ class ScheduleManagementAgent:
         if start_date is None:
             start_date = inferred_start_date
         if start_date is None:
+            missing_field = "wbs.task_period" if wbs_tasks else "project.start_date"
             return (
                 {
                     "current_date": current_date.isoformat(),
                     "project_start_date": None,
+                    "project_end_date": inferred_end_date.isoformat()
+                    if inferred_end_date
+                    else None,
+                    "wbs_task_count": len(wbs_tasks),
                 },
-                ["project.start_date"],
+                [missing_field],
                 "REQUIRED_INFO",
             )
 
         end_date = self._parse_date(project.get("end_date") or project.get("endDate"))
         if end_date is None:
             end_date = inferred_end_date
-        if current_date < start_date:
-            return (
-                {
-                    "project_start_date": start_date.isoformat(),
-                    "project_end_date": end_date.isoformat() if end_date else None,
-                    "current_date": current_date.isoformat(),
-                },
-                [],
-                "BEFORE_PROJECT_START",
-            )
-        if end_date and current_date > end_date:
-            return (
-                {
-                    "project_start_date": start_date.isoformat(),
-                    "project_end_date": end_date.isoformat(),
-                    "current_date": current_date.isoformat(),
-                },
-                [],
-                "AFTER_PROJECT_END",
-            )
-
-        current_week = ((current_date - start_date).days // 7) + 1
-        week_start = start_date + timedelta(days=(current_week - 1) * 7)
-        week_end = week_start + timedelta(days=6)
-        return (
-            {
-                "project_start_date": start_date.isoformat(),
-                "project_end_date": end_date.isoformat() if end_date else None,
-                "current_date": current_date.isoformat(),
-                "current_week": current_week,
-                "week_start_date": week_start.isoformat(),
-                "week_end_date": week_end.isoformat(),
-            },
-            [],
-            "SUCCESS",
+        week_start, week_end, current_week = self._project_week_bounds(
+            project_start=start_date,
+            current_date=current_date,
         )
+        week_context = {
+            "project_start_date": start_date.isoformat(),
+            "project_end_date": end_date.isoformat() if end_date else None,
+            "current_date": current_date.isoformat(),
+            "current_week": current_week,
+            "current_week_no": current_week,
+            "week_start_date": week_start.isoformat(),
+            "week_end_date": week_end.isoformat(),
+            "wbs_task_count": len(wbs_tasks),
+        }
+        if current_date < start_date:
+            return (week_context, [], "BEFORE_PROJECT_START")
+        if end_date and current_date > end_date:
+            return (week_context, [], "AFTER_PROJECT_END")
+
+        return (week_context, [], "SUCCESS")
+
+    def _project_week_bounds(
+        self,
+        *,
+        project_start: date,
+        current_date: date,
+    ) -> tuple[date, date, int]:
+        current_week = max(((current_date - project_start).days // 7) + 1, 1)
+        week_start = project_start + timedelta(days=(current_week - 1) * 7)
+        return week_start, week_start + timedelta(days=6), current_week
 
     def _week_bounds(self, current_date: date) -> tuple[date, date]:
         week_start = current_date - timedelta(days=current_date.weekday())

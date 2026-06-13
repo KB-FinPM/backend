@@ -87,6 +87,29 @@ class ConversationRepository:
         await self.session.refresh(message)
         return self._to_message_metadata(message)
 
+    async def get_latest_message_by_role(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        role: ChatRole,
+    ) -> ChatMessageMetadata | None:
+        statement = (
+            select(ConversationMessageModel)
+            .where(
+                ConversationMessageModel.project_id == project_id,
+                ConversationMessageModel.conversation_id == conversation_id,
+                ConversationMessageModel.role == role.value,
+            )
+            .order_by(ConversationMessageModel.created_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(statement)
+        message = result.scalar_one_or_none()
+        if message is None:
+            return None
+        return self._to_message_metadata(message)
+
     async def create_action(
         self,
         *,

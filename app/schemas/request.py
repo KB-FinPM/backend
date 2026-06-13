@@ -1,9 +1,11 @@
 # EN: Request schemas for upload and artifact generation APIs.
 # KO: 업로드 및 산출물 생성 API 요청 스키마입니다.
 
+from datetime import date
+import re
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.artifact import (
     ArtifactType,
@@ -25,6 +27,14 @@ class UploadRequest(BaseModel):
 class GenerationRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
     project_name: Optional[str] = Field(None, description="Project display name")
+    start_date: Optional[str] = Field(
+        None,
+        description="Optional project start date for WBS generation",
+    )
+    project_period: Optional[str] = Field(
+        None,
+        description="Optional project period for WBS generation",
+    )
     source_document_ids: list[str] = Field(
         default_factory=list,
         description="Source document IDs used to generate the target artifact",
@@ -49,14 +59,6 @@ class GenerationRequest(BaseModel):
         None,
         description="Template version to use for generation",
     )
-    start_date: Optional[str] = Field(
-        None,
-        description="WBS planned project start date",
-    )
-    project_period: Optional[str] = Field(
-        None,
-        description="WBS total project period",
-    )
     query: Optional[str] = Field(None, description="Additional generation request")
     author: Optional[str] = Field(None, description="Artifact author name")
     writer: Optional[str] = Field(None, description="Deprecated alias for author")
@@ -66,6 +68,27 @@ class GenerationRequest(BaseModel):
         default_factory=lambda: ["project:read"],
         description="Permission scope used for project-scoped retrieval",
     )
+
+    @field_validator("start_date")
+    @classmethod
+    def validate_start_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+
+        match = re.fullmatch(r"(\d{4})[-./](\d{2})[-./](\d{2})", text)
+        if not match:
+            raise ValueError("프로젝트 시작일은 YYYY-MM-DD 형식으로 입력해주세요.")
+
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError as exc:
+            raise ValueError(
+                "프로젝트 시작일은 YYYY-MM-DD 형식으로 입력해주세요."
+            ) from exc
 
     @model_validator(mode="after")
     def sync_document_id_aliases(self) -> "GenerationRequest":

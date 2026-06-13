@@ -9,6 +9,11 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.logger import get_logger
+from app.core.supported_files import (
+    SUPPORTED_FILE_TYPE_MESSAGE,
+    resolve_supported_file_type,
+    supported_extensions_for_display,
+)
 from app.dependencies import (
     get_document_service,
     get_input_orchestrator,
@@ -63,6 +68,22 @@ async def upload_document(
         f"file={safe_file_name}"
     )
 
+    resolved_file_type = resolve_supported_file_type(
+        file_name=safe_file_name,
+        content_type=file.content_type,
+    )
+    if resolved_file_type is None:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="UNSUPPORTED_UPLOAD_FILE_TYPE",
+            message=SUPPORTED_FILE_TYPE_MESSAGE,
+            detail={
+                "file_name": safe_file_name,
+                "content_type": file.content_type,
+                "supported_extensions": supported_extensions_for_display(),
+            },
+        )
+
     file_bytes = await file.read()
     if not file_bytes:
         raise ApiError(
@@ -101,8 +122,12 @@ async def upload_document(
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             error_code="DOCUMENT_INPUT_NORMALIZATION_FAILED",
-            message=input_response.error or "document input normalization failed",
-            detail={"errors": input_response.validation_errors},
+            message=input_response.error or "문서를 읽는 중 오류가 발생했습니다.",
+            detail={
+                "file_name": safe_file_name,
+                "content_type": file.content_type,
+                "errors": input_response.validation_errors,
+            },
         )
 
     document = await document_service.ingest_uploaded_document(

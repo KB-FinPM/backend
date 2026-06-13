@@ -49,6 +49,8 @@ class ChatOutputAgent:
                 "message": "요청을 취소했습니다.",
                 "suggested_actions": [],
             }
+        if event == "CLARIFICATION_REQUIRED":
+            return self._clarification_payload(result_json)
         if event == "REQUIRED_INFO":
             return self._required_info_payload(result_json)
         if event == "GENERAL_QA":
@@ -186,6 +188,19 @@ class ChatOutputAgent:
             "recommended_prompts": self._default_recommended_prompts(),
         }
 
+    def _clarification_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "state": ChatState.WAITING_REQUIRED_INFO.value,
+            "message": result_json.get("question")
+            or "어떤 문서나 업무를 기준으로 처리할까요?",
+            "result": {
+                "semantic_slots": result_json.get("semantic_slots") or {},
+                "clarification_required": True,
+            },
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
+
     def _required_info_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         artifact_type = result_json.get("target_artifact_type")
         messages = {
@@ -227,7 +242,10 @@ class ChatOutputAgent:
         metadata = result.get("metadata") or {}
         required_context = str(metadata.get("required_context") or "").upper()
         missing_fields = result.get("missing_fields") or []
-        if required_context == "WBS" or "wbs" in missing_fields:
+        if result.get("assistant_message"):
+            message = str(result.get("assistant_message"))
+            upload_request = None
+        elif required_context == "WBS" or "wbs" in missing_fields:
             message = (
                 "현재 프로젝트에서 참고할 WBS 문서를 찾지 못했습니다. "
                 "WBS를 업로드하거나, 요구사항 명세서를 기준으로 WBS를 먼저 생성해 주세요."
@@ -244,7 +262,17 @@ class ChatOutputAgent:
             upload_request = {
                 "required": True,
                 "label": "회의록 업로드",
-                "acceptedTypes": [".docx", ".md", ".txt", ".csv", ".log"],
+                "acceptedTypes": [
+                    ".pdf",
+                    "application/pdf",
+                    ".docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ".md",
+                    ".txt",
+                    "text/plain",
+                    ".csv",
+                    ".log",
+                ],
                 "documentType": "MEETING_NOTES",
                 "originalMessage": "회의록 보고 TODO 정리해줘",
             }
@@ -291,7 +319,21 @@ class ChatOutputAgent:
         return {
             "required": True,
             "label": "구축요건 정의서 업로드",
-            "acceptedTypes": [".docx", ".md", ".txt", ".csv", ".json", ".log"],
+            "acceptedTypes": [
+                ".pdf",
+                "application/pdf",
+                ".docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".md",
+                ".txt",
+                "text/plain",
+                ".csv",
+                ".json",
+                "application/json",
+                ".log",
+            ],
             "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
             "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
         }

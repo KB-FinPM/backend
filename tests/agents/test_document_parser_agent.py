@@ -2,6 +2,8 @@
 # KO: 문서 파서 Input Agent 테스트입니다.
 
 import pytest
+import sys
+import types
 from io import BytesIO
 from openpyxl import Workbook
 
@@ -41,16 +43,89 @@ async def test_document_parser_agent_skips_unsupported_file() -> None:
             input_type=InputType.FILE,
             files=[
                 InputFilePayload(
-                    file_name="requirements.pdf",
-                    file_bytes=b"%PDF",
+                    file_name="requirements.exe",
+                    file_bytes=b"binary",
                 )
             ],
         )
     )
 
     assert response.success is False
-    assert response.error == "unsupported file extension"
-    assert response.validation_errors == ["unsupported file extension"]
+    assert response.error == (
+        "지원하지 않는 파일 형식입니다. PDF, DOCX, XLSX, TXT 파일을 업로드해주세요."
+    )
+
+
+@pytest.mark.anyio
+async def test_document_parser_agent_parses_pdf_case_insensitive_extension(
+    monkeypatch,
+) -> None:
+    class FakePage:
+        def extract_text(self) -> str:
+            return "PDF 요구사항"
+
+    class FakePdfReader:
+        is_encrypted = False
+        pages = [FakePage()]
+
+        def __init__(self, stream) -> None:
+            self.stream = stream
+
+    fake_module = types.SimpleNamespace(PdfReader=FakePdfReader)
+    monkeypatch.setitem(sys.modules, "pypdf", fake_module)
+
+    parser = DocumentParserAgent()
+    response = await parser.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.FILE,
+            files=[
+                InputFilePayload(
+                    file_name="requirements.PDF",
+                    file_bytes=b"%PDF fake",
+                    content_type="application/pdf",
+                )
+            ],
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["text"] == "PDF 요구사항"
+    assert response.structured_context["metadata"]["extension"] == ".pdf"
+
+
+@pytest.mark.anyio
+async def test_document_parser_agent_explains_empty_pdf_text(monkeypatch) -> None:
+    class FakePage:
+        def extract_text(self) -> str:
+            return ""
+
+    class FakePdfReader:
+        is_encrypted = False
+        pages = [FakePage()]
+
+        def __init__(self, stream) -> None:
+            self.stream = stream
+
+    monkeypatch.setitem(sys.modules, "pypdf", types.SimpleNamespace(PdfReader=FakePdfReader))
+
+    parser = DocumentParserAgent()
+    response = await parser.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.FILE,
+            files=[
+                InputFilePayload(
+                    file_name="scanned.pdf",
+                    file_bytes=b"%PDF fake",
+                    content_type="application/pdf",
+                )
+            ],
+        )
+    )
+
+    assert response.success is False
+    assert "스캔본 PDF" in str(response.error)
 
 
 @pytest.mark.anyio

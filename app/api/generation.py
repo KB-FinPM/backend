@@ -65,7 +65,6 @@ WBS_EXAMPLE = {
         "source_document_type": "REQUIREMENT_SPEC",
         "target_artifact_type": "WBS",
         "start_date": "2024.01.10",
-        "project_period": "6개월",
         "query": "Create a WBS from the requirement specification.",
         "author": "작성자",
         "permission_scope": ["project:read"],

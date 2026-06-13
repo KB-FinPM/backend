@@ -9,11 +9,13 @@ import tempfile
 import unicodedata
 from copy import deepcopy
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
+from openpyxl import load_workbook
 
 from app.core.config import settings
 
@@ -23,13 +25,6 @@ CACHE_DIR = Path(tempfile.gettempdir()) / "finpm-agent-template-cache"
 
 def _norm(value: str) -> str:
     return unicodedata.normalize("NFC", value)
-
-
-def _zip_escaped_unicode_name(value: str) -> str:
-    return "".join(
-        char if ord(char) < 128 else f"#U{ord(char):04x}"
-        for char in _norm(value)
-    )
 
 
 def _relative_template_path(path_or_name: str) -> str:
@@ -45,12 +40,9 @@ def _resolve_local_template_file(path_or_name: str) -> Path:
     if candidate.exists():
         return candidate
     target = _norm(Path(relative).name)
-    escaped_target = _zip_escaped_unicode_name(target)
     if TEMPLATE_DIR.exists():
         for item in TEMPLATE_DIR.rglob("*"):
-            if item.is_file() and (
-                _norm(item.name) == target or item.name == escaped_target
-            ):
+            if item.is_file() and _norm(item.name) == target:
                 return item
     raise FileNotFoundError(f"template file not found: {path_or_name}")
 
@@ -129,20 +121,64 @@ def load_output_mapper() -> dict[str, Any]:
     return load_template_json("output_mapper.json", {})
 
 
+def _load_local_template_json(path_or_name: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    try:
+        path = _resolve_local_template_file(path_or_name)
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return deepcopy(default or {})
+
+
 def load_deliverable_mapper() -> dict[str, Any]:
     mapper = load_output_mapper()
     path = get_nested(mapper, "wbs", "deliverable_mapper_path", default="deliverable_mapper.json")
     return load_template_json(path, {})
 
 
+@lru_cache(maxsize=1)
+def load_wbs_deliverable_catalog() -> list[dict[str, str]]:
+    """Load the workbook-based WBS deliverable reference list."""
+    path = resolve_template_path("template/산출물목록.xlsx")
+    workbook = load_workbook(path, data_only=True)
+    worksheet = workbook[workbook.sheetnames[0]]
+
+    catalog: list[dict[str, str]] = []
+    current_stage = ""
+    current_task = ""
+    current_activity = ""
+
+    for row in worksheet.iter_rows(min_row=2, values_only=True):
+        stage, task, activity, purpose, output = (list(row) + [None] * 5)[:5]
+        if stage:
+            current_stage = str(stage).strip()
+        if task:
+            current_task = str(task).strip()
+        if activity:
+            current_activity = str(activity).strip()
+        deliverable = str(output or "").strip()
+        if not deliverable:
+            continue
+        catalog.append(
+            {
+                "stage": current_stage,
+                "task": current_task,
+                "activity": current_activity,
+                "purpose": str(purpose or "").strip(),
+                "deliverable": deliverable,
+            }
+        )
+
+    return catalog
+
+
 def load_wbs_template() -> dict[str, Any]:
-    mapper = load_output_mapper()
-    path = get_nested(mapper, "wbs", "common_template_path", default="wbs_template.json")
-    return load_template_json(path, {"common_items": []})
+    return _load_local_template_json("wbs_template.json", {"common_items": []})
 
 
 def load_wbs_common_rows(
     *,
+    template_path: str | None = None,
+    sheet_name: str = "WBS",
     start_row: int = 2,
     end_row: int | None = 86,
 ) -> list[dict[str, Any]]:
@@ -150,11 +186,7 @@ def load_wbs_common_rows(
     template = load_wbs_template()
     common_items = template.get("common_items", [])
     rows: list[dict[str, Any]] = []
-    max_count = (
-        max((end_row or start_row) - start_row + 1, 0)
-        if end_row is not None
-        else len(common_items)
-    )
+    max_count = max((end_row or start_row) - start_row + 1, 0) if end_row is not None else len(common_items)
     for item in common_items[:max_count]:
         if not isinstance(item, dict):
             continue
@@ -266,8 +298,34 @@ def output_file_name(document_key: str, fallback: str) -> str:
 
 
 def find_deliverable(name: str, phase: str, deliverable_mapper: dict[str, Any] | None = None) -> str:
-    mapper = deliverable_mapper or load_deliverable_mapper()
     text = f"{name} {phase}"
+    catalog = load_wbs_deliverable_catalog()
+    matches: list[str] = []
+    for item in catalog:
+        haystack = " ".join(
+            value
+            for value in (
+                item.get("stage", ""),
+                item.get("task", ""),
+                item.get("activity", ""),
+                item.get("purpose", ""),
+                item.get("deliverable", ""),
+            )
+            if value
+        )
+        if not haystack:
+            continue
+        if str(phase or "").strip() and str(phase).strip() not in haystack:
+            continue
+        if not any(str(token).lower() in text.lower() for token in (item.get("task", ""), item.get("activity", ""), item.get("deliverable", "")) if token):
+            continue
+        deliverable = item.get("deliverable", "")
+        if deliverable and deliverable not in matches:
+            matches.append(deliverable)
+    if matches:
+        return ", ".join(matches[:3])
+
+    mapper = deliverable_mapper or load_deliverable_mapper()
     for rule in mapper.get("keyword_rules", []):
         keywords = rule.get("keywords") or []
         if any(str(keyword).lower() in text.lower() for keyword in keywords):
