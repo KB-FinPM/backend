@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date
 from io import BytesIO
@@ -652,7 +653,23 @@ class ArtifactExportService:
             .replace("\r\n", "\n")
             .replace("\r", "\n")
         )
-        return text if text.strip() else " "
+        text = text.strip()
+        if not text:
+            return " "
+        if "\n" not in text:
+            return text
+
+        lines: list[str] = []
+        for line in text.split("\n"):
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            cleaned = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", cleaned).strip()
+            if cleaned:
+                lines.append(cleaned)
+        if len(lines) <= 1:
+            return lines[0] if lines else text
+        return "\n".join(f"{index}. {line}" for index, line in enumerate(lines, start=1))
 
     def _format_unit_test_content_column(
         self,
@@ -1277,12 +1294,11 @@ class ArtifactExportService:
     def _fill_description_table(self, slide: Any, source: dict[str, Any], table_mapper: dict[str, Any]) -> bool:
         start_row = int(table_mapper.get("start_row", 1))
         target_column = int(table_mapper.get("target_column", 1))
-        max_items = int(table_mapper.get("max_items", 10))
         clear_rows = bool(table_mapper.get("clear_rows_before_fill", True))
         header_text = str(table_mapper.get("header_text") or "").strip()
         min_rows = int(table_mapper.get("min_rows", 0))
         min_columns = int(table_mapper.get("min_columns", 0))
-        description_lines = self._screen_description_lines(source, max_items=max_items)
+        description_lines = self._screen_description_lines(source)
         for shape in slide.shapes:
             if not getattr(shape, "has_table", False):
                 continue
@@ -1334,7 +1350,7 @@ class ArtifactExportService:
             return True
         return False
 
-    def _screen_description_lines(self, source: dict[str, Any], max_items: int) -> list[str]:
+    def _screen_description_lines(self, source: dict[str, Any]) -> list[str]:
         description = str(source.get("description") or "").strip()
         if not description:
             return []
@@ -1345,9 +1361,7 @@ class ArtifactExportService:
         ]
         if not lines:
             return []
-        if len(lines) <= max_items:
-            return lines
-        return lines[: max_items - 1] + ["\n".join(lines[max_items - 1:])]
+        return lines
 
     def _description_table_style_cell(
         self,

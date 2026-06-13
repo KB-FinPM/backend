@@ -8,6 +8,7 @@ from app.agents.input_agents.document_parser_agent.agent import (
     document_parser_agent,
 )
 from app.rag.chunking import split_text_into_chunks
+from app.rag.embedding import EmbeddingService, embedding_service
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.artifact import DocumentMetadata, DocumentStatus, DocumentType
 from app.schemas.io_agent import InputAgentRequest, InputFilePayload, InputType
@@ -19,8 +20,10 @@ class DocumentIngestionOrchestrator:
     def __init__(
         self,
         parser: DocumentParserAgent = document_parser_agent,
+        embedding_service: EmbeddingService = embedding_service,
     ) -> None:
         self.parser = parser
+        self.embedding_service = embedding_service
 
     async def ingest_uploaded_document(
         self,
@@ -90,6 +93,7 @@ class DocumentIngestionOrchestrator:
                 for key, value in wbs_context.items()
                 if key != "rows"
             }
+            row_items: list[dict[str, object]] = []
             for index, row in enumerate(wbs_context.get("rows") or []):
                 if not isinstance(row, dict):
                     continue
@@ -123,11 +127,40 @@ class DocumentIngestionOrchestrator:
                         "wbs_row": row,
                     },
                 )
+                row_items.append(
+                    {
+                        "chunk_index": index,
+                        "text": text or str(row.get("title") or row.get("WBS명") or "WBS"),
+                        "section_title": str(row.get("title") or row.get("WBS명") or "WBS"),
+                        "chunk_metadata": {
+                            **base_metadata,
+                            "parser_name": parser_name or "DocumentParserAgent",
+                            "source_file_name": file_name,
+                            "wbs_context": context_summary,
+                            "wbs_row": row,
+                        },
+                    }
+                )
+            embeddings = await self.embedding_service.embed_texts(
+                [str(item["text"]) for item in row_items]
+            )
+            for item, embedding in zip(row_items, embeddings):
+                await document_repository.create_chunk(
+                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
+                    project_id=project_id,
+                    document_id=document_id,
+                    chunk_index=int(item["chunk_index"]),
+                    text=str(item["text"]),
+                    section_title=str(item["section_title"]),
+                    chunk_metadata=item["chunk_metadata"],
+                    embedding=embedding,
+                )
         elif (
             parsed_metadata.get("artifact_type") == "REQUIREMENT_SPEC"
             and isinstance(generated_requirements, list)
             and generated_requirements
         ):
+            requirement_items: list[dict[str, object]] = []
             for index, requirement in enumerate(generated_requirements):
                 if not isinstance(requirement, dict):
                     continue
@@ -143,26 +176,42 @@ class DocumentIngestionOrchestrator:
                     ]
                     if value
                 )
+                requirement_items.append(
+                    {
+                        "chunk_index": index,
+                        "text": text,
+                        "section_title": str(metadata.get("biz_requirement_name") or "요구사항"),
+                        "chunk_metadata": {
+                            **parsed_metadata,
+                            "parser_name": parser_name or "ArtifactExportService",
+                            "source_file_name": file_name,
+                            "requirement": requirement,
+                        },
+                    }
+                )
+            embeddings = await self.embedding_service.embed_texts(
+                [str(item["text"]) for item in requirement_items]
+            )
+            for item, embedding in zip(requirement_items, embeddings):
                 await document_repository.create_chunk(
                     chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
                     project_id=project_id,
                     document_id=document_id,
-                    chunk_index=index,
-                    text=text,
-                    section_title=str(metadata.get("biz_requirement_name") or "요구사항"),
-                    chunk_metadata={
-                        **parsed_metadata,
-                        "parser_name": parser_name or "ArtifactExportService",
-                        "source_file_name": file_name,
-                        "requirement": requirement,
-                    },
+                    chunk_index=int(item["chunk_index"]),
+                    text=str(item["text"]),
+                    section_title=str(item["section_title"]),
+                    chunk_metadata=item["chunk_metadata"],
+                    embedding=embedding,
                 )
         else:
             chunks = split_text_into_chunks(parsed_text)
             if not chunks:
                 return document
 
-            for chunk in chunks:
+            embeddings = await self.embedding_service.embed_texts(
+                [chunk.text for chunk in chunks]
+            )
+            for chunk, embedding in zip(chunks, embeddings):
                 await document_repository.create_chunk(
                     chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
                     project_id=project_id,
@@ -176,6 +225,7 @@ class DocumentIngestionOrchestrator:
                         "parser_name": parser_name or "InputOrchestrator",
                         "source_file_name": file_name,
                     },
+                    embedding=embedding,
                 )
 
         indexed_document = await document_repository.update_document_status(

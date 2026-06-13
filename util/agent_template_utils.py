@@ -135,6 +135,12 @@ def load_deliverable_mapper() -> dict[str, Any]:
     return load_template_json(path, {})
 
 
+def load_deliverable_mapper_local() -> dict[str, Any]:
+    mapper = _load_local_template_json("output_mapper.json", {})
+    path = get_nested(mapper, "wbs", "deliverable_mapper_path", default="deliverable_mapper.json")
+    return _load_local_template_json(path, {})
+
+
 @lru_cache(maxsize=1)
 def load_wbs_deliverable_catalog() -> list[dict[str, str]]:
     """Load the workbook-based WBS deliverable reference list."""

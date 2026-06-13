@@ -1,172 +1,201 @@
-# Core Agents PROCESS
+# Core Agents Process
 
-## 1. 입력 경계
+이 문서는 `app/agents/core_agents` 하위 Core Agent들이 현재 어떤 순서와 기준으로 산출물을 생성하는지 정리한 문서입니다.
 
-backend에서는 문서 원본, S3 객체, PgVector, Bedrock client를 Core Agent가 직접 다루지 않습니다.
+## 1. 전체 흐름
 
-```text
-Router
--> Service
--> GenerationOrchestrator
--> ArtifactAgent
--> RequirementAgent / WbsAgent / ScreenDesignAgent
--> ValidatorAgent
-```
+1. 사용자가 산출물 생성을 요청한다.
+2. `GenerationService`가 요청한 산출물 타입과 소스 문서를 검증한다.
+3. `GenerationOrchestrator`가 문서를 검색하고, 각 Core Agent에 필요한 컨텍스트를 전달한다.
+4. Core Agent는 입력 문서와 기존 산출물 컨텍스트를 바탕으로 JSON 결과를 생성한다.
+5. `ArtifactExportService`가 JSON을 Excel 또는 PPTX로 변환하고 S3에 업로드한다.
+6. 필요하면 생성된 요구사항명세서가 다시 문서로 등록되어 후속 WBS, 화면설계서, 단위테스트계획서 생성의 입력으로 사용된다.
 
-Core Agent 입력은 `AgentRequest`입니다.
+## 2. 공통 원칙
 
-```text
-project_id
-context
-documents: RAG 검색 결과 문서 청크
-```
+- Core Agent는 S3, DB, Bedrock 클라이언트를 직접 다루지 않는다.
+- 실제 LLM 호출은 `GenerationOrchestrator.invoke_agent_llm()` 경유로 수행한다.
+- 가능한 경우 구조화된 표, 기존 산출물, source metadata를 우선 활용한다.
+- JSON 외의 설명 문장은 반환하지 않는다.
+- 산출물 생성 시 원문에 없는 내용은 추측하지 않는다. 다만 화면/테스트/WBS처럼 결과물 특성상 필요한 범위는 현재 문맥을 바탕으로 구체화한다.
 
-## 2. 요구사항명세서 생성
+## 3. 요구사항명세서 생성
 
-Requirement Agent는 다음 기준으로 요구사항을 생성합니다.
+### 3.1 입력
 
-- 구축요건정의서 또는 RAG 문서 chunk를 근거로 요구사항을 추출합니다.
-- Core Agent 내부에서 요구사항 추출 전용 chunk 전처리를 수행합니다. 범용 Input Parser는 수정하지 않습니다.
-- 요구사항은 `Biz요건명`, `업무영역`, `domain`, `category` 기준으로 그룹화할 수 있도록 metadata를 구성합니다.
-- 구축요건정의서의 3단 표는 1번째 컬럼을 `Biz요건명`, 2번째 컬럼을 `요구사항명`, 3번째 컬럼을 `기능/비기능요구사항`으로 매핑합니다.
-- 3단 표의 3번째 컬럼에서 첫 상위 bullet(`o`, `O`, `ㅇ`, `○`)을 만나면 같은 계열 bullet 항목은 `요구사항명`으로 분리하고, 뒤따르는 `-` 등 하위 bullet은 직전 요구사항의 `기능/비기능요구사항`으로 유지합니다.
-- 구축요건정의서의 2단 표는 1번째 컬럼을 `Biz요건명`으로 보고, 2번째 컬럼의 상위내용을 `요구사항명`, 들여쓰기/bullet/다른 기호로 시작하는 하위내용을 `기능/비기능요구사항`으로 매핑합니다.
-- 단, 2단 표 헤더가 `요구사항명 | 기능/비기능요구사항`인 경우 1번째 컬럼은 첫 `요구사항명`으로 사용하고, 2번째 컬럼 안의 `o`, `O`, `ㅇ` bullet은 추가 `요구사항명`으로 분리합니다. 이때 `-` bullet은 직전 요구사항의 `기능/비기능요구사항`으로 유지합니다.
-- 2단/3단 표 위 제목은 `업무`, `구분`으로 매핑합니다.
-- `개요`, `범위`, `배경`, `일정`, `조직도`, `별첨` 성격의 섹션과 `주 1)` 형태의 주석은 요구사항 추출 대상에서 제외합니다.
-- 인프라 구축 프로젝트에서는 OCP, Kafka, EFK, CDC, API Gateway, Service Mesh, Monitoring, Logging, DB, 보안, 백업 등을 주요 구축 영역으로 봅니다.
-- 개발 프로젝트에서는 업무, 화면, 기능, 인터페이스, 데이터, 권한, 배치 등을 주요 영역으로 봅니다.
-- 문서에 없는 내용은 추측하지 않습니다.
+- 구축요건정의서 원문
+- 표 형태의 요구사항 후보
+- 문서 메타데이터
 
-출력은 backend 최소 스키마를 따릅니다.
+### 3.2 처리 방식
 
-```json
-{
-  "artifact_type": "REQUIREMENT_SPEC",
-  "requirements": []
-}
-```
+`RequirementAgent`는 다음 순서로 동작한다.
 
-## 3. WBS 생성
+1. 문서를 `normalize_requirement_documents()`로 정규화한다.
+2. 표 기반 요구사항을 먼저 추출한다.
+3. 표에서 뽑은 후보는 행 단위로 다시 LLM 보정한다.
+4. 표가 없거나 충분하지 않으면 chunk 단위 추출로 fallback 한다.
+5. 중복을 정리하고 요구사항 ID를 부여한다.
+6. 요구사항명세서용 artifact로 변환한다.
 
-WBS Agent는 요구사항명세서 성격의 입력을 기반으로 WBS를 생성합니다.
+### 3.3 현재 특징
 
-현재 backend flow에서는 `documents` 또는 `context.requirement_artifact`를 요구사항 입력으로 사용합니다.
+- 요구사항 설명은 단순 요약이 아니라 목적, 처리 방식, 운영/제약 포인트를 포함하도록 보정한다.
+- 표가 있는 경우 문서 전체를 한 번에 밀어넣지 않고, 행 단위로 조금 더 정확하게 다듬는다.
+- `source_doc`, `source_file_name`, `source_document_id`가 유지되도록 처리한다.
+- 이 값은 export 시 요구사항명세서의 `근기문서` 또는 `근거문서` 컬럼을 채우는 데 사용된다.
 
-처리 규칙:
+### 3.4 출력
 
-```text
-1레벨: Biz요건명 / 업무영역
-2레벨: 프로젝트 유형별 단계
-3레벨: 대표 요구사항별 세부 작업
-```
+- `artifact_type: REQUIREMENT_SPEC`
+- `requirements[]`
+- 각 요구사항에는 다음과 같은 메타 정보가 포함될 수 있다.
+  - `category`
+  - `biz_requirement_id`
+  - `biz_requirement_name`
+  - `requirement_id`
+  - `requirement_name`
+  - `requirement_type`
+  - `domain`
+  - `feature`
+  - `description`
+  - `note`
+  - `source_document_id`
+  - `source_doc`
 
-프로젝트 유형별 단계:
+## 4. WBS 생성
 
-```text
-infra: 분석, 설계, 개발환경 구축, 스테이징 구축, 운영 구축
-development: 분석, 설계, 개발, 테스트, 운영 이행
-hybrid: 분석, 설계, 개발/구축, 스테이징 검증, 운영 이행
-```
+### 4.1 입력
 
-출력은 backend 최소 스키마를 따릅니다.
+- 요구사항명세서
+- 구축요건정의서 문맥
+- WBS 템플릿의 공통 행
+- 산출물 목록 템플릿
 
-```json
-{
-  "artifact_type": "WBS",
-  "tasks": []
-}
-```
+### 4.2 처리 방식
 
-## 4. 화면설계서 생성
+`WbsAgent`는 공통 WBS 뼈대를 기준으로 시작한 뒤, 요구사항 문맥을 반영해 개발영역 상세를 구성한다.
 
-Screen Design Agent는 요구사항ID 기준으로 화면설계서 페이지를 생성합니다.
+1. 템플릿의 공통 WBS 행을 읽는다.
+2. 개발영역의 level 1, level 2 구조는 고정으로 유지한다.
+3. level 3 이하 상세 작업은 요구사항 digest와 산출물 목록을 참고해 생성한다.
+4. 각 phase는 요구사항정의, 분석, 설계, 구현, 테스트, 이행, 안정화 순서로 일정이 나뉜다.
+5. 상세 task에는 요구사항 ID와 산출물이 연결된다.
 
-처리 규칙:
+### 4.3 기간 처리
 
-- 하나의 요구사항ID는 하나의 화면설계 페이지로 매핑합니다.
-- `탬플릿_화면설계서.pptx`의 3페이지 템플릿 슬라이드를 복제해 사용합니다.
-- Description 영역에는 요구사항명세서의 `기능/비기능요구사항` 내용만 입력합니다.
-- Description 영역에 요구사항ID, 요구사항명, 임의 UI 항목명(`검색 조건`, `처리 버튼` 등)을 추가하지 않습니다.
-- 작성자는 요청의 `author`, `writer`, `created_by`, `user_id` 순서로 매핑하고, 없으면 `작성자`를 사용합니다.
+- WBS 기간은 요청 파라미터의 임의 입력값보다 구축요건정의서와 소스 문서에서 분석한 기간을 우선 사용한다.
+- `project_period`, `project_duration`, `duration`, `period`, `contract_period` 같은 문구를 문서에서 탐색한다.
+- 문서에 기간이 분리되어 적혀 있어도 하나의 문자열로 합쳐서 해석한다.
+- 기간이 확인되지 않으면 기본값으로 처리될 수 있다.
 
-출력은 backend 최소 스키마를 따릅니다.
+### 4.4 현재 특징
 
-```json
-{
-  "artifact_type": "SCREEN_DESIGN",
-  "screens": []
-}
-```
+- 개발 단계의 일정은 전체 프로젝트 기간을 phase 비율로 나눠 자동 산정한다.
+- 단위테스트, 통합테스트, 인수테스트, 이행 관련 항목은 후반부 일정에 맞춰 정렬된다.
+- 인프라/특수 WBS는 별도 규칙으로 보정된다.
+- `deliverable`은 `template` 폴더의 산출물 목록과 매핑 로직을 참고해 채운다.
 
-화면 표시항목은 템플릿 Description 매핑을 위해 `screens[].metadata.display_items`에 `Description` 항목만 보관합니다.
+### 4.5 출력
 
-## 5. S3 / PgVector / Bedrock 접근 원칙
+- `artifact_type: WBS`
+- `development_tasks[]`
+- 각 task는 `phase`, `name`, `description`, `source_requirement_ids`, `deliverable`, `metadata`를 가진다.
 
-Core Agent에서는 다음을 직접 수행하지 않습니다.
+## 5. 화면설계서 생성
 
-```text
-boto3.client(...)
-bedrock.invoke_model(...)
-S3 get_object / put_object
-PgVector 직접 query
-DB repository 직접 호출
-```
+### 5.1 입력
 
-필요 시 반드시 `app/orchestrator/generation_orchestrator.py`의 경계를 사용합니다.
+- 요구사항명세서
+- 구축요건정의서 문맥
+- 화면 관련 요구사항 ID
 
-```text
-GenerationOrchestrator.invoke_agent_llm()
-GenerationOrchestrator.search_agent_context()
-```
+### 5.2 처리 방식
 
-## 6. 검증
+`ScreenDesignAgent`는 요구사항별 화면 후보를 생성하고, 필요하면 LLM을 사용해 배치 단위로 확장한다.
 
-Agent 결과는 `ValidatorAgent`를 통해 backend 최소 스키마로 검증됩니다.
+1. 요구사항 atom을 정규화한다.
+2. 같은 요구사항 ID는 중복 제거한다.
+3. LLM이 가능하면 화면 목록을 생성한다.
+4. 입력이 많을 경우 8개 단위로 잘라서 배치 생성한다.
+5. LLM 결과가 불완전하면 deterministic fallback으로 보완한다.
+6. 화면별 description과 표시항목을 보정한다.
 
-- Requirement: `RequirementArtifact`
-- WBS: `WbsArtifact`
-- Screen Design: `ScreenDesignArtifact`
+### 5.3 현재 특징
 
-실패 가능한 상황은 예외를 그대로 노출하지 않고 `AgentResponse(success=False, error="...")`로 반환합니다.
+- `description`은 단순히 요구사항 문장을 복붙하지 않고, 화면 흐름과 사용자의 확인 포인트가 드러나도록 확장한다.
+- `display_items`는 화면에 실제 노출될 항목을 최소 3개 이상 갖도록 보정한다.
+- 화면 기획서 PPT 생성 시 description table은 템플릿의 `description_table` 설정을 따른다.
+- 표의 행 수는 템플릿 설정과 화면 내용에 따라 동적으로 채워진다.
 
-## 7. 산출물 파일 생성 및 후속 입력 문서 사용
+### 5.4 출력
 
-생성 API는 Agent JSON 검증 후 다음 후처리를 수행합니다.
+- `artifact_type: SCREEN_DESIGN`
+- `screens[]`
+- 각 screen은 `screen_id`, `name`, `description`, `source_requirement_ids`, `metadata.display_items`를 가진다.
 
-```text
-Agent JSON 생성
--> ValidatorAgent 검증
--> ArtifactExportService 파일 생성
--> S3_GENERATED_PREFIX 하위 업로드
--> artifacts / artifact_versions 저장
-```
+## 6. 단위테스트계획서 생성
 
-산출물별 파일 형식은 다음과 같습니다.
+### 6.1 입력
 
-```text
-REQUIREMENT_SPEC -> 요구사항명세서.xlsx
-WBS -> WBS.xlsx
-SCREEN_DESIGN -> 화면설계서.pptx
-```
+- 요구사항명세서
+- 화면설계서
+- 화면별 description 및 표시항목
 
-요구사항명세서는 WBS와 화면설계서의 선행 문서가 되어야 하므로, export 후 `documents`에도 `DocumentType.REQUIREMENT_SPEC`으로 등록합니다. 따라서 WBS와 화면설계서는 `/api/generate/requirement` 응답의 `result.exported_document.document_id`를 `source_document_ids`에 넣어 호출합니다.
+### 6.2 처리 방식
 
-## S3 템플릿 기반 산출물 생성
+`UnitTestAgent`는 요구사항만 보는 것이 아니라 화면 컨텍스트까지 함께 반영해서 테스트케이스를 만든다.
 
-1. `/api/generate/requirement`, `/api/generate/wbs`, `/api/generate/screen-design` 호출이 성공하면 Agent 결과 JSON을 생성합니다.
-2. `output_mapper.json`을 로딩합니다. S3 모드에서는 `S3_TEMPLATE_PREFIX/output_mapper.json`을 우선 사용합니다.
-3. 산출물 유형별 템플릿을 S3에서 다운로드합니다.
-   - 요구사항명세서: `S3_TEMPLATE_PREFIX/탬플릿_요구사항명세서.xlsx`
-   - WBS: `S3_TEMPLATE_PREFIX/탬플릿_WBS.xlsx`
-   - 화면기획서: `S3_TEMPLATE_PREFIX/탬플릿_화면설계서.pptx`
-4. 템플릿의 표지/개정이력/데이터 시트/슬라이드 placeholder를 mapper 기준으로 채웁니다.
-5. 완성된 파일을 `S3_GENERATED_PREFIX/{project_id}/{artifact_type}/{artifact_id}/` 아래 업로드합니다.
+1. 요구사항 항목을 수집한다.
+2. 화면 산출물이 있으면 requirement ID 기준으로 매칭한다.
+3. LLM이 가능하면 요구사항별 테스트케이스를 생성한다.
+4. LLM 결과가 비어 있으면 scenario spec 기반 fallback을 수행한다.
+5. 요구사항별로 정상, 조회, 저장, 수정, 삭제, 권한, 경계, 예외 케이스를 분리한다.
 
-## Requirement extraction process parity
-1. `/api/generate/requirement` 호출 시 선택된 `source_document_ids`의 chunk 전체를 조회합니다.
-2. Core Agent 내부 전처리로 pipe table 행과 section title을 정규화합니다.
-3. 표 기반 요구사항이 있으면 LLM을 거치지 않고 행 단위로 atom을 생성합니다.
-4. 표 기반 요구사항이 없으면 각 chunk를 기존 sample_0605의 extraction prompt 형식으로 LLM에 전달합니다.
-5. 반환 atom을 통합한 뒤 중복 제거, Biz요건 ID(`Biz-0001`), 요구사항 ID(`REQ-00001`)를 재채번합니다.
-6. `output_mapper.json` 및 S3/로컬 템플릿 기준으로 요구사항명세서 Excel에 매핑합니다.
+### 6.3 현재 특징
+
+- 테스트케이스 개수를 인위적으로 적게 제한하지 않는다.
+- 요구사항과 화면 문맥이 있으면 관련 시나리오를 더 세분화한다.
+- `screen_hint`가 있으면 `test_content`에 화면명, 필수 항목 검증, 권한 확인, 결과 반영 점검이 포함된다.
+- `scenario_id`는 요구사항과 시나리오를 함께 식별할 수 있도록 구성한다.
+
+### 6.4 출력
+
+- `artifact_type: UNITTEST_SPEC`
+- `test_cases[]`
+- 각 test case는 `test_case_id`, `test_case_name`, `requirement_id`, `requirement_name`, `scenario_id`, `test_content`, `metadata`를 가진다.
+
+## 7. export 및 템플릿 처리
+
+### 7.1 ArtifactExportService
+
+- 요구사항명세서, WBS, 화면설계서, 단위테스트계획서를 각각 Excel/PPTX로 변환한다.
+- 요구사항명세서는 생성 후 문서로 다시 등록한다.
+- 이때 생성된 문서 ID는 후속 산출물의 source 문서로 사용할 수 있다.
+
+### 7.2 output_mapper.json
+
+- 템플릿 파일 경로, placeholder sheet, data sheet, description table 설정을 정의한다.
+- 화면 설명 테이블은 `display_items`와 설명 내용을 가능한 범위까지 그대로 반영한다.
+
+## 8. 주요 설정 포인트
+
+- `app/core/llm.py`
+  - LLM 호출 기본 토큰 수를 관리한다.
+- `app/agents/core_agents/template/output_mapper.json`
+  - 엑셀/PPTX 템플릿과 매핑 필드를 관리한다.
+- `app/agents/core_agents/requirement_agent/agent.py`
+  - 구축요건정의서에서 요구사항명세서로 변환하는 핵심 로직이 있다.
+- `app/agents/core_agents/screen_design_agent/agent.py`
+  - 화면 설명 보정, display_items 최소 개수 보장, 배치 생성이 있다.
+- `app/agents/core_agents/wbs_agent/agent.py`
+  - 프로젝트 기간 추출과 WBS 일정 분배 로직이 있다.
+- `app/agents/core_agents/unit_test_agent/agent.py`
+  - 테스트 시나리오 확장과 화면 기반 점검 내용 보정 로직이 있다.
+
+## 9. 확인 기준
+
+- 요구사항명세서의 `근기문서`가 비어 있지 않아야 한다.
+- 화면설계서의 `description`이 너무 짧게 한 줄로만 끝나지 않아야 한다.
+- 단위테스트계획서의 점검 내용이 단일 문장만 나오지 않아야 한다.
+- WBS는 요청 입력값보다 구축요건정의서/소스 문서에서 분석한 기간을 우선해야 한다.
