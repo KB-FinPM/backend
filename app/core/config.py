@@ -45,9 +45,18 @@ class Settings(BaseSettings):
 
     BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-4-5"
     BEDROCK_INFERENCE_PROFILE_ID: str = ""
+    BEDROCK_CONNECT_TIMEOUT_SECONDS: int = 10
+    BEDROCK_READ_TIMEOUT_SECONDS: int = 900
+    BEDROCK_MAX_ATTEMPTS: int = 3
+
+    GENERATION_RETRIEVAL_TOP_K: int = 80
+    GENERATION_MAX_SOURCE_CHUNKS: int = 80
+    GENERATION_REQUIREMENT_BATCH_SIZE: int = 8
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./finpm.db"
     DATABASE_SSL_VERIFY: bool = True
+    SQLALCHEMY_ECHO: bool = False
+    SQLALCHEMY_HIDE_PARAMETERS: bool = True
 
     VECTOR_STORE_TYPE: str = "pgvector"
 

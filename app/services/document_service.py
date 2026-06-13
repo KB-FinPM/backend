@@ -101,3 +101,14 @@ class DocumentService:
         return await self.document_repository.list_documents_by_project(
             project_id=project_id,
         )
+
+    async def delete_document(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+    ) -> bool:
+        return await self.document_repository.delete_document(
+            project_id=project_id,
+            document_id=document_id,
+        )

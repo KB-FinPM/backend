@@ -10,6 +10,7 @@ from app.agents.core_agents.screen_design_agent.agent import screen_design_agent
 from app.agents.core_agents.unit_test_agent.agent import unit_test_agent
 from app.agents.core_agents.validator_agent.agent import validator_agent
 from app.agents.core_agents.wbs_agent.agent import wbs_agent
+from app.core.config import settings
 from app.core.llm import llm_service
 from app.core.logger import get_logger
 from app.rag.retrieval import retrieval_service
@@ -144,11 +145,15 @@ class GenerationOrchestrator:
         # like "요구사항명세서를 생성해줘" as keyword filters can reduce context
         # to one irrelevant chunk and degrade output quality.
         retrieval_query = ""
+        top_k = min(
+            max(settings.GENERATION_RETRIEVAL_TOP_K, 1),
+            max(settings.GENERATION_MAX_SOURCE_CHUNKS, 1),
+        )
         documents = await retrieval.search(
             project_id=request.project_id,
             permission_scope=request.permission_scope,
             query=retrieval_query,
-            top_k=200,
+            top_k=top_k,
             document_ids=request.source_document_ids or None,
         )
 

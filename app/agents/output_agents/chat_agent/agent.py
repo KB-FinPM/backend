@@ -33,6 +33,8 @@ class ChatOutputAgent:
         event = result_json.get("event")
         if event == "CONFIRMATION_REQUIRED":
             return self._confirmation_payload(result_json)
+        if event == "ACTION_STARTED":
+            return self._started_payload(result_json)
         if event == "ACTION_COMPLETED":
             return self._completed_payload(result_json)
         if event == "TODO_COMPLETED":
@@ -122,6 +124,22 @@ class ChatOutputAgent:
             ),
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
+        }
+
+    def _started_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
+        action = result_json.get("pending_action") or {}
+        action_id = action.get("action_id") or result_json.get("action_id")
+        return {
+            "state": ChatState.EXECUTING_ACTION.value,
+            "message": "Artifact generation has started. I will keep checking the job status.",
+            "pending_action": action,
+            "result": {
+                "action_id": action_id,
+                "job_id": action_id,
+                "status": "EXECUTING",
+            },
+            "suggested_actions": [],
+            "recommended_prompts": [],
         }
 
     def _failed_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:

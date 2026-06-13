@@ -16,6 +16,7 @@ from app.repositories.artifact_link_repository import ArtifactLinkRepository
 from app.repositories.action_item_repository import ActionItemRepository
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.project_repository import ProjectRepository
 from app.repositories.template_repository import TemplateRepository
 from app.orchestrator.generation_orchestrator import generation_orchestrator
 from app.rag.retrieval import RetrievalService
@@ -23,6 +24,7 @@ from app.services.artifact_service import ArtifactService
 from app.services.chat_service import ChatService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.project_service import ProjectService
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 from app.services.traceability_service import TraceabilityService
@@ -33,6 +35,12 @@ def get_document_repository(
     session: AsyncSession = Depends(get_session),
 ) -> DocumentRepository:
     return DocumentRepository(session)
+
+
+def get_project_repository(
+    session: AsyncSession = Depends(get_session),
+) -> ProjectRepository:
+    return ProjectRepository(session)
 
 
 def get_artifact_repository(
@@ -69,6 +77,12 @@ def get_document_service(
     document_repository: DocumentRepository = Depends(get_document_repository),
 ) -> DocumentService:
     return DocumentService(document_repository, s3_service)
+
+
+def get_project_service(
+    project_repository: ProjectRepository = Depends(get_project_repository),
+) -> ProjectService:
+    return ProjectService(project_repository)
 
 
 def get_artifact_service(

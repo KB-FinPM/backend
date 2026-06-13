@@ -14,6 +14,7 @@ from app.api import (
     documents,
     generation,
     health,
+    projects,
     schedule,
     templates,
     traceability,
@@ -164,6 +165,7 @@ async def sqlalchemy_error_handler(
     )
 
 app.include_router(health.router, prefix=API_PREFIX, tags=["health"])
+app.include_router(projects.router, prefix=API_PREFIX, tags=["projects"])
 app.include_router(upload.router, prefix=f"{API_PREFIX}/upload", tags=["upload"])
 app.include_router(generation.router, prefix=f"{API_PREFIX}/generate", tags=["generation"])
 app.include_router(schedule.router, prefix=f"{API_PREFIX}/schedule", tags=["schedule"])

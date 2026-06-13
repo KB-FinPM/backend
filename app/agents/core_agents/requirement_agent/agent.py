@@ -4,6 +4,7 @@
 import json
 from typing import Any
 
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.agents.core_agents.requirement_agent.document_preprocessor import (
     normalize_requirement_documents,
@@ -128,6 +129,15 @@ class RequirementAgent:
             )
             return None
 
+        max_source_chunks = max(settings.GENERATION_MAX_SOURCE_CHUNKS, 1)
+        if len(documents) > max_source_chunks:
+            logger.info(
+                f"[{self.AGENT_NAME}] source chunk cap applied | "
+                f"project_id={request.project_id} | "
+                f"original_count={len(documents)} | capped_count={max_source_chunks}"
+            )
+            documents = documents[:max_source_chunks]
+
         logger.info(
             f"[{self.AGENT_NAME}] orchestrator path start | "
             f"project_id={request.project_id} | document_count={len(documents)}"
@@ -177,17 +187,30 @@ class RequirementAgent:
             f"project_id={request.project_id}"
         )
         atoms = []
-        for idx, document in enumerate(documents, start=1):
-            text = str(document.get("text") or "").strip()
-            if not text:
-                continue
+        batch_size = max(settings.GENERATION_REQUIREMENT_BATCH_SIZE, 1)
+        non_empty_documents = [
+            document
+            for document in documents
+            if str(document.get("text") or "").strip()
+        ]
+        batches = [
+            non_empty_documents[index : index + batch_size]
+            for index in range(0, len(non_empty_documents), batch_size)
+        ]
+        for batch_index, batch in enumerate(batches, start=1):
+            text_chars = sum(len(str(document.get("text") or "")) for document in batch)
             logger.info(
-                f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk LLM request | "
+                f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk batch LLM request | "
                 f"project_id={request.project_id} | "
-                f"chunk_index={idx} | chunk_id={document.get('chunk_id')} | "
-                f"text_chars={len(text)}"
+                f"batch_index={batch_index} | batch_count={len(batches)} | "
+                f"chunk_count={len(batch)} | text_chars={text_chars}"
             )
-            prompt = self._build_chunk_prompt(request, document, idx, len(documents))
+            prompt = self._build_batch_prompt(
+                request,
+                batch,
+                batch_index,
+                len(batches),
+            )
             llm_result = await orchestrator.invoke_agent_llm(
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
                 user_prompt=prompt,
@@ -200,11 +223,20 @@ class RequirementAgent:
                     chunk_items = [
                         item for item in parsed_obj["requirements"] if isinstance(item, dict)
                     ]
+            fallback_document = batch[0] if batch else {}
             for item in chunk_items:
-                item.setdefault("source_document_id", document.get("document_id"))
-                item.setdefault("source_chunk_id", document.get("chunk_id"))
-                item.setdefault("source_section_path", [document.get("section_title") or ""])
-                item.setdefault("source_doc", (document.get("metadata") or {}).get("source_file_name") or document.get("document_id"))
+                source_chunk_id = item.get("source_chunk_id")
+                source_document = self._document_by_chunk_id(batch, source_chunk_id)
+                if source_document is None:
+                    source_document = fallback_document
+                item.setdefault("source_document_id", source_document.get("document_id"))
+                item.setdefault("source_chunk_id", source_document.get("chunk_id"))
+                item.setdefault("source_section_path", [source_document.get("section_title") or ""])
+                item.setdefault(
+                    "source_doc",
+                    (source_document.get("metadata") or {}).get("source_file_name")
+                    or source_document.get("document_id"),
+                )
             atoms.extend(normalize_requirement_atoms(chunk_items, documents=None))
 
         atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
@@ -333,6 +365,55 @@ Template mapper summary:
 내용:
 {document.get('text', '')}
 """.strip()
+
+    def _build_batch_prompt(
+        self,
+        request: AgentRequest,
+        documents: list[dict[str, Any]],
+        index: int,
+        total: int,
+    ) -> str:
+        context = {
+            key: value
+            for key, value in (request.context or {}).items()
+            if key != "generation_orchestrator"
+        }
+        source_chunks = []
+        for document in documents:
+            metadata = document.get("metadata") or {}
+            source_chunks.append(
+                {
+                    "document_id": document.get("document_id", ""),
+                    "chunk_id": document.get("chunk_id", ""),
+                    "section_title": document.get("section_title") or "",
+                    "source_file": metadata.get("source_file_name") or "",
+                    "text": str(document.get("text") or "")[:3500],
+                }
+            )
+        return f"""
+Project ID: {request.project_id}
+batch: {index}/{total}
+Context:
+{json.dumps(context, ensure_ascii=False, default=str)}
+
+Template mapper summary:
+{mapper_summary_for_prompt()}
+
+source_chunks:
+{json.dumps(source_chunks, ensure_ascii=False, default=str)}
+""".strip()
+
+    def _document_by_chunk_id(
+        self,
+        documents: list[dict[str, Any]],
+        chunk_id: Any,
+    ) -> dict[str, Any] | None:
+        if not chunk_id:
+            return None
+        for document in documents:
+            if str(document.get("chunk_id") or "") == str(chunk_id):
+                return document
+        return None
 
 
 requirement_agent = RequirementAgent()
