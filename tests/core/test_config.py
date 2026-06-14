@@ -15,6 +15,8 @@ def test_settings_defaults_match_env_example_baseline() -> None:
     assert settings.AWS_VERIFY_SSL is True
     assert settings.DATABASE_URL == "sqlite+aiosqlite:///./finpm.db"
     assert settings.S3_STORAGE_BACKEND == "mock"
+    assert settings.GENERATION_REQUIREMENT_RETRIEVAL_TOP_K == 40
+    assert settings.GENERATION_REQUIREMENT_TABLE_BATCH_SIZE == 4
 
 
 def test_settings_can_load_explicit_env_file(tmp_path) -> None:

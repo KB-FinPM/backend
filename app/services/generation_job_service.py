@@ -56,7 +56,10 @@ async def run_generation_action_job(*, project_id: str, action_id: str) -> None:
                 "generation job start | "
                 f"project_id={project_id} | action_id={action_id}"
             )
-            response = await _execute_generation_action(action)
+            response = await _execute_generation_action(
+                action,
+                conversation_repository=conversation_repository,
+            )
             await conversation_repository.update_action_status(
                 project_id=project_id,
                 action_id=action_id,
@@ -91,6 +94,8 @@ async def run_generation_action_job(*, project_id: str, action_id: str) -> None:
 
 async def _execute_generation_action(
     action: ChatActionMetadata,
+    *,
+    conversation_repository: ConversationRepository,
 ) -> GenerationResponse:
     async with AsyncSessionLocal() as session:
         document_repository = DocumentRepository(session)
@@ -116,6 +121,38 @@ async def _execute_generation_action(
             template_version=payload.get("template_version"),
             query=payload.get("query"),
             permission_scope=payload.get("permission_scope") or ["project:read"],
+        )
+
+        async def _report_progress(progress: dict[str, object]) -> None:
+            current_result = dict(action.result_json or {})
+            current_result["generation_progress"] = progress
+            await conversation_repository.update_action_status(
+                project_id=action.project_id,
+                action_id=action.action_id,
+                status=ChatActionStatus.EXECUTING,
+                result_json=current_result,
+            )
+
+        generation_request.context = {
+            "generation_progress_reporter": _report_progress,
+            "action_id": action.action_id,
+        }
+
+        await conversation_repository.update_action_status(
+            project_id=action.project_id,
+            action_id=action.action_id,
+            status=ChatActionStatus.EXECUTING,
+            result_json={
+                "action_id": action.action_id,
+                "status": ChatActionStatus.EXECUTING.value,
+                "generation_progress": {
+                    "current": 0,
+                    "total": 0,
+                    "progress": 0,
+                    "progress_text": "0/0",
+                    "label": "starting",
+                },
+            },
         )
         return await generation_service.generate_artifact(
             generation_request,

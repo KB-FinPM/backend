@@ -160,6 +160,11 @@ async def _build_action_status_response(
             "action_id": action.action_id,
             "job_id": action.action_id,
             "status": action.status.value,
+            **(
+                action.result_json
+                if isinstance(action.result_json, dict)
+                else {}
+            ),
         },
         download_files=[],
     )
