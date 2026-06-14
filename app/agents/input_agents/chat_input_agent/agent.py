@@ -85,6 +85,11 @@ class ChatInputAgent:
     UNIT_TEST_TERMS = (
         "단위테스트케이스",
         "단위 테스트 케이스",
+        "단위테스트계획서",
+        "단위 테스트 계획서",
+        "단위테스트 계획서",
+        "테스트계획서",
+        "테스트 계획서",
         "테스트케이스",
         "테스트 케이스",
         "unit test",
@@ -166,12 +171,23 @@ class ChatInputAgent:
     NEXT_WEEK_TERMS = ("다음 주", "다음주", "차주")
     LAST_WEEK_TERMS = ("지난 주", "지난주", "전주")
     TODAY_TERMS = ("오늘", "금일")
-    CURRENT_WEEK_TERMS = ("몇 주차", "몇주차", "현재 주차", "지금 프로젝트")
+    CURRENT_WEEK_TERMS = (
+        "몇 주차",
+        "몇주차",
+        "현재 주차",
+        "지금 주차",
+        "프로젝트 주차",
+        "프로젝트 몇 주차",
+        "지금 프로젝트",
+        "이번주는 몇 주차",
+        "이번 주는 몇 주차",
+    )
     OVERDUE_TERMS = ("기한 지난", "지연", "overdue")
     BRIEFING_TERMS = ("브리핑", "보고", "정리", "요약")
     COMPARISON_TERMS = ("비교", "달라진", "변경사항", "변경 사항")
-    SHOW_TERMS = ("알려줘", "보여줘", "정리해줘", "브리핑", "뭐", "뭐야")
+    SHOW_TERMS = ("알려줘", "알려", "보여줘", "보여", "정리해줘", "브리핑", "뭐", "뭐야")
     EXTRACT_TERMS = ("뽑아줘", "추출", "추려줘", "정리해줘", "나눠줘")
+    UPLOAD_TERMS = ("업로드", "올려", "첨부", "등록")
     GENERATE_ACTION_TERMS = ("만들", "생성", "작성", "만드")
     LOW_CONFIDENCE_ACTION_TERMS = ("해줘", "알려줘", "보여줘", "정리해줘")
 
@@ -725,6 +741,18 @@ class ChatInputAgent:
                 return "ASSISTANT_BRIEFING"
             if time_range in {"THIS_WEEK", None}:
                 return "SHOW_THIS_WEEK_TODOS"
+        if target_type in {"TODO", "SCHEDULE"} and action is None:
+            if time_range == "TODAY":
+                return "SHOW_TODAY_TODOS"
+            if time_range == "NEXT_WEEK":
+                return "SHOW_NEXT_WEEK_TODOS"
+            if time_range == "OVERDUE":
+                return "SHOW_OVERDUE_TODOS"
+            if time_range == "CURRENT_WEEK":
+                return "SHOW_CURRENT_WEEK"
+            if source_type == "WBS":
+                return "ASSISTANT_BRIEFING"
+            return "SHOW_THIS_WEEK_TODOS"
         if source_type == "WBS" and action == "SHOW":
             return "ASSISTANT_BRIEFING"
         return None
@@ -1114,6 +1142,16 @@ class ChatInputAgent:
         if self._contains_any(
             normalized_message,
             compact_message,
+            self.MEETING_TERMS,
+        ) and self._contains_any(
+            normalized_message,
+            compact_message,
+            self.UPLOAD_TERMS,
+        ):
+            return "EXTRACT_TODOS_FROM_MEETING"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
             self.TODAY_TERMS,
         ) and self._contains_any(
             normalized_message,
@@ -1125,10 +1163,13 @@ class ChatInputAgent:
             normalized_message,
             compact_message,
             self.NEXT_WEEK_TERMS,
-        ) and self._contains_any(
-            normalized_message,
-            compact_message,
-            self.TODO_TERMS + ("업무", "해야", "일정", "뭐"),
+        ) and (
+            self._contains_any(
+                normalized_message,
+                compact_message,
+                self.TODO_TERMS + ("업무", "해야", "일정", "뭐"),
+            )
+            or "뭐해야" in compact_message
         ):
             return "SHOW_NEXT_WEEK_TODOS"
         if (
@@ -1355,13 +1396,22 @@ class ChatInputAgent:
     ) -> list[str]:
         if target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
             return [DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION.value, "RFP"]
-        if target_artifact_type in {
-            ArtifactType.WBS,
-            ArtifactType.SCREEN_DESIGN,
-        }:
+        if target_artifact_type == ArtifactType.WBS:
             return [DocumentType.REQUIREMENT_SPEC.value]
+        if target_artifact_type == ArtifactType.SCREEN_DESIGN:
+            return [
+                DocumentType.REQUIREMENT_SPEC.value,
+                DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION.value,
+                "RFP",
+                "PLANNING_DOC",
+            ]
         if target_artifact_type == ArtifactType.UNITTEST_SPEC:
-            return [DocumentType.REQUIREMENT_SPEC.value, "SCREEN_DESIGN"]
+            return [
+                DocumentType.REQUIREMENT_SPEC.value,
+                "PROGRAM_LIST",
+                "PROGRAM_DESIGN",
+                "SCREEN_DESIGN",
+            ]
         return []
 
     def _recommended_commands_for_artifact(
@@ -1395,6 +1445,9 @@ class ChatInputAgent:
             ("화면 설계서", "화면설계서"),
             ("화면기획서", "화면설계서"),
             ("단위 테스트 케이스", "단위테스트케이스"),
+            ("단위 테스트 계획서", "단위테스트계획서"),
+            ("단위테스트 계획서", "단위테스트계획서"),
+            ("테스트 계획서", "테스트계획서"),
             ("테스트케이스", "단위테스트케이스"),
             ("회의록 할일", "회의록 TODO"),
             ("할 일", "TODO"),

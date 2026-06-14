@@ -20,6 +20,7 @@ class GenerationSourceValidationResult:
     project_id: str
     target_artifact_type: ArtifactType
     required_source_type: DocumentType | None = None
+    allowed_source_types: list[DocumentType] = field(default_factory=list)
     source_document_required: bool = False
     missing_document_ids: list[str] = field(default_factory=list)
     invalid_type_documents: list[dict[str, str]] = field(default_factory=list)
@@ -53,6 +54,9 @@ class GenerationSourceValidationResult:
                 f"{self.target_artifact_type.value} must be generated from "
                 f"{self.required_source_type.value}"
             )
+        if self.invalid_type_documents and self.allowed_source_types:
+            allowed = ", ".join(source_type.value for source_type in self.allowed_source_types)
+            return f"{self.target_artifact_type.value} must be generated from one of {allowed}"
         return "ok"
 
     @property
@@ -84,10 +88,22 @@ class GenerationService:
     ) -> DocumentType | None:
         if target_artifact_type in {
             ArtifactType.WBS,
-            ArtifactType.SCREEN_DESIGN,
+            ArtifactType.UNITTEST_SPEC,
         }:
             return DocumentType.REQUIREMENT_SPEC
         return None
+
+    def allowed_source_types_for(
+        self,
+        target_artifact_type: ArtifactType,
+    ) -> list[DocumentType]:
+        if target_artifact_type == ArtifactType.SCREEN_DESIGN:
+            return [
+                DocumentType.REQUIREMENT_SPEC,
+                DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION,
+            ]
+        required_source_type = self.required_source_type_for(target_artifact_type)
+        return [required_source_type] if required_source_type is not None else []
 
     async def validate_source_documents(
         self,
@@ -99,12 +115,18 @@ class GenerationService:
         target_artifact_type = request.generation_flow().target_artifact_type
         if required_source_type is None:
             required_source_type = self.required_source_type_for(target_artifact_type)
+        allowed_source_types = (
+            [required_source_type]
+            if required_source_type is not None
+            else self.allowed_source_types_for(target_artifact_type)
+        )
 
         if not request.source_document_ids:
             return GenerationSourceValidationResult(
                 project_id=request.project_id,
                 target_artifact_type=target_artifact_type,
                 required_source_type=required_source_type,
+                allowed_source_types=allowed_source_types,
                 source_document_required=True,
             )
 
@@ -119,21 +141,26 @@ class GenerationService:
                 missing_document_ids.append(document_id)
                 continue
 
-            if required_source_type is not None and (
-                document.document_type != required_source_type
-            ):
+            if allowed_source_types and document.document_type not in allowed_source_types:
+                invalid_detail = {
+                    "document_id": document.document_id,
+                    "document_type": document.document_type.value,
+                }
+                if len(allowed_source_types) == 1:
+                    invalid_detail["required_document_type"] = allowed_source_types[0].value
+                else:
+                    invalid_detail["required_document_types"] = [
+                        source_type.value for source_type in allowed_source_types
+                    ]
                 invalid_type_documents.append(
-                    {
-                        "document_id": document.document_id,
-                        "document_type": document.document_type.value,
-                        "required_document_type": required_source_type.value,
-                    }
+                    invalid_detail
                 )
 
         return GenerationSourceValidationResult(
             project_id=request.project_id,
             target_artifact_type=target_artifact_type,
             required_source_type=required_source_type,
+            allowed_source_types=allowed_source_types,
             missing_document_ids=missing_document_ids,
             invalid_type_documents=invalid_type_documents,
         )

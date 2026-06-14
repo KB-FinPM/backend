@@ -4,6 +4,7 @@
 from io import BytesIO
 from typing import Any
 import re
+from datetime import date, datetime
 
 from app.core.supported_files import (
     SUPPORTED_FILE_EXTENSIONS,
@@ -60,7 +61,15 @@ class DocumentParserAgent:
         extension = file_type.extension
 
         try:
-            text = self._extract_text(file_payload.file_bytes, extension)
+            extraction_context: dict[str, Any] = {}
+            if extension in {".xlsx", ".xls"}:
+                text, extraction_context = self._extract_spreadsheet_text(
+                    file_payload.file_bytes,
+                    extension,
+                    file_payload.file_name,
+                )
+            else:
+                text = self._extract_text(file_payload.file_bytes, extension)
         except Exception as exc:
             error_message = self._parse_failure_message(extension, exc)
             return InputAgentResponse(
@@ -86,17 +95,22 @@ class DocumentParserAgent:
                 validation_errors=[error_message],
             )
 
+        metadata = {
+            "file_name": file_payload.file_name,
+            "extension": extension,
+            "byte_size": len(file_payload.file_bytes),
+            "content_type": file_payload.content_type,
+        }
+        if extraction_context.get("wbs_context"):
+            metadata["wbs_context"] = extraction_context["wbs_context"]
+
         return InputAgentResponse(
             agent_name=self.AGENT_NAME,
             normalized_request_type=NormalizedRequestType.DOCUMENT_INGESTION,
             structured_context={
                 "text": text,
-                "metadata": {
-                    "file_name": file_payload.file_name,
-                    "extension": extension,
-                    "byte_size": len(file_payload.file_bytes),
-                    "content_type": file_payload.content_type,
-                },
+                "metadata": metadata,
+                **extraction_context,
             },
         )
 
@@ -175,6 +189,16 @@ class DocumentParserAgent:
                     "관리자에게 pypdf 설치를 요청해주세요."
                 )
             return self.PDF_PARSE_ERROR_MESSAGE
+        if extension == ".xls" and "xlrd is required" in str(exc):
+            return (
+                "XLS 문서를 읽기 위한 파서가 설치되어 있지 않습니다. "
+                "관리자에게 xlrd 설치를 요청하거나 XLSX 형식으로 업로드해 주세요."
+            )
+        if extension in {".xlsx", ".xls"}:
+            return (
+                "엑셀 문서를 읽는 중 오류가 발생했습니다. 파일 형식과 시트 내용을 확인해주세요. "
+                f"({type(exc).__name__})"
+            )
         return f"문서를 읽는 중 오류가 발생했습니다. 파일 형식과 내용을 확인해주세요. ({type(exc).__name__})"
 
     def _extract_docx_text(self, file_bytes: bytes) -> str:
@@ -332,6 +356,210 @@ class DocumentParserAgent:
                 continue
 
         return file_bytes.decode("utf-8", errors="ignore")
+
+    def _extract_spreadsheet_text(
+        self,
+        file_bytes: bytes,
+        extension: str,
+        file_name: str | None,
+    ) -> tuple[str, dict[str, Any]]:
+        workbook_rows = (
+            self._xlsx_rows(file_bytes)
+            if extension == ".xlsx"
+            else self._xls_rows(file_bytes)
+        )
+        lines: list[str] = []
+        for sheet_name, rows in workbook_rows:
+            for row_number, row in enumerate(rows, start=1):
+                values = [value for value in row if value]
+                if values:
+                    lines.append(f"[{sheet_name} #{row_number}] " + " | ".join(values))
+
+        wbs_context = self._extract_wbs_context_from_rows(
+            workbook_rows,
+            file_name=file_name,
+        )
+        context: dict[str, Any] = {}
+        if wbs_context.get("rows"):
+            context["wbs_context"] = wbs_context
+        return "\n".join(lines), context
+
+    def _xlsx_rows(self, file_bytes: bytes) -> list[tuple[str, list[list[str]]]]:
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:
+            raise RuntimeError(
+                "openpyxl is required for .xlsx uploads. Run `pip install openpyxl`."
+            ) from exc
+
+        workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+        workbook_rows: list[tuple[str, list[list[str]]]] = []
+        try:
+            for worksheet in workbook.worksheets:
+                rows = [
+                    [self._cell_to_text(value) for value in row]
+                    for row in worksheet.iter_rows(values_only=True)
+                ]
+                workbook_rows.append((worksheet.title, rows))
+        finally:
+            workbook.close()
+        return workbook_rows
+
+    def _xls_rows(self, file_bytes: bytes) -> list[tuple[str, list[list[str]]]]:
+        try:
+            import xlrd
+        except ImportError as exc:
+            raise RuntimeError(
+                "xlrd is required for .xls uploads. Run `pip install xlrd`."
+            ) from exc
+
+        workbook = xlrd.open_workbook(file_contents=file_bytes)
+        workbook_rows: list[tuple[str, list[list[str]]]] = []
+        for worksheet in workbook.sheets():
+            rows = [
+                [self._cell_to_text(worksheet.cell_value(row_index, column_index)) for column_index in range(worksheet.ncols)]
+                for row_index in range(worksheet.nrows)
+            ]
+            workbook_rows.append((worksheet.name, rows))
+        return workbook_rows
+
+    def _cell_to_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value).strip()
+
+    def _extract_wbs_context_from_rows(
+        self,
+        workbook_rows: list[tuple[str, list[list[str]]]],
+        *,
+        file_name: str | None,
+    ) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        for sheet_name, sheet_rows in workbook_rows:
+            header_index, header_map = self._find_wbs_header(sheet_rows)
+            if header_index is None:
+                continue
+            for row_offset, row in enumerate(sheet_rows[header_index + 1 :], start=header_index + 2):
+                item = self._wbs_row_from_values(
+                    row=row,
+                    header_map=header_map,
+                    row_number=row_offset,
+                    file_name=file_name,
+                    sheet_name=sheet_name,
+                )
+                if item:
+                    rows.append(item)
+
+        return {
+            "source_document_name": file_name,
+            "rows": rows,
+        }
+
+    def _find_wbs_header(
+        self,
+        rows: list[list[str]],
+    ) -> tuple[int | None, dict[str, int]]:
+        for index, row in enumerate(rows):
+            normalized_cells = [self._normalize_header(cell) for cell in row]
+            if not any(cell in {"wbs명", "작업명", "업무명", "taskname", "title"} for cell in normalized_cells):
+                continue
+            if not any(cell in {"시작예정일", "시작일", "plannedstartdate", "startdate"} for cell in normalized_cells):
+                continue
+            header_map = {
+                normalized_cell: column_index
+                for column_index, normalized_cell in enumerate(normalized_cells)
+                if normalized_cell
+            }
+            return index, header_map
+        return None, {}
+
+    def _wbs_row_from_values(
+        self,
+        *,
+        row: list[str],
+        header_map: dict[str, int],
+        row_number: int,
+        file_name: str | None,
+        sheet_name: str,
+    ) -> dict[str, Any] | None:
+        title = self._row_value(row, header_map, "wbs명", "작업명", "업무명", "taskname", "title", "name")
+        if not title:
+            return None
+
+        level = self._row_value(row, header_map, "레벨", "level")
+        wbs_id = self._row_value(row, header_map, "id", "wbsid", "wbs_id")
+        planned_start = self._row_value(
+            row,
+            header_map,
+            "시작예정일",
+            "시작일",
+            "plannedstartdate",
+            "startdate",
+        )
+        planned_end = self._row_value(
+            row,
+            header_map,
+            "종료예정일",
+            "종료일",
+            "plannedenddate",
+            "enddate",
+            "duedate",
+        )
+        assignee = self._row_value(row, header_map, "작업자", "담당자", "owner", "assignee")
+        artifact = self._row_value(row, header_map, "산출물", "deliverable", "artifact")
+        actual_start = self._row_value(row, header_map, "실제시작일", "actualstartdate")
+        actual_end = self._row_value(row, header_map, "실제종료일", "actualenddate")
+        status = self._row_value(row, header_map, "작업상태", "상태", "status")
+
+        return {
+            "row_number": row_number,
+            "sheet_name": sheet_name,
+            "level": level,
+            "wbs_id": wbs_id,
+            "title": title,
+            "planned_start_date": planned_start,
+            "planned_end_date": planned_end,
+            "raw_assignee": assignee,
+            "artifact": artifact,
+            "actual_start_date": actual_start,
+            "actual_end_date": actual_end,
+            "raw_status": status,
+            "source_document_name": file_name,
+            "레벨": level,
+            "ID": wbs_id,
+            "WBS명": title,
+            "시작예정일": planned_start,
+            "종료예정일": planned_end,
+            "작업자": assignee,
+            "산출물": artifact,
+            "실제시작일": actual_start,
+            "실제종료일": actual_end,
+            "작업상태": status,
+        }
+
+    def _row_value(
+        self,
+        row: list[str],
+        header_map: dict[str, int],
+        *aliases: str,
+    ) -> str | None:
+        for alias in aliases:
+            column_index = header_map.get(self._normalize_header(alias))
+            if column_index is None or column_index >= len(row):
+                continue
+            value = row[column_index].strip()
+            if value:
+                return value
+        return None
+
+    def _normalize_header(self, value: Any) -> str:
+        return re.sub(r"[\s._/-]+", "", str(value or "").strip().lower())
 
     def _remove_postgresql_unsafe_chars(self, text: str) -> str:
         # PostgreSQL text/json columns cannot store NUL bytes. Binary Office files
