@@ -305,9 +305,16 @@ class GenerationOrchestrator:
             f"System instruction:\n{system_prompt.strip()}\n\n"
             f"User input:\n{user_prompt.strip()}"
         )
+        progress_text = (
+            f"{call_index}/{call_total}"
+            if call_index is not None and call_total is not None
+            else "n/a"
+        )
         logger.info(
             f"[Orchestrator] {LLM_LOG_PREFIX} invoke request | "
-            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)}"
+            f"label={call_label or 'n/a'} | progress={progress_text} | "
+            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)} | "
+            f"prompt_chars={len(prompt)}"
         )
         logger.debug(
             f"[Orchestrator] {LLM_LOG_PREFIX} prompt preview | "
@@ -321,8 +328,8 @@ class GenerationOrchestrator:
         )
         logger.info(
             f"[Orchestrator] {LLM_LOG_PREFIX} invoke response | "
-            f"response_chars={len(response)} | "
-            f"progress={(f'{call_index}/{call_total}' if call_total is not None and call_index is not None else 'n/a')}"
+            f"label={call_label or 'n/a'} | progress={progress_text} | "
+            f"response_chars={len(response)}"
         )
         logger.debug(
             f"[Orchestrator] {LLM_LOG_PREFIX} response preview | "

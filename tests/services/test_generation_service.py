@@ -156,3 +156,36 @@ async def test_generation_service_validates_required_source_type() -> None:
             }
         ]
     }
+
+
+@pytest.mark.anyio
+async def test_generation_service_allows_requirement_spec_with_meeting_notes() -> None:
+    service = GenerationService(StubOrchestrator())
+    documents = {
+        "DOC-REQ": DocumentMetadata(
+            document_id="DOC-REQ",
+            project_id="PRJ-001",
+            document_type=DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION,
+            file_name="construction.txt",
+            storage_path="s3://bucket/construction.txt",
+        ),
+        "DOC-MEET": DocumentMetadata(
+            document_id="DOC-MEET",
+            project_id="PRJ-001",
+            document_type=DocumentType.MEETING_NOTES,
+            file_name="2026-06-01 weekly meeting.txt",
+            storage_path="s3://bucket/meeting.txt",
+        ),
+    }
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        source_document_ids=["DOC-REQ", "DOC-MEET"],
+        target_artifact_type="REQUIREMENT_SPEC",
+    )
+
+    result = await service.validate_source_documents(
+        request,
+        document_service=StubDocumentService(documents),
+    )
+
+    assert result.success is True

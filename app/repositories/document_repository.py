@@ -129,13 +129,16 @@ class DocumentRepository:
         embedding: Optional[list[float]] = None,
     ) -> DocumentChunkModel:
         await ensure_project(self.session, project_id=project_id)
+        # PostgreSQL enforces the model's VARCHAR(255) limit strictly, so keep
+        # chunk section titles within the database boundary before insert.
+        normalized_section_title = self._truncate_text(section_title, 255)
         chunk = DocumentChunkModel(
             chunk_id=chunk_id,
             project_id=project_id,
             document_id=document_id,
             chunk_index=chunk_index,
             text=text,
-            section_title=section_title,
+            section_title=normalized_section_title,
             chunk_metadata=chunk_metadata or {},
             embedding=embedding,
         )
@@ -231,6 +234,15 @@ class DocumentRepository:
         bind = getattr(self.session, "bind", None)
         dialect = getattr(bind, "dialect", None)
         return bool(dialect and getattr(dialect, "name", "") == "postgresql")
+
+    @staticmethod
+    def _truncate_text(value: Optional[str], max_chars: int) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+        return normalized[:max_chars]
 
     def _rank_chunks_by_embedding(
         self,

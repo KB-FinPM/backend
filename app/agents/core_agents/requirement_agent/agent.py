@@ -46,6 +46,7 @@ EXTRACTION_SYSTEM_PROMPT = """
 - acceptance_criteria는 검증 가능한 문장으로 2~4개 작성한다.
 - 인프라 구축 프로젝트에서는 OCP, Kafka, EFK, CDC, API Gateway, Service Mesh, Monitoring, Logging, DB, 보안, 백업 등을 Biz요건명 후보로 본다.
 - 개발 프로젝트에서는 업무, 화면, 기능, 인터페이스, 데이터, 권한, 배치 등을 Biz요건명 후보로 본다.
+- source_document_context에 meeting_notes가 있으면 회의록 제목과 내용을 기준으로 요구사항을 보완/추가한다.
 - 기능 구현과 직접 관련 있으면 기능요구사항으로 분류한다.
 - 성능, 보안, 권한, 로그, 접근성, 운영, 백업, 장애대응은 비기능요구사항으로 분류한다.
 - 각 description은 120자 이내로 요약한다.
@@ -67,6 +68,7 @@ TABLE_EXTRACTION_SYSTEM_PROMPT = """
 - 중복 요구사항은 병합한다.
 - 각 description은 표와 원문 맥락을 반영해 1~2문장으로 구체화한다.
 - acceptance_criteria는 실제 검증 가능한 문장으로 2~4개 작성한다.
+- source_document_context에 meeting_notes가 있으면 회의록 제목과 내용을 함께 반영한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
 """.strip()
 
@@ -128,6 +130,7 @@ TABLE_BATCH_REFINEMENT_SYSTEM_PROMPT = """
 - description 길이는 120자 이내로 유지한다.
 - requirement_name과 biz_requirement_name은 후보 값을 최대한 보존한다.
 - acceptance_criteria는 2~4개만 작성한다.
+- source_document_context에 meeting_notes가 있으면 회의록 제목과 내용을 함께 반영한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
 """.strip()
 
@@ -211,6 +214,12 @@ class RequirementAgent:
             )
             documents = documents[:max_source_chunks]
 
+        source_document_context = self._build_source_document_context(documents)
+        request.context = {
+            **(request.context or {}),
+            "source_document_context": source_document_context,
+        }
+
         logger.info(
             f"[{self.AGENT_NAME}] orchestrator path start | "
             f"project_id={request.project_id} | document_count={len(documents)}"
@@ -246,6 +255,13 @@ class RequirementAgent:
                     batch_index,
                     len(batches),
                 )
+                prompt_chars = len(prompt)
+                logger.info(
+                    f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} table batch start | "
+                    f"project_id={request.project_id} | "
+                    f"call={batch_index}/{total_calls} | "
+                    f"batch_size={len(batch)} | prompt_chars={prompt_chars}"
+                )
                 llm_result = await orchestrator.invoke_agent_llm(
                     system_prompt=TABLE_BATCH_REFINEMENT_SYSTEM_PROMPT,
                     user_prompt=prompt,
@@ -266,6 +282,14 @@ class RequirementAgent:
                 if len(parsed_items) < len(batch):
                     for atom in batch[len(parsed_items):]:
                         chunk_items.append(self._table_atom_fallback_payload(atom))
+                logger.info(
+                    f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} table batch done | "
+                    f"project_id={request.project_id} | "
+                    f"call={batch_index}/{total_calls} | "
+                    f"parsed_items={len(parsed_items)} | "
+                    f"accumulated_atoms={len(chunk_items)} | "
+                    f"actual_llm_calls={llm_call_count}"
+                )
 
             atoms = normalize_requirement_atoms(chunk_items, documents=None) if chunk_items else table_atoms
             atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
@@ -278,7 +302,8 @@ class RequirementAgent:
             logger.info(
                 f"[{self.AGENT_NAME}] table path done | "
                 f"project_id={request.project_id} | "
-                f"llm_calls={llm_call_count} | "
+                f"actual_llm_calls={llm_call_count} | "
+                f"table_atoms={len(table_atoms)} | "
                 f"duration_ms={int((perf_counter() - started_at) * 1000)}"
             )
             return result
@@ -303,17 +328,19 @@ class RequirementAgent:
         total_calls = len(batches)
         for batch_index, batch in enumerate(batches, start=1):
             text_chars = sum(len(str(document.get("text") or "")) for document in batch)
-            logger.info(
-                f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk batch LLM request | "
-                f"project_id={request.project_id} | "
-                f"batch_index={batch_index} | batch_count={len(batches)} | "
-                f"chunk_count={len(batch)} | text_chars={text_chars}"
-            )
             prompt = self._build_batch_prompt(
                 request,
                 batch,
                 batch_index,
                 len(batches),
+            )
+            prompt_chars = len(prompt)
+            logger.info(
+                f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk batch start | "
+                f"project_id={request.project_id} | "
+                f"batch_index={batch_index} | batch_count={len(batches)} | "
+                f"chunk_count={len(batch)} | text_chars={text_chars} | "
+                f"prompt_chars={prompt_chars}"
             )
             llm_result = await orchestrator.invoke_agent_llm(
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
@@ -351,6 +378,13 @@ class RequirementAgent:
                     or source_document.get("document_id"),
                 )
             atoms.extend(normalize_requirement_atoms(chunk_items, documents=None))
+            logger.info(
+                f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} chunk batch done | "
+                f"project_id={request.project_id} | "
+                f"batch_index={batch_index} | batch_count={len(batches)} | "
+                f"parsed_items={len(chunk_items)} | accumulated_atoms={len(atoms)} | "
+                f"actual_llm_calls={llm_call_count}"
+            )
 
         atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
         if not atoms:
@@ -364,7 +398,8 @@ class RequirementAgent:
         logger.info(
             f"[{self.AGENT_NAME}] chunk fallback done | "
             f"project_id={request.project_id} | "
-            f"llm_calls={llm_call_count} | "
+            f"actual_llm_calls={llm_call_count} | "
+            f"runnable_documents={len(runnable_documents)} | "
             f"duration_ms={int((perf_counter() - started_at) * 1000)}"
         )
         return result
@@ -601,6 +636,81 @@ Template mapper summary:
 source_chunks:
 {json.dumps(source_chunks, ensure_ascii=False, default=str)}
 """.strip()
+
+    def _build_source_document_context(
+        self,
+        documents: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        grouped: dict[str, dict[str, Any]] = {}
+        document_order: list[str] = []
+        for document in documents:
+            document_id = str(document.get("document_id") or "").strip()
+            if not document_id:
+                continue
+            if document_id not in grouped:
+                grouped[document_id] = {
+                    "document_id": document_id,
+                    "document_type": self._document_type_from_metadata(document),
+                    "source_file_name": self._document_title_from_metadata(document),
+                    "chunk_count": 0,
+                    "section_titles": [],
+                    "highlights": [],
+                }
+                document_order.append(document_id)
+
+            summary = grouped[document_id]
+            summary["chunk_count"] = int(summary["chunk_count"]) + 1
+            section_title = str(document.get("section_title") or "").strip()
+            if section_title and section_title not in summary["section_titles"]:
+                summary["section_titles"].append(section_title)
+            text = str(document.get("text") or "").strip()
+            if text:
+                highlights = summary["highlights"]
+                if len(highlights) < 3:
+                    highlights.append(text[:240])
+
+        ordered_documents = [grouped[document_id] for document_id in document_order]
+        meeting_note_documents = [
+            summary
+            for summary in ordered_documents
+            if summary["document_type"] == "MEETING_NOTES"
+        ]
+        construction_documents = [
+            summary
+            for summary in ordered_documents
+            if summary["document_type"] == "CONSTRUCTION_REQUIREMENT_DEFINITION"
+        ]
+        return {
+            "documents": ordered_documents,
+            "meeting_notes": meeting_note_documents,
+            "construction_requirement_documents": construction_documents,
+            "meeting_note_titles": [
+                summary["source_file_name"] or summary["document_id"]
+                for summary in meeting_note_documents
+            ],
+        }
+
+    def _document_type_from_metadata(self, document: dict[str, Any]) -> str:
+        metadata = document.get("metadata") or {}
+        raw_value = (
+            metadata.get("document_type")
+            or metadata.get("source_document_type")
+            or metadata.get("documentType")
+            or metadata.get("sourceDocumentType")
+            or ""
+        )
+        return str(raw_value).upper() or "UNKNOWN"
+
+    def _document_title_from_metadata(self, document: dict[str, Any]) -> str:
+        metadata = document.get("metadata") or {}
+        return str(
+            metadata.get("source_file_name")
+            or metadata.get("document_file_name")
+            or metadata.get("file_name")
+            or document.get("section_title")
+            or document.get("document_id")
+            or "",
+        ).strip()
 
     def _document_by_chunk_id(
         self,

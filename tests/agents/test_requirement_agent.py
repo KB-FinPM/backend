@@ -73,6 +73,34 @@ class FakeRequirementOrchestrator:
         return json.dumps(payload, ensure_ascii=False)
 
 
+class CapturingRequirementOrchestrator(FakeRequirementOrchestrator):
+    async def invoke_agent_llm(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        call_index: int | None = None,
+        call_total: int | None = None,
+        call_label: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "call_index": call_index,
+                "call_total": call_total,
+                "call_label": call_label,
+            }
+        )
+        return await super().invoke_agent_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            call_index=call_index,
+            call_total=call_total,
+            call_label=call_label,
+        )
+
+
 @pytest.mark.anyio
 async def test_requirement_agent_generates_structured_draft_from_chunks() -> None:
     agent = RequirementAgent()
@@ -138,3 +166,42 @@ async def test_requirement_agent_batches_table_candidates() -> None:
     assert len(orchestrator.calls) == 2
     assert response.result["artifact_type"] == "REQUIREMENT_SPEC"
     assert len(response.result["requirements"]) == 5
+
+
+@pytest.mark.anyio
+async def test_requirement_agent_includes_meeting_note_context() -> None:
+    orchestrator = CapturingRequirementOrchestrator([])
+    agent = RequirementAgent()
+    request = AgentRequest(
+        project_id="PRJ-001",
+        documents=[
+            {
+                "chunk_id": "CHUNK-001",
+                "document_id": "DOC-REQ-001",
+                "text": "구축요건정의서 내용",
+                "metadata": {
+                    "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+                    "source_file_name": "구축요건정의서.v1.docx",
+                },
+            },
+            {
+                "chunk_id": "CHUNK-002",
+                "document_id": "DOC-MEET-001",
+                "text": "회의에서 추가된 화면 알림 요구사항",
+                "metadata": {
+                    "document_type": "MEETING_NOTES",
+                    "source_file_name": "2026-06-01 주간회의록.docx",
+                },
+            },
+        ],
+        context={"generation_orchestrator": orchestrator},
+    )
+
+    response = await agent.generate(request)
+
+    assert response.success is True
+    assert request.context is not None
+    source_context = request.context.get("source_document_context")
+    assert source_context is not None
+    assert source_context["meeting_note_titles"] == ["2026-06-01 주간회의록.docx"]
+    assert source_context["meeting_notes"][0]["document_type"] == "MEETING_NOTES"

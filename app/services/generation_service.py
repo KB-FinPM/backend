@@ -86,6 +86,8 @@ class GenerationService:
         self,
         target_artifact_type: ArtifactType,
     ) -> DocumentType | None:
+        if target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
+            return DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION
         if target_artifact_type in {
             ArtifactType.WBS,
             ArtifactType.UNITTEST_SPEC,
@@ -97,6 +99,11 @@ class GenerationService:
         self,
         target_artifact_type: ArtifactType,
     ) -> list[DocumentType]:
+        if target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
+            return [
+                DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION,
+                DocumentType.MEETING_NOTES,
+            ]
         if target_artifact_type == ArtifactType.SCREEN_DESIGN:
             return [
                 DocumentType.REQUIREMENT_SPEC,
@@ -115,11 +122,12 @@ class GenerationService:
         target_artifact_type = request.generation_flow().target_artifact_type
         if required_source_type is None:
             required_source_type = self.required_source_type_for(target_artifact_type)
-        allowed_source_types = (
-            [required_source_type]
-            if required_source_type is not None
-            else self.allowed_source_types_for(target_artifact_type)
-        )
+        allowed_source_types = self.allowed_source_types_for(target_artifact_type)
+        if (
+            required_source_type is not None
+            and required_source_type not in allowed_source_types
+        ):
+            allowed_source_types = [required_source_type, *allowed_source_types]
 
         if not request.source_document_ids:
             return GenerationSourceValidationResult(
@@ -132,6 +140,8 @@ class GenerationService:
 
         missing_document_ids: list[str] = []
         invalid_type_documents: list[dict[str, str]] = []
+        matched_required_type = False
+        first_document_detail: dict[str, str] | None = None
         for document_id in request.source_document_ids:
             document = await document_service.get_document(
                 project_id=request.project_id,
@@ -155,6 +165,28 @@ class GenerationService:
                 invalid_type_documents.append(
                     invalid_detail
                 )
+                continue
+
+            if first_document_detail is None:
+                first_document_detail = {
+                    "document_id": document.document_id,
+                    "document_type": document.document_type.value,
+                }
+            if required_source_type is not None and document.document_type == required_source_type:
+                matched_required_type = True
+
+        if (
+            required_source_type is not None
+            and not matched_required_type
+            and not missing_document_ids
+            and not invalid_type_documents
+        ):
+            invalid_type_documents.append(
+                {
+                    **(first_document_detail or {}),
+                    "required_document_type": required_source_type.value,
+                }
+            )
 
         return GenerationSourceValidationResult(
             project_id=request.project_id,
