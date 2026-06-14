@@ -1,5 +1,6 @@
 # EN: Business service for artifact generation use cases.
 
+from time import perf_counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -179,13 +180,21 @@ class GenerationService:
             f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
             f"source_document_ids={request.source_document_ids or []}"
         )
-        return await self.orchestrator.generate_requirement(
-            request,
-            artifact_service=artifact_service,
-            retrieval_service=retrieval_service,
-            template_service=template_service,
-            document_service=document_service,
-        )
+        started_at = perf_counter()
+        try:
+            return await self.orchestrator.generate_requirement(
+                request,
+                artifact_service=artifact_service,
+                retrieval_service=retrieval_service,
+                template_service=template_service,
+                document_service=document_service,
+            )
+        finally:
+            elapsed_ms = int((perf_counter() - started_at) * 1000)
+            logger.info(
+                f"!!! GenerationService generate_requirement done | "
+                f"project_id={request.project_id} | duration_ms={elapsed_ms}"
+            )
 
     async def generate_artifact(
         self,
@@ -202,10 +211,18 @@ class GenerationService:
             f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
             f"source_document_ids={request.source_document_ids or []}"
         )
-        return await self.orchestrator.generate_artifact(
-            request,
-            artifact_service=artifact_service,
-            retrieval_service=retrieval_service,
-            template_service=template_service,
-            document_service=document_service,
-        )
+        started_at = perf_counter()
+        try:
+            return await self.orchestrator.generate_artifact(
+                request,
+                artifact_service=artifact_service,
+                retrieval_service=retrieval_service,
+                template_service=template_service,
+                document_service=document_service,
+            )
+        finally:
+            elapsed_ms = int((perf_counter() - started_at) * 1000)
+            logger.info(
+                f"!!! GenerationService generate_artifact done | "
+                f"project_id={request.project_id} | duration_ms={elapsed_ms}"
+            )

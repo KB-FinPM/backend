@@ -3,7 +3,7 @@
 
 from datetime import date
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -26,6 +26,10 @@ class UploadRequest(BaseModel):
 
 class GenerationRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
+    context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional internal generation context",
+    )
     project_name: Optional[str] = Field(None, description="Project display name")
     start_date: Optional[str] = Field(
         None,

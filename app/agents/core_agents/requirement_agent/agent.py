@@ -2,6 +2,8 @@
 # KO: 구조화된 컨텍스트를 기반으로 요구사항 산출물을 생성하는 Core Agent입니다.
 
 import json
+import inspect
+from time import perf_counter
 from typing import Any
 
 from app.core.config import settings
@@ -98,6 +100,38 @@ TABLE_REFINEMENT_SYSTEM_PROMPT = """
 """.strip()
 
 
+TABLE_BATCH_REFINEMENT_SYSTEM_PROMPT = """
+너는 PM Agent의 구축요건정의서 행 단위 보정기다.
+입력으로 주어지는 후보 목록만 보고, 각 후보를 같은 의미를 유지한 채 요구사항명세서용 내용으로 다듬어라.
+반드시 JSON 배열만 반환한다.
+
+스키마:
+[
+  {
+    "category":"기능 | 비기능 | 인터페이스 | 데이터 | 정책 | 인프라 | 보안 | 운영",
+    "biz_requirement_id":"Biz요건ID 또는 빈 문자열",
+    "biz_requirement_name":"Biz요건명 또는 업무영역",
+    "requirement_name":"요구사항명",
+    "requirement_type":"기능요구사항 | 비기능요구사항",
+    "domain":"업무영역",
+    "feature":"기능명 또는 구축항목",
+    "description":"요구사항 설명",
+    "note":"검토의견 또는 비고",
+    "acceptance_criteria":["검증 가능한 문장"]
+  }
+]
+
+규칙:
+- 입력 후보의 순서와 출력 배열의 순서를 반드시 맞춘다.
+- 후보 하나당 결과 하나를 반환한다.
+- 설명은 후보 내용을 바탕으로 목적/처리/제약을 1~2문장으로 구체화한다.
+- description 길이는 120자 이내로 유지한다.
+- requirement_name과 biz_requirement_name은 후보 값을 최대한 보존한다.
+- acceptance_criteria는 2~4개만 작성한다.
+- JSON 외의 설명 문장은 절대 출력하지 않는다.
+""".strip()
+
+
 class RequirementAgent:
     """
     Generates requirement JSON from retrieved project context.
@@ -113,6 +147,7 @@ class RequirementAgent:
 
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(f"[{self.AGENT_NAME}] generate start | project_id={request.project_id}")
+        started_at = perf_counter()
 
         try:
             result = await self._generate_with_orchestrator(request)
@@ -133,7 +168,13 @@ class RequirementAgent:
                 )
                 self._apply_request_metadata(result, request)
 
-            logger.info(f"[{self.AGENT_NAME}] generate done")
+            requirement_count = len(result.get("requirements", [])) if isinstance(result, dict) else 0
+            logger.info(
+                f"[{self.AGENT_NAME}] generate done | "
+                f"project_id={request.project_id} | "
+                f"requirements={requirement_count} | "
+                f"duration_ms={int((perf_counter() - started_at) * 1000)}"
+            )
             return AgentResponse(agent_name=self.AGENT_NAME, result=result)
 
         except Exception as exc:
@@ -144,6 +185,7 @@ class RequirementAgent:
         self,
         request: AgentRequest,
     ) -> dict[str, Any] | None:
+        started_at = perf_counter()
         orchestrator = (request.context or {}).get("generation_orchestrator")
         if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
             logger.info(
@@ -173,6 +215,7 @@ class RequirementAgent:
             f"[{self.AGENT_NAME}] orchestrator path start | "
             f"project_id={request.project_id} | document_count={len(documents)}"
         )
+        llm_call_count = 0
 
         # 1) Existing 구축요건정의서 files often already contain structured
         # requirement tables. Extract deterministic candidates first, then send
@@ -184,72 +227,45 @@ class RequirementAgent:
             f"project_id={request.project_id} | table_atom_count={len(table_atoms)}"
         )
         if table_atoms:
-            total_calls = len(table_atoms)
+            batch_size = max(settings.GENERATION_REQUIREMENT_TABLE_BATCH_SIZE, 1)
+            batches = [
+                table_atoms[index : index + batch_size]
+                for index in range(0, len(table_atoms), batch_size)
+            ]
+            total_calls = len(batches)
             logger.info(
                 f"[{self.AGENT_NAME}] {LLM_LOG_PREFIX} table path -> LLM | "
                 f"project_id={request.project_id} | candidate_count={len(table_atoms)} | "
-                f"planned_calls={total_calls}"
+                f"batch_size={batch_size} | planned_calls={total_calls}"
             )
-            chunk_items = []
-            for index, atom in enumerate(table_atoms, start=1):
-                prompt = self._build_table_item_prompt(request, atom, index, len(table_atoms))
-                llm_result = await orchestrator.invoke_agent_llm(
-                    system_prompt=TABLE_REFINEMENT_SYSTEM_PROMPT,
-                    user_prompt=prompt,
-                    call_index=index,
-                    call_total=total_calls,
-                    call_label="requirement-table",
+            chunk_items: list[dict[str, Any]] = []
+            for batch_index, batch in enumerate(batches, start=1):
+                prompt = self._build_table_batch_prompt(
+                    request,
+                    batch,
+                    batch_index,
+                    len(batches),
                 )
-                parsed_obj = parse_json_object(llm_result)
-                parsed_items = parse_json_array(llm_result)
-                parsed_item: dict[str, Any] | None = None
-                if parsed_obj:
-                    parsed_item = parsed_obj
-                elif parsed_items:
-                    parsed_item = parsed_items[0]
-
-                if parsed_item is None:
-                    chunk_items.append(
-                        {
-                            "requirement_id": atom.requirement_id,
-                            "title": atom.title,
-                            "description": atom.description,
-                            "priority": atom.priority,
-                            "source_document_id": atom.source_document_id,
-                            "source_chunk_ids": atom.source_chunk_ids,
-                            "source_doc": atom.metadata.get("source_doc") or atom.metadata.get("source_file_name") or atom.source_document_id,
-                            "source_file_name": atom.metadata.get("source_file_name") or atom.metadata.get("source_doc") or atom.source_document_id,
-                            "acceptance_criteria": atom.acceptance_criteria,
-                            "rationale": atom.rationale,
-                            "category": atom.category,
-                            "requirement_type": atom.requirement_type,
-                            "biz_requirement_id": atom.biz_requirement_id,
-                            "biz_requirement_name": atom.biz_requirement_name,
-                            "domain": atom.domain,
-                            "feature": atom.feature,
-                            "note": atom.rationale,
-                        }
-                    )
-                    continue
-
-                parsed_item.setdefault("requirement_id", atom.requirement_id)
-                parsed_item.setdefault("title", atom.title)
-                parsed_item.setdefault("description", atom.description)
-                parsed_item.setdefault("priority", atom.priority)
-                parsed_item.setdefault("source_document_id", atom.source_document_id)
-                parsed_item.setdefault("source_chunk_ids", atom.source_chunk_ids)
-                parsed_item.setdefault("source_doc", atom.metadata.get("source_doc") or atom.metadata.get("source_file_name") or atom.source_document_id)
-                parsed_item.setdefault("source_file_name", atom.metadata.get("source_file_name") or atom.metadata.get("source_doc") or atom.source_document_id)
-                parsed_item.setdefault("acceptance_criteria", atom.acceptance_criteria)
-                parsed_item.setdefault("rationale", atom.rationale)
-                parsed_item.setdefault("category", atom.category)
-                parsed_item.setdefault("requirement_type", atom.requirement_type)
-                parsed_item.setdefault("biz_requirement_id", atom.biz_requirement_id)
-                parsed_item.setdefault("biz_requirement_name", atom.biz_requirement_name)
-                parsed_item.setdefault("domain", atom.domain)
-                parsed_item.setdefault("feature", atom.feature)
-                parsed_item.setdefault("note", atom.rationale)
-                chunk_items.append(parsed_item)
+                llm_result = await orchestrator.invoke_agent_llm(
+                    system_prompt=TABLE_BATCH_REFINEMENT_SYSTEM_PROMPT,
+                    user_prompt=prompt,
+                    call_index=batch_index,
+                    call_total=total_calls,
+                    call_label="requirement-table-batch",
+                )
+                llm_call_count += 1
+                await self._report_generation_progress(
+                    request,
+                    current=batch_index,
+                    total=total_calls,
+                    label="requirement-table-batch",
+                )
+                parsed_items = self._parse_table_batch_response(llm_result)
+                for atom, parsed_item in zip(batch, parsed_items):
+                    chunk_items.append(self._merge_table_atom_with_result(atom, parsed_item))
+                if len(parsed_items) < len(batch):
+                    for atom in batch[len(parsed_items):]:
+                        chunk_items.append(self._table_atom_fallback_payload(atom))
 
             atoms = normalize_requirement_atoms(chunk_items, documents=None) if chunk_items else table_atoms
             atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
@@ -259,6 +275,12 @@ class RequirementAgent:
                 generated_by=self.AGENT_NAME,
             )
             self._apply_request_metadata(result, request)
+            logger.info(
+                f"[{self.AGENT_NAME}] table path done | "
+                f"project_id={request.project_id} | "
+                f"llm_calls={llm_call_count} | "
+                f"duration_ms={int((perf_counter() - started_at) * 1000)}"
+            )
             return result
 
         # 2) Fallback to sample_0605 chunk-by-chunk LLM extraction when no
@@ -300,6 +322,13 @@ class RequirementAgent:
                 call_total=total_calls,
                 call_label="requirement-batch",
             )
+            llm_call_count += 1
+            await self._report_generation_progress(
+                request,
+                current=batch_index,
+                total=total_calls,
+                label="requirement-batch",
+            )
             chunk_items = parse_json_array(llm_result)
             if not chunk_items:
                 parsed_obj = parse_json_object(llm_result)
@@ -332,6 +361,12 @@ class RequirementAgent:
             generated_by=self.AGENT_NAME,
         )
         self._apply_request_metadata(result, request)
+        logger.info(
+            f"[{self.AGENT_NAME}] chunk fallback done | "
+            f"project_id={request.project_id} | "
+            f"llm_calls={llm_call_count} | "
+            f"duration_ms={int((perf_counter() - started_at) * 1000)}"
+        )
         return result
 
     def _build_table_prompt(
@@ -384,6 +419,49 @@ Template mapper summary:
 
 원문 chunk:
 {json.dumps(source_chunks, ensure_ascii=False, default=str)}
+""".strip()
+
+    def _build_table_batch_prompt(
+        self,
+        request: AgentRequest,
+        batch: list[Any],
+        index: int,
+        total: int,
+    ) -> str:
+        context = {
+            key: value
+            for key, value in (request.context or {}).items()
+            if key != "generation_orchestrator"
+        }
+        candidates = [
+            {
+                "requirement_id": atom.requirement_id,
+                "category": atom.category,
+                "biz_requirement_id": atom.biz_requirement_id,
+                "biz_requirement_name": atom.biz_requirement_name,
+                "requirement_name": atom.requirement_name or atom.title,
+                "requirement_type": atom.requirement_type,
+                "domain": atom.domain,
+                "feature": atom.feature,
+                "description": atom.description,
+                "note": atom.rationale,
+                "source_document_id": atom.source_document_id,
+                "source_chunk_ids": atom.source_chunk_ids,
+                "acceptance_criteria": atom.acceptance_criteria,
+            }
+            for atom in batch
+        ]
+        return f"""
+Project ID: {request.project_id}
+batch: {index}/{total}
+Context:
+{json.dumps(context, ensure_ascii=False, default=str)}
+
+Template mapper summary:
+{mapper_summary_for_prompt()}
+
+후보 목록:
+{json.dumps(candidates, ensure_ascii=False, default=str)}
 """.strip()
 
     def _build_table_item_prompt(
@@ -508,7 +586,7 @@ Template mapper summary:
                     "chunk_id": document.get("chunk_id", ""),
                     "section_title": document.get("section_title") or "",
                     "source_file": metadata.get("source_file_name") or "",
-                    "text": str(document.get("text") or "")[:3500],
+                    "text": str(document.get("text") or "")[: max(settings.GENERATION_REQUIREMENT_SOURCE_TEXT_LIMIT, 200)],
                 }
             )
         return f"""
@@ -535,6 +613,96 @@ source_chunks:
             if str(document.get("chunk_id") or "") == str(chunk_id):
                 return document
         return None
+
+    async def _report_generation_progress(
+        self,
+        request: AgentRequest,
+        *,
+        current: int,
+        total: int,
+        label: str,
+    ) -> None:
+        reporter = (request.context or {}).get("generation_progress_reporter")
+        if reporter is None or not callable(reporter):
+            return
+        progress = 0 if total <= 0 else int(round(current * 100 / total))
+        payload = {
+            "current": current,
+            "total": total,
+            "progress": progress,
+            "progress_text": f"{current}/{total}",
+            "label": label,
+        }
+        result = reporter(payload)
+        if inspect.isawaitable(result):
+            await result
+
+    def _parse_table_batch_response(self, llm_result: str) -> list[dict[str, Any]]:
+        parsed_items = parse_json_array(llm_result)
+        if parsed_items:
+            return parsed_items
+
+        parsed_obj = parse_json_object(llm_result)
+        if not parsed_obj:
+            return []
+        if isinstance(parsed_obj.get("requirements"), list):
+            return [item for item in parsed_obj["requirements"] if isinstance(item, dict)]
+        return [parsed_obj]
+
+    def _merge_table_atom_with_result(
+        self,
+        atom: Any,
+        parsed_item: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        payload = self._table_atom_fallback_payload(atom)
+        if not parsed_item:
+            return payload
+        payload.update(
+            {
+                "category": parsed_item.get("category") or payload["category"],
+                "biz_requirement_id": parsed_item.get("biz_requirement_id")
+                or payload["biz_requirement_id"],
+                "biz_requirement_name": parsed_item.get("biz_requirement_name")
+                or payload["biz_requirement_name"],
+                "title": parsed_item.get("requirement_name")
+                or parsed_item.get("title")
+                or payload["title"],
+                "description": parsed_item.get("description") or payload["description"],
+                "requirement_type": parsed_item.get("requirement_type")
+                or payload["requirement_type"],
+                "domain": parsed_item.get("domain") or payload["domain"],
+                "feature": parsed_item.get("feature") or payload["feature"],
+                "note": parsed_item.get("note") or payload["note"],
+                "acceptance_criteria": parsed_item.get("acceptance_criteria")
+                or payload["acceptance_criteria"],
+            }
+        )
+        return payload
+
+    def _table_atom_fallback_payload(self, atom: Any) -> dict[str, Any]:
+        return {
+            "requirement_id": atom.requirement_id,
+            "title": atom.title,
+            "description": atom.description,
+            "priority": atom.priority,
+            "source_document_id": atom.source_document_id,
+            "source_chunk_ids": atom.source_chunk_ids,
+            "source_doc": atom.metadata.get("source_doc")
+            or atom.metadata.get("source_file_name")
+            or atom.source_document_id,
+            "source_file_name": atom.metadata.get("source_file_name")
+            or atom.metadata.get("source_doc")
+            or atom.source_document_id,
+            "acceptance_criteria": atom.acceptance_criteria,
+            "rationale": atom.rationale,
+            "category": atom.category,
+            "requirement_type": atom.requirement_type,
+            "biz_requirement_id": atom.biz_requirement_id,
+            "biz_requirement_name": atom.biz_requirement_name,
+            "domain": atom.domain,
+            "feature": atom.feature,
+            "note": atom.rationale,
+        }
 
 
 requirement_agent = RequirementAgent()

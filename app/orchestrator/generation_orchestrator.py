@@ -2,6 +2,7 @@
 # KO: 선행 문서 기반 후행 산출물 생성 흐름을 제어합니다.
 
 from typing import Any
+from time import perf_counter
 from uuid import uuid4
 
 from app.agents.core_agents.artifact_agent.agent import ArtifactAgent
@@ -109,6 +110,7 @@ class GenerationOrchestrator:
         template_service: Any = None,
         document_service: Any = None,
     ) -> GenerationResponse:
+        started_at = perf_counter()
         generation_flow = request.generation_flow()
         logger.info(
             "[Orchestrator] generate_artifact start | "
@@ -145,10 +147,22 @@ class GenerationOrchestrator:
         # like "요구사항명세서를 생성해줘" as keyword filters can reduce context
         # to one irrelevant chunk and degrade output quality.
         retrieval_query = ""
+        retrieval_top_k = (
+            settings.GENERATION_REQUIREMENT_RETRIEVAL_TOP_K
+            if generation_flow.target_artifact_type == ArtifactType.REQUIREMENT_SPEC
+            else settings.GENERATION_RETRIEVAL_TOP_K
+        )
         top_k = min(
-            max(settings.GENERATION_RETRIEVAL_TOP_K, 1),
+            max(retrieval_top_k, 1),
             max(settings.GENERATION_MAX_SOURCE_CHUNKS, 1),
         )
+        logger.info(
+            "[Orchestrator] retrieval window | "
+            f"project_id={request.project_id} | "
+            f"target_artifact_type={generation_flow.target_artifact_type} | "
+            f"top_k={top_k}"
+        )
+        retrieval_started_at = perf_counter()
         documents = await retrieval.search(
             project_id=request.project_id,
             permission_scope=request.permission_scope,
@@ -156,6 +170,12 @@ class GenerationOrchestrator:
             top_k=top_k,
             document_ids=request.source_document_ids or None,
             search_mode="text",
+        )
+        logger.info(
+            "[Orchestrator] retrieval done | "
+            f"project_id={request.project_id} | "
+            f"document_count={len(documents)} | "
+            f"duration_ms={int((perf_counter() - retrieval_started_at) * 1000)}"
         )
 
         agent_request = AgentRequest(
@@ -182,9 +202,17 @@ class GenerationOrchestrator:
                 "user_id": request.user_id,
                 "permission_scope": request.permission_scope,
                 "generation_orchestrator": self,
+                **(request.context or {}),
             },
         )
+        agent_started_at = perf_counter()
         agent_response = await generator.generate(agent_request)
+        logger.info(
+            "[Orchestrator] agent generation done | "
+            f"project_id={request.project_id} | "
+            f"target_artifact_type={generation_flow.target_artifact_type} | "
+            f"duration_ms={int((perf_counter() - agent_started_at) * 1000)}"
+        )
         if not agent_response.success:
             return self._failed_response(request, agent_response)
 
@@ -248,7 +276,8 @@ class GenerationOrchestrator:
 
         logger.info(
             "[Orchestrator] generate_artifact done | "
-            f"project_id={request.project_id}"
+            f"project_id={request.project_id} | "
+            f"duration_ms={int((perf_counter() - started_at) * 1000)}"
         )
         return GenerationResponse(
             project_id=request.project_id,
