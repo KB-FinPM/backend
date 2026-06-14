@@ -17,27 +17,21 @@ def normalize_requirement_documents(
     here in the core agent boundary.
     """
     normalized: list[dict[str, Any]] = []
-    current_title = ""
-    for document in sorted(documents or [], key=_chunk_order):
+    current_title_by_document_id: dict[str, str] = {}
+    for document in documents or []:
         item = deepcopy(document)
+        document_id = str(item.get("document_id") or "").strip()
+        document_key = document_id or "__default__"
         section_title = str(item.get("section_title") or "").strip()
         if section_title and section_title != "ROOT":
-            current_title = section_title
+            current_title_by_document_id[document_key] = section_title
         text = _normalize_pipe_table_text(str(item.get("text") or ""))
         item["text"] = text
+        current_title = current_title_by_document_id.get(document_key, "")
         if current_title and not section_title:
             item["section_title"] = current_title
         normalized.append(item)
     return normalized
-
-
-def _chunk_order(document: dict[str, Any]) -> int:
-    try:
-        return int(document.get("chunk_index") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def _normalize_pipe_table_text(text: str) -> str:
     lines: list[str] = []
     for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):

@@ -25,3 +25,35 @@ def test_requirement_document_preprocessor_normalizes_pipe_rows_and_bad_index() 
     assert normalized[0]["text"] == "회원 | 회원 조회 | 목록을 조회한다."
     assert normalized[1]["section_title"] == "상세요건"
     assert normalized[1]["text"] == "권한 | 권한 관리 | 권한 변경 기능을 제공한다."
+
+
+def test_requirement_document_preprocessor_preserves_document_order() -> None:
+    documents = [
+        {
+            "document_id": "DOC-MEET-001",
+            "chunk_index": "2",
+            "section_title": "회의록 A",
+            "text": "첫 번째 회의록 후반 내용",
+        },
+        {
+            "document_id": "DOC-REQ-001",
+            "chunk_index": "0",
+            "section_title": "요구사항",
+            "text": "구축요건정의서 첫 번째 내용",
+        },
+        {
+            "document_id": "DOC-MEET-001",
+            "chunk_index": "3",
+            "section_title": "",
+            "text": "회의록 A 후속 내용",
+        },
+    ]
+
+    normalized = normalize_requirement_documents(documents)
+
+    assert [item["document_id"] for item in normalized] == [
+        "DOC-MEET-001",
+        "DOC-REQ-001",
+        "DOC-MEET-001",
+    ]
+    assert normalized[2]["section_title"] == "회의록 A"
