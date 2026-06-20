@@ -279,13 +279,18 @@ class RequirementAgent:
                     f"call={batch_index}/{total_calls} | "
                     f"batch_size={len(batch)} | prompt_chars={prompt_chars}"
                 )
-                llm_result = await model_invoker.invoke_agent_llm(
+                llm_result = await self._invoke_model_or_fallback(
+                    model_invoker,
                     system_prompt=TABLE_BATCH_REFINEMENT_SYSTEM_PROMPT,
                     user_prompt=prompt,
                     call_index=batch_index,
                     call_total=total_calls,
                     call_label="requirement-table-batch",
                 )
+                if llm_result is None:
+                    for atom in batch:
+                        chunk_items.append(self._table_atom_fallback_payload(atom))
+                    continue
                 llm_call_count += 1
                 parsed_items = self._parse_table_batch_response(llm_result)
                 for atom, parsed_item in zip(batch, parsed_items):
@@ -353,13 +358,16 @@ class RequirementAgent:
                 f"chunk_count={len(batch)} | text_chars={text_chars} | "
                 f"prompt_chars={prompt_chars}"
             )
-            llm_result = await model_invoker.invoke_agent_llm(
+            llm_result = await self._invoke_model_or_fallback(
+                model_invoker,
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
                 user_prompt=prompt,
                 call_index=batch_index,
                 call_total=total_calls,
                 call_label="requirement-batch",
             )
+            if llm_result is None:
+                return None
             llm_call_count += 1
             chunk_items = parse_json_array(llm_result)
             if not chunk_items:
@@ -408,6 +416,30 @@ class RequirementAgent:
             f"duration_ms={int((perf_counter() - started_at) * 1000)}"
         )
         return result
+
+    async def _invoke_model_or_fallback(
+        self,
+        model_invoker: Any,
+        **kwargs: Any,
+    ) -> str | None:
+        try:
+            return await model_invoker.invoke_agent_llm(**kwargs)
+        except RuntimeError as exc:
+            if not self._allows_local_llm_fallback():
+                raise
+            logger.warning(
+                f"[{self.AGENT_NAME}] LLM unavailable in non-production; "
+                f"using deterministic fallback | label={kwargs.get('call_label') or 'n/a'} | "
+                f"error_type={type(exc).__name__}"
+            )
+            return None
+
+    def _allows_local_llm_fallback(self) -> bool:
+        return str(settings.APP_ENV or "").strip().lower() not in {
+            "prod",
+            "production",
+            "release",
+        }
 
     def _build_table_prompt(
         self,

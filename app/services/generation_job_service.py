@@ -1,3 +1,4 @@
+from app.core.auth import DEFAULT_MVP_SCOPES
 from app.core.logger import get_logger
 from app.db.session import AsyncSessionLocal
 from app.orchestrator.generation_orchestrator import generation_orchestrator
@@ -7,6 +8,7 @@ from app.repositories.document_repository import DocumentRepository
 from app.repositories.template_repository import TemplateRepository
 from app.rag.retrieval import RetrievalService
 from app.schemas.chat import ChatActionMetadata, ChatActionStatus, ChatActionType
+from app.schemas.progress import build_generation_progress, normalize_generation_progress
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
 from app.services.artifact_service import ArtifactService
@@ -120,12 +122,15 @@ async def _execute_generation_action(
             template_id=payload.get("template_id"),
             template_version=payload.get("template_version"),
             query=payload.get("query"),
-            permission_scope=payload.get("permission_scope") or ["project:read"],
+            permission_scope=payload.get("server_permission_scope")
+            or list(DEFAULT_MVP_SCOPES),
         )
 
         async def _report_progress(progress: dict[str, object]) -> None:
             current_result = dict(action.result_json or {})
-            current_result["generation_progress"] = progress
+            current_result["generation_progress"] = normalize_generation_progress(
+                progress,
+            )
             await conversation_repository.update_action_status(
                 project_id=action.project_id,
                 action_id=action.action_id,
@@ -142,13 +147,12 @@ async def _execute_generation_action(
             result_json={
                 "action_id": action.action_id,
                 "status": ChatActionStatus.EXECUTING.value,
-                "generation_progress": {
-                    "current": 0,
-                    "total": 0,
-                    "progress": 0,
-                    "progress_text": "0/0",
-                    "label": "starting",
-                },
+                "generation_progress": build_generation_progress(
+                    stage="REQUEST_CONFIRMED",
+                    stage_label="요청 확인 중",
+                    progress=5,
+                    progress_text="요청 확인 중",
+                ),
             },
         )
         return await generation_service.generate_artifact(

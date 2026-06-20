@@ -124,6 +124,44 @@ async def test_document_ingestion_orchestrator_uses_preparsed_context(
 
 
 @pytest.mark.anyio
+async def test_document_ingestion_reports_chunk_embedding_and_indexing_progress(
+    session_factory,
+) -> None:
+    progress_events: list[dict] = []
+    async with session_factory() as session:
+        repository = DocumentRepository(session)
+        orchestrator = DocumentIngestionOrchestrator(
+            embedding_service=FakeEmbeddingService()
+        )
+
+        document = await orchestrator.ingest_uploaded_document(
+            document_repository=repository,
+            document_id="DOC-001",
+            project_id="PRJ-001",
+            document_type=DocumentType.REQUIREMENT_SPEC,
+            file_name="requirements.txt",
+            storage_path="s3://bucket/requirements.txt",
+            file_bytes=b"ignored",
+            parsed_context={
+                "text": "The system shall support login.",
+                "metadata": {"content_type": "text/plain"},
+                "parser_name": "InputOrchestrator",
+            },
+            progress_reporter=progress_events.append,
+        )
+
+    progress_types = [
+        event.get("sub_progress", {}).get("type") for event in progress_events
+    ]
+    assert document.status == DocumentStatus.INDEXED
+    assert "CHUNK_PROCESSING" in progress_types
+    assert "EMBEDDING" in progress_types
+    assert "INDEXING" in progress_types
+    assert progress_events[-1]["sub_progress"]["current"] == 1
+    assert progress_events[-1]["sub_progress"]["total"] == 1
+
+
+@pytest.mark.anyio
 async def test_document_ingestion_orchestrator_indexes_wbs_rows_once(session_factory) -> None:
     async with session_factory() as session:
         repository = DocumentRepository(session)

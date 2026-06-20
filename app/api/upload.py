@@ -64,7 +64,7 @@ async def upload_document(
 ) -> DocumentUploadResponse:
     """Upload a source document and return project-scoped document metadata."""
     assert_project_access(current_user, project_id, "document:write")
-    safe_file_name = PurePath(file.filename or "uploaded-file").name
+    safe_file_name = _safe_upload_file_name(file.filename)
     document_id = f"DOC-{uuid4().hex[:12].upper()}"
 
     logger.info(
@@ -117,6 +117,12 @@ async def upload_document(
         upload_prefix=settings.S3_UPLOAD_PREFIX,
     )
 
+    latest_ingestion_progress: dict[str, object] = {}
+
+    async def _report_ingestion_progress(progress: dict[str, object]) -> None:
+        latest_ingestion_progress.clear()
+        latest_ingestion_progress.update(progress)
+
     try:
         input_response = await input_orchestrator.normalize(
             InputAgentRequest(
@@ -157,18 +163,27 @@ async def upload_document(
             storage_path=storage_path,
             file_bytes=file_bytes,
             parsed_context=input_response.structured_context,
+            progress_reporter=_report_ingestion_progress,
         )
     except ApiError:
         raise
-    except Exception:
+    except (RuntimeError, ValueError, OSError) as exc:
         await _cleanup_uploaded_object(document_service, storage_path)
-        raise
+        raise ApiError(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="DOCUMENT_INGESTION_FAILED",
+            message="document ingestion failed",
+            detail={"file_name": safe_file_name},
+        ) from exc
 
     output_response = await output_orchestrator.format(
         OutputAgentRequest(
             project_id=project_id,
             response_type=OutputResponseType.API_RESPONSE,
-            result_json={"document": document.model_dump(mode="json")},
+            result_json={
+                "document": document.model_dump(mode="json"),
+                "generation_progress": dict(latest_ingestion_progress),
+            },
             message="document uploaded",
             errors=[],
         )
@@ -181,11 +196,18 @@ async def upload_document(
     )
 
 
+def _safe_upload_file_name(file_name: str | None) -> str:
+    name = str(file_name or "uploaded-file").replace("\\", "/")
+    return PurePath(name).name or "uploaded-file"
+
+
 def _normalize_parser_file_name(file_name: str, *, extension: str) -> str:
     path = PurePath(file_name)
     suffix = path.suffix
     if suffix and suffix.lower() == extension:
         return path.with_suffix(suffix.lower()).name
+    if not suffix and extension:
+        return f"{path.name}{extension}"
     return path.name
 
 
@@ -257,7 +279,7 @@ async def _cleanup_uploaded_object(
         return
     try:
         await delete_by_storage_path(storage_path)
-    except Exception as exc:
+    except (RuntimeError, OSError, ValueError) as exc:
         logger.warning(
             "upload cleanup failed | "
             f"storage_path={storage_path} | error={type(exc).__name__}"

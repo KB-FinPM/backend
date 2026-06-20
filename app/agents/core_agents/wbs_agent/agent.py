@@ -511,6 +511,58 @@ class WbsAgent:
         )
         return any(context.get(key) not in (None, "") for key in schedule_keys)
 
+    def _has_invalid_explicit_schedule_context(
+        self,
+        context: dict | None,
+    ) -> bool:
+        context = context or {}
+        date_keys = (
+            "start_date",
+            "project_start_date",
+            "contract_date",
+            "contract_start_date",
+        )
+        period_keys = (
+            "project_period",
+            "project_duration",
+            "duration",
+            "period",
+            "contract_period",
+        )
+        start_value = next(
+            (context.get(key) for key in date_keys if context.get(key) not in (None, "")),
+            None,
+        )
+        period_value = next(
+            (context.get(key) for key in period_keys if context.get(key) not in (None, "")),
+            None,
+        )
+        if start_value is not None and self._normalize_date(start_value) is None:
+            return True
+        if period_value is not None and self._parse_period_value(period_value) is None:
+            return True
+        return False
+
+    def _strip_schedule_fields(self, tasks: list[dict[str, object]]) -> None:
+        for task in tasks:
+            for key in (
+                "start_date",
+                "end_date",
+                "planned_start_date",
+                "planned_end_date",
+            ):
+                task.pop(key, None)
+            metadata = task.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            for key in (
+                "start_date",
+                "end_date",
+                "planned_start_date",
+                "planned_end_date",
+            ):
+                metadata.pop(key, None)
+
     def _parent_wbs_id(self, wbs_id: str) -> str:
         if "." not in wbs_id:
             return ""
@@ -1196,6 +1248,10 @@ Project period: {project_period or ""}
                 project_start=start_date,
                 project_end=end_date,
             )
+            if self.model_invoker is None and self._has_invalid_explicit_schedule_context(
+                request.context
+            ):
+                self._strip_schedule_fields(tasks)
 
             if not tasks:
                 return AgentResponse(

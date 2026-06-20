@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 from uuid import uuid4
 
+from app.core.auth import DEFAULT_MVP_SCOPES
 from app.orchestrator.input_orchestrator import InputOrchestrator, input_orchestrator
 from app.orchestrator.output_orchestrator import (
     OutputOrchestrator,
@@ -200,6 +201,13 @@ class ChatOrchestrator:
                 or request.message,
             )
 
+        if intent == "DOWNLOAD_ARTIFACT":
+            return await self._artifact_download_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                structured_context=structured_context,
+            )
+
         return await self._render_and_save_response(
             conversation=conversation,
             project_id=request.project_id,
@@ -311,6 +319,48 @@ class ChatOrchestrator:
 
         return context
 
+    async def _artifact_download_response(
+        self,
+        *,
+        conversation: ConversationMetadata,
+        project_id: str,
+        structured_context: dict[str, Any],
+    ) -> ChatResponse:
+        artifact_ref = structured_context.get("artifact_ref") or {}
+        artifact_id = artifact_ref.get("artifact_id") or structured_context.get(
+            "artifact_id"
+        )
+        if not artifact_id:
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=project_id,
+                result_json={
+                    "event": "ARTIFACT_DOWNLOAD_REQUIRED_INFO",
+                    "missing_fields": structured_context.get("missing_slots")
+                    or ["artifact_id"],
+                    "available_artifacts": structured_context.get(
+                        "available_artifacts"
+                    )
+                    or [],
+                },
+            )
+
+        artifact = {
+            "artifact_id": artifact_id,
+            "artifact_type": artifact_ref.get("artifact_type")
+            or structured_context.get("artifact_type"),
+            "name": artifact_ref.get("name"),
+        }
+        return await self._render_and_save_response(
+            conversation=conversation,
+            project_id=project_id,
+            result_json={
+                "event": "ARTIFACT_DOWNLOAD_READY",
+                "artifact": artifact,
+                "file_name": artifact_ref.get("file_name"),
+            },
+        )
+
     async def _latest_assistant_message(
         self,
         *,
@@ -412,6 +462,11 @@ class ChatOrchestrator:
             "project_period": request.context.get("project_period"),
             "query": request.message,
             "permission_scope": request.permission_scope,
+            "server_permission_scope": list(
+                request.permission_scope or DEFAULT_MVP_SCOPES
+            ),
+            "large_document_hint": structured_context.get("large_document_hint")
+            or {},
             "template_id": request.context.get("template_id"),
             "template_version": request.context.get("template_version"),
         }
@@ -454,6 +509,9 @@ class ChatOrchestrator:
                 or [],
                 "user_id": request.user_id,
                 "permission_scope": request.permission_scope,
+                "server_permission_scope": list(
+                    request.permission_scope or DEFAULT_MVP_SCOPES
+                ),
             },
         )
         return await self._render_and_save_response(
@@ -498,7 +556,10 @@ class ChatOrchestrator:
                 "job_id": pending_action.action_id,
             },
         )
-        if is_generation_action(pending_action.action_type):
+        if (
+            is_generation_action(pending_action.action_type)
+            and self._runs_generation_in_background()
+        ):
             started_action = await self.conversation_repository.get_action(
                 project_id=project_id,
                 action_id=pending_action.action_id,
@@ -560,6 +621,9 @@ class ChatOrchestrator:
             pending_action=completed_action,
         )
 
+    def _runs_generation_in_background(self) -> bool:
+        return isinstance(self.generation_service, GenerationService)
+
     async def _cancel_pending_action(
         self,
         *,
@@ -607,7 +671,11 @@ class ChatOrchestrator:
                 project_id=project_id,
                 action_id=action_id,
             )
-            if action is None or action.status != ChatActionStatus.WAITING_CONFIRMATION:
+            if (
+                action is None
+                or action.conversation_id != conversation_id
+                or action.status != ChatActionStatus.WAITING_CONFIRMATION
+            ):
                 return None
             return action
 
@@ -644,7 +712,8 @@ class ChatOrchestrator:
             template_id=payload.get("template_id"),
             template_version=payload.get("template_version"),
             query=payload.get("query"),
-            permission_scope=payload.get("permission_scope") or ["project:read"],
+            permission_scope=payload.get("server_permission_scope")
+            or list(DEFAULT_MVP_SCOPES),
         )
         try:
             return await self.generation_service.generate_artifact(
@@ -717,7 +786,8 @@ class ChatOrchestrator:
             meeting_notes=payload.get("meeting_notes") or "",
             source_document_ids=payload.get("source_document_ids") or [],
             user_id=payload.get("user_id"),
-            permission_scope=payload.get("permission_scope") or ["project:read"],
+            permission_scope=payload.get("server_permission_scope")
+            or list(DEFAULT_MVP_SCOPES),
         )
         return await self.schedule_service.extract_todos(
             schedule_request,

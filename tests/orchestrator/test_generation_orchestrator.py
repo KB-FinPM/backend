@@ -5,7 +5,10 @@ import json
 
 import pytest
 
-from app.orchestrator.generation_orchestrator import GenerationOrchestrator
+from app.orchestrator.generation_orchestrator import (
+    AgentRuntimeInvoker,
+    GenerationOrchestrator,
+)
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.artifact import ArtifactMetadata, ArtifactType
 from app.schemas.request import GenerationRequest
@@ -35,6 +38,29 @@ class StubRetrievalService:
         self.received_document_ids = document_ids
         self.received_search_mode = search_mode
         return [{"chunk_id": "CHUNK-001", "text": "Login is required."}]
+
+
+class ChunkyRetrievalService(StubRetrievalService):
+    async def search(
+        self,
+        project_id: str,
+        permission_scope: list[str],
+        query: str,
+        top_k: int = 5,
+        document_ids: list[str] | None = None,
+        search_mode: str = "auto",
+    ) -> list[dict]:
+        self.calls.append("retrieval")
+        self.received_project_id = project_id
+        self.received_permission_scope = permission_scope
+        self.received_query = query
+        self.received_document_ids = document_ids
+        self.received_search_mode = search_mode
+        return [
+            {"chunk_id": "CHUNK-001", "text": "Login is required."},
+            {"chunk_id": "CHUNK-002", "text": "MFA is required."},
+            {"chunk_id": "CHUNK-003", "text": "Audit logs are required."},
+        ]
 
 
 class StubRequirementAgent:
@@ -144,6 +170,11 @@ class StubTemplateService:
         return self.template
 
 
+class StubLLM:
+    async def invoke(self, user_prompt: str, **kwargs) -> str:
+        return "ok"
+
+
 @pytest.mark.anyio
 async def test_generate_requirement_calls_retrieval_agent_and_validator() -> None:
     calls: list[str] = []
@@ -206,6 +237,67 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
     assert "generation_orchestrator" not in requirement.received_request.context
     json.dumps(requirement.received_request.context)
     assert validator.received_result == {"requirements": [{"id": "RQ-001"}]}
+
+
+@pytest.mark.anyio
+async def test_agent_runtime_reports_llm_counter_as_batch_progress() -> None:
+    events: list[dict] = []
+    invoker = AgentRuntimeInvoker(
+        llm=StubLLM(),
+        progress_reporter=events.append,
+    )
+
+    response = await invoker.invoke_agent_llm(
+        "system",
+        "user",
+        call_index=15,
+        call_total=30,
+        call_label="LLM batch 처리",
+    )
+
+    assert response == "ok"
+    assert len(events) == 1
+    assert events[0]["progress"] == 45
+    assert events[0]["batch_progress"]["current"] == 15
+    assert events[0]["batch_progress"]["total"] == 30
+    assert events[0]["batch_progress"]["unit"] == "batches"
+    assert "current" not in events[0]
+    assert "total" not in events[0]
+
+
+@pytest.mark.anyio
+async def test_generate_artifact_reports_source_chunks_as_sub_progress() -> None:
+    calls: list[str] = []
+    events: list[dict] = []
+    orchestrator = GenerationOrchestrator(
+        retrieval=ChunkyRetrievalService(calls),
+        requirement_generator=StubRequirementAgent(calls),
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        source_document_ids=["DOC-001"],
+        target_artifact_type="REQUIREMENT_SPEC",
+        permission_scope=["project:read", "artifact:generate"],
+    )
+
+    response = await orchestrator.generate_artifact(
+        request,
+        progress_reporter=events.append,
+    )
+
+    source_chunk_events = [
+        event
+        for event in events
+        if event.get("sub_progress", {}).get("type") == "SOURCE_CHUNK_PROCESSING"
+    ]
+    assert response.success is True
+    assert source_chunk_events
+    assert source_chunk_events[-1]["progress"] == 45
+    assert source_chunk_events[-1]["sub_progress"]["current"] == 3
+    assert source_chunk_events[-1]["sub_progress"]["total"] == 3
+    assert source_chunk_events[-1]["sub_progress"]["unit"] == "chunks"
+    assert any(event["stage"] == "DOCUMENT_GENERATION_COMPLETED" for event in events)
 
 
 @pytest.mark.anyio

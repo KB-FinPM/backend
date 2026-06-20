@@ -133,6 +133,7 @@ class UploadDocumentService:
         storage_path: str,
         file_bytes: bytes,
         parsed_context: dict | None = None,
+        progress_reporter=None,
     ) -> DocumentMetadata:
         self.received_document_id = document_id
         self.received_parsed_context = parsed_context

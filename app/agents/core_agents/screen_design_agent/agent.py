@@ -196,7 +196,11 @@ Requirement summary:
         for index, atom in enumerate(atoms, start=1):
             screen_id = f"SCR-{index:03d}"
             work_description = self._work_description(atom)
-            work_description = self._ensure_screen_description(work_description, self._screen_name(atom, index))
+            if not str(getattr(atom, "description", "") or "").strip():
+                work_description = self._ensure_screen_description(
+                    work_description,
+                    self._screen_name(atom, index),
+                )
             display_items = self._display_items(atom)
             screens.append(
                 {

@@ -1,6 +1,8 @@
 # EN: Orchestrates uploaded document ingestion flows.
 # KO: 업로드 문서 수집/처리 흐름을 제어하는 Orchestrator입니다.
 
+import inspect
+from typing import Any
 from uuid import uuid4
 
 from app.agents.input_agents.document_parser_agent.agent import (
@@ -12,6 +14,7 @@ from app.rag.embedding import EmbeddingService, embedding_service
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.artifact import DocumentMetadata, DocumentStatus, DocumentType
 from app.schemas.io_agent import InputAgentRequest, InputFilePayload, InputType
+from app.schemas.progress import build_generation_progress, build_progress_segment
 
 
 class DocumentIngestionOrchestrator:
@@ -36,6 +39,7 @@ class DocumentIngestionOrchestrator:
         storage_path: str,
         file_bytes: bytes,
         parsed_context: dict | None = None,
+        progress_reporter: Any = None,
     ) -> DocumentMetadata:
         # TODO: Add PDF/DOCX parser agents and embedding/vector-store indexing after
         # text ingestion is stable.
@@ -132,20 +136,13 @@ class DocumentIngestionOrchestrator:
                         },
                     }
                 )
-            embeddings = await self.embedding_service.embed_texts(
-                [str(item["text"]) for item in row_items]
+            await self._embed_and_store_items(
+                document_repository=document_repository,
+                project_id=project_id,
+                document_id=document_id,
+                items=row_items,
+                progress_reporter=progress_reporter,
             )
-            for item, embedding in zip(row_items, embeddings):
-                await document_repository.create_chunk(
-                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                    project_id=project_id,
-                    document_id=document_id,
-                    chunk_index=int(item["chunk_index"]),
-                    text=str(item["text"]),
-                    section_title=str(item["section_title"]),
-                    chunk_metadata=item["chunk_metadata"],
-                    embedding=embedding,
-                )
         elif (
             parsed_metadata.get("artifact_type") == "REQUIREMENT_SPEC"
             and isinstance(generated_requirements, list)
@@ -183,20 +180,13 @@ class DocumentIngestionOrchestrator:
                         },
                     }
                 )
-            embeddings = await self.embedding_service.embed_texts(
-                [str(item["text"]) for item in requirement_items]
+            await self._embed_and_store_items(
+                document_repository=document_repository,
+                project_id=project_id,
+                document_id=document_id,
+                items=requirement_items,
+                progress_reporter=progress_reporter,
             )
-            for item, embedding in zip(requirement_items, embeddings):
-                await document_repository.create_chunk(
-                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                    project_id=project_id,
-                    document_id=document_id,
-                    chunk_index=int(item["chunk_index"]),
-                    text=str(item["text"]),
-                    section_title=str(item["section_title"]),
-                    chunk_metadata=item["chunk_metadata"],
-                    embedding=embedding,
-                )
         else:
             chunks = split_text_into_chunks(parsed_text)
             if not chunks:
@@ -205,18 +195,12 @@ class DocumentIngestionOrchestrator:
                     document=document,
                 )
 
-            embeddings = await self.embedding_service.embed_texts(
-                [chunk.text for chunk in chunks]
-            )
-            for chunk, embedding in zip(chunks, embeddings):
-                await document_repository.create_chunk(
-                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                    project_id=project_id,
-                    document_id=document_id,
-                    chunk_index=chunk.chunk_index,
-                    text=chunk.text,
-                    section_title=chunk.section_title,
-                    chunk_metadata={
+            chunk_items = [
+                {
+                    "chunk_index": chunk.chunk_index,
+                    "text": chunk.text,
+                    "section_title": chunk.section_title,
+                    "chunk_metadata": {
                         **chunk.metadata,
                         **parsed_metadata,
                         "parser_name": parser_name or "InputOrchestrator",
@@ -225,8 +209,16 @@ class DocumentIngestionOrchestrator:
                         "document_file_name": file_name,
                         "source_file_name": file_name,
                     },
-                    embedding=embedding,
-                )
+                }
+                for chunk in chunks
+            ]
+            await self._embed_and_store_items(
+                document_repository=document_repository,
+                project_id=project_id,
+                document_id=document_id,
+                items=chunk_items,
+                progress_reporter=progress_reporter,
+            )
 
         indexed_document = await document_repository.update_document_status(
             project_id=project_id,
@@ -234,6 +226,110 @@ class DocumentIngestionOrchestrator:
             status=DocumentStatus.INDEXED,
         )
         return indexed_document or document
+
+    async def _embed_and_store_items(
+        self,
+        *,
+        document_repository: DocumentRepository,
+        project_id: str,
+        document_id: str,
+        items: list[dict[str, object]],
+        progress_reporter: Any = None,
+    ) -> None:
+        total = len(items)
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                stage_label="Input Agent 문서 분석 중",
+                progress=25,
+                progress_text="문서 chunk 준비 중",
+                sub_progress=build_progress_segment(
+                    progress_type="CHUNK_PROCESSING",
+                    label="원본 문서 chunk 처리",
+                    current=total,
+                    total=total,
+                    unit="chunks",
+                ),
+            ),
+        )
+        if total <= 0:
+            return
+
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                stage_label="Input Agent 문서 분석 중",
+                progress=30,
+                progress_text="임베딩 처리 중",
+                sub_progress=build_progress_segment(
+                    progress_type="EMBEDDING",
+                    label="임베딩 처리",
+                    current=0,
+                    total=total,
+                    unit="chunks",
+                ),
+            ),
+        )
+        embeddings = await self.embedding_service.embed_texts(
+            [str(item["text"]) for item in items]
+        )
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                stage_label="Input Agent 문서 분석 중",
+                progress=35,
+                progress_text="임베딩 처리 중",
+                sub_progress=build_progress_segment(
+                    progress_type="EMBEDDING",
+                    label="임베딩 처리",
+                    current=len(embeddings),
+                    total=total,
+                    unit="chunks",
+                ),
+            ),
+        )
+
+        for index, (item, embedding) in enumerate(zip(items, embeddings), start=1):
+            await document_repository.create_chunk(
+                chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
+                project_id=project_id,
+                document_id=document_id,
+                chunk_index=int(item["chunk_index"]),
+                text=str(item["text"]),
+                section_title=str(item["section_title"]),
+                chunk_metadata=item["chunk_metadata"],
+                embedding=embedding,
+            )
+            await self._emit_progress(
+                progress_reporter,
+                build_generation_progress(
+                    stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                    stage_label="Input Agent 문서 분석 중",
+                    progress=40,
+                    progress_text="인덱싱 처리 중",
+                    sub_progress=build_progress_segment(
+                        progress_type="INDEXING",
+                        label="인덱싱 처리",
+                        current=index,
+                        total=total,
+                        unit="chunks",
+                    ),
+                ),
+            )
+
+    async def _emit_progress(
+        self,
+        progress_reporter: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        if progress_reporter is None:
+            return
+        result = progress_reporter(payload)
+        if inspect.isawaitable(result):
+            await result
 
     async def _mark_failed(
         self,

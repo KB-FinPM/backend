@@ -18,6 +18,7 @@ from app.core.logger import get_logger
 from app.rag.retrieval import retrieval_service
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.artifact import ArtifactType
+from app.schemas.progress import build_generation_progress, build_progress_segment
 from app.services.artifact_export_service import artifact_export_service
 from app.schemas.request import GenerationRequest
 from app.schemas.response import GenerationResponse
@@ -35,9 +36,17 @@ class AgentRuntimeInvoker:
         *,
         llm=llm_service,
         progress_reporter: Any = None,
+        stage: str = "CORE_AGENT_EXTRACTION",
+        stage_label: str = "Core Agent 요구사항 추출 중",
+        stage_progress: int = 45,
+        stage_progress_text: str = "요구사항 추출 중",
     ) -> None:
         self.llm = llm
         self.progress_reporter = progress_reporter
+        self.stage = stage
+        self.stage_label = stage_label
+        self.stage_progress = stage_progress
+        self.stage_progress_text = stage_progress_text
 
     async def invoke_agent_llm(
         self,
@@ -102,18 +111,20 @@ class AgentRuntimeInvoker:
             return
         current_value = int(current or 0)
         total_value = int(total or 0)
-        progress = (
-            0
-            if total_value <= 0
-            else int(round(current_value * 100 / total_value))
+        batch_progress = build_progress_segment(
+            progress_type="LLM_BATCH",
+            label=label or "LLM batch 처리",
+            current=current_value,
+            total=total_value,
+            unit="batches",
         )
-        payload = {
-            "current": current_value,
-            "total": total_value,
-            "progress": progress,
-            "progress_text": f"{current_value}/{total_value}",
-            "label": label or "",
-        }
+        payload = build_generation_progress(
+            stage=self.stage,
+            stage_label=self.stage_label,
+            progress=self.stage_progress,
+            progress_text=self.stage_progress_text,
+            batch_progress=batch_progress,
+        )
         result = self.progress_reporter(payload)
         if inspect.isawaitable(result):
             await result
@@ -265,6 +276,15 @@ class GenerationOrchestrator:
             f"target_artifact_type={generation_flow.target_artifact_type} | "
             f"top_k={top_k}"
         )
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                stage_label="Input Agent 문서 분석 중",
+                progress=25,
+                progress_text="원본 문서 검색 중",
+            ),
+        )
         retrieval_started_at = perf_counter()
         documents = await retrieval.search(
             project_id=request.project_id,
@@ -279,6 +299,33 @@ class GenerationOrchestrator:
             f"project_id={request.project_id} | "
             f"document_count={len(documents)} | "
             f"duration_ms={int((perf_counter() - retrieval_started_at) * 1000)}"
+        )
+        if request.source_document_ids and not documents:
+            return self._failed_response(
+                request,
+                AgentResponse(
+                    success=False,
+                    agent_name="RetrievalService",
+                    error="source document context not found",
+                ),
+            )
+
+        chunk_total = len(documents)
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="CORE_AGENT_EXTRACTION",
+                stage_label="Core Agent 요구사항 추출 중",
+                progress=45,
+                progress_text="요구사항 추출 중",
+                sub_progress=build_progress_segment(
+                    progress_type="SOURCE_CHUNK_PROCESSING",
+                    label="원본 문서 chunk 처리",
+                    current=chunk_total,
+                    total=chunk_total,
+                    unit="chunks",
+                ),
+            ),
         )
 
         agent_request = AgentRequest(
@@ -310,7 +357,13 @@ class GenerationOrchestrator:
         agent_started_at = perf_counter()
         runtime_generator = self._generator_with_runtime(
             generator,
-            AgentRuntimeInvoker(progress_reporter=progress_reporter),
+            AgentRuntimeInvoker(
+                progress_reporter=progress_reporter,
+                stage="CORE_AGENT_EXTRACTION",
+                stage_label="Core Agent 요구사항 추출 중",
+                stage_progress=45,
+                stage_progress_text="요구사항 추출 중",
+            ),
         )
         agent_response = await runtime_generator.generate(agent_request)
         logger.info(
@@ -322,6 +375,15 @@ class GenerationOrchestrator:
         if not agent_response.success:
             return self._failed_response(request, agent_response)
 
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="VALIDATION_AGENT_CHECK",
+                stage_label="Validation Agent 검증 중",
+                progress=70,
+                progress_text="산출물 검증 중",
+            ),
+        )
         validated_response = await self._validate_agent_result(
             agent_response.result,
             expected_artifact_type=generation_flow.target_artifact_type,
@@ -331,19 +393,38 @@ class GenerationOrchestrator:
 
         if artifact_service is not None:
             artifact_id = f"ART-{uuid4().hex[:12].upper()}"
-            export_result = await artifact_export_service.export_artifact(
-                project_id=request.project_id,
-                artifact_id=artifact_id,
-                artifact_type=generation_flow.target_artifact_type,
-                result_json=validated_response.result,
-                project_name=request.project_name,
-                document_service=document_service,
-                storage_service=(
-                    document_service.storage_service
-                    if document_service is not None
-                    else None
+            await self._emit_progress(
+                progress_reporter,
+                build_generation_progress(
+                    stage="OUTPUT_AGENT_EXPORT",
+                    stage_label="Output Agent 산출물 작성 중",
+                    progress=85,
+                    progress_text="산출물 파일 작성 중",
                 ),
             )
+            try:
+                export_result = await artifact_export_service.export_artifact(
+                    project_id=request.project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=generation_flow.target_artifact_type,
+                    result_json=validated_response.result,
+                    project_name=request.project_name,
+                    document_service=document_service,
+                    storage_service=(
+                        document_service.storage_service
+                        if document_service is not None
+                        else None
+                    ),
+                )
+            except (RuntimeError, ValueError, OSError) as exc:
+                return self._failed_response(
+                    request,
+                    AgentResponse(
+                        success=False,
+                        agent_name="ArtifactExportService",
+                        error=str(exc) or "artifact export failed",
+                    ),
+                )
             storage_path = export_result.storage_path if export_result else None
             artifact = await artifact_service.create_artifact(
                 artifact_id=artifact_id,
@@ -388,6 +469,15 @@ class GenerationOrchestrator:
             f"project_id={request.project_id} | "
             f"duration_ms={int((perf_counter() - started_at) * 1000)}"
         )
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="DOCUMENT_GENERATION_COMPLETED",
+                stage_label="문서 생성 완료",
+                progress=100,
+                progress_text="문서 생성 완료",
+            ),
+        )
         return GenerationResponse(
             project_id=request.project_id,
             message="artifact generated" if artifact_service is not None else "ok",
@@ -424,6 +514,17 @@ class GenerationOrchestrator:
         if hasattr(generator, "with_model_invoker"):
             return generator.with_model_invoker(runtime)
         return generator
+
+    async def _emit_progress(
+        self,
+        progress_reporter: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        if progress_reporter is None:
+            return
+        result = progress_reporter(payload)
+        if inspect.isawaitable(result):
+            await result
 
     async def _validate_agent_result(
         self,

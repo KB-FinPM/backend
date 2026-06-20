@@ -32,6 +32,7 @@ class StubIngestionOrchestrator:
         storage_path: str,
         file_bytes: bytes,
         parsed_context: dict | None = None,
+        progress_reporter=None,
     ) -> DocumentMetadata:
         self.received_document_repository = document_repository
         self.received_file_bytes = file_bytes
