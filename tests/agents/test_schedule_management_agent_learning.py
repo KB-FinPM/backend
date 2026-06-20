@@ -23,7 +23,7 @@ def _schedule_cases() -> list[dict]:
 async def test_schedule_management_agent_seed_cases(case: dict) -> None:
     agent = ScheduleManagementAgent()
 
-    if case["name"] == "blocked_status_alias":
+    if case.get("action") == "UPDATE_TODO_STATUS" or case["name"] == "blocked_status_alias":
         response = await agent.generate(
             AgentRequest(
                 project_id="PRJ-001",
@@ -36,7 +36,8 @@ async def test_schedule_management_agent_seed_cases(case: dict) -> None:
         )
         assert response.success is True
         assert response.result["status"] == case["expected_status"]
-        assert response.result["matched_todo"]["next_status"] == case["expected_next_status"]
+        if case.get("expected_next_status"):
+            assert response.result["matched_todo"]["next_status"] == case["expected_next_status"]
         return
 
     response = await agent.generate(
@@ -50,13 +51,31 @@ async def test_schedule_management_agent_seed_cases(case: dict) -> None:
         )
     )
 
-    if case["name"] == "stopword_not_assignee":
-        todos = response.result.get("todos") or []
-        for todo in todos:
-            assert todo.get("assignee") not in case["expected_forbidden_assignee_values"]
+    if case.get("expected_success") is False:
+        assert response.success is False
         return
 
     assert response.success is True
-    todo = response.result["todos"][0]
-    assert todo["due_date"] == case["expected_due_date"]
-    assert todo["assignee"] == case["expected_assignee"]
+    todos = response.result.get("todos") or []
+    for todo in todos:
+        for forbidden in case.get("expected_forbidden_assignee_values", []):
+            assert todo.get("assignee") != forbidden
+
+    if case.get("expected_count") is not None:
+        assert len(todos) == case["expected_count"]
+    if not todos:
+        return
+
+    todo = todos[0]
+    if "expected_due_date" in case:
+        assert todo["due_date"] == case["expected_due_date"]
+    if "expected_assignee" in case:
+        assert todo["assignee"] == case["expected_assignee"]
+    if case.get("expected_status"):
+        assert todo["status"] == case["expected_status"]
+    if case.get("expected_title_contains"):
+        assert case["expected_title_contains"] in todo["title"]
+    for forbidden_title in case.get("expected_title_not_contains", []):
+        assert forbidden_title not in todo["title"]
+    if case.get("expected_unparsed_due"):
+        assert todo["metadata"]["unparsed_due_date_text"] == case["expected_unparsed_due"]

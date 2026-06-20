@@ -115,6 +115,8 @@ class KoreanCommandNormalizer:
 
         text = self._normalize_spacing(text)
         text = text.replace("BLOCKED으로", "BLOCKED로")
+        while "UI 설계서서" in text:
+            text = text.replace("UI 설계서서", "UI 설계서")
         return NormalizedCommand(
             original_text=original,
             normalized_text=text,

@@ -522,7 +522,9 @@ class ChatInputAgent:
                 "confidence": 0.85,
             }
 
-        if slots.get("download_requested"):
+        if slots.get("download_requested") and not (
+            slots.get("action") == "GENERATE" and slots.get("artifact_type")
+        ):
             return self._download_intent(
                 slots=slots,
                 normalized_query=normalized_query,
@@ -660,6 +662,7 @@ class ChatInputAgent:
                     source_document_type=source_document_type,
                     normalized_query=normalized_query,
                     confidence=max(float(slots.get("confidence") or 0.0), 0.9),
+                    export_format=slots.get("export_format"),
                 ),
                 **semantic_payload,
             }
@@ -723,7 +726,7 @@ class ChatInputAgent:
         ][:3]
 
         if not matches:
-            return result
+            return self._sanitize_non_executable_result(result)
 
         top = matches[0]
         second_score = matches[1].score if len(matches) > 1 else 0.0
@@ -731,7 +734,7 @@ class ChatInputAgent:
             top.score - second_score >= self.EXAMPLE_MARGIN_THRESHOLD
         )
         if top.score < self.EXAMPLE_SCORE_THRESHOLD or not has_margin:
-            return result
+            return self._sanitize_non_executable_result(result)
 
         if top.polarity == "negative":
             if result.get("intent") in (top.payload.get("negative_assertions") or []):
@@ -752,7 +755,7 @@ class ChatInputAgent:
             result["confidence"] = max(float(result.get("confidence") or 0.0), top.score)
             result["corrections"] = slots.get("corrections") or []
             result["matched_intent_examples"] = [top.to_public_dict()]
-            return result
+            return self._sanitize_non_executable_result(result)
 
         if self._should_apply_example(top, result):
             result = self._result_from_example(
@@ -767,7 +770,7 @@ class ChatInputAgent:
         result["confidence"] = max(float(result.get("confidence") or 0.0), top.score)
         result["corrections"] = slots.get("corrections") or []
         result["matched_intent_examples"] = [top.to_public_dict()]
-        return result
+        return self._sanitize_non_executable_result(result)
 
     def _should_apply_example(
         self,
@@ -781,6 +784,8 @@ class ChatInputAgent:
             or result.get("artifact_type")
             or result.get("artifact_type_slot")
         ) != match.artifact_type:
+            if not self._example_slot_has_evidence(match.artifact_type, result):
+                return False
             return True
         if match.schedule_action and result.get("schedule_action") != match.schedule_action:
             return True
@@ -814,6 +819,7 @@ class ChatInputAgent:
                         source_document_type=source_document_type,
                         normalized_query=normalized_query,
                         confidence=match.score,
+                        export_format=slots.get("export_format"),
                     ),
                     **self._semantic_payload(slots),
                 }
@@ -889,7 +895,10 @@ class ChatInputAgent:
 
         if intent == "DOWNLOAD_ARTIFACT":
             result = self._download_intent(slots=slots, normalized_query=normalized_query)
-            if payload.get("artifact_type"):
+            if payload.get("artifact_type") and self._example_slot_has_evidence(
+                str(payload.get("artifact_type")),
+                result,
+            ):
                 result["artifact_type"] = payload.get("artifact_type")
             if payload.get("export_format"):
                 result["export_format"] = payload.get("export_format")
@@ -935,6 +944,54 @@ class ChatInputAgent:
             }
 
         return current
+
+    def _sanitize_non_executable_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        if result.get("intent") not in {
+            "GENERAL_QA",
+            "CLARIFICATION_REQUIRED",
+            "CONFIRM_PENDING_ACTION",
+            "CANCEL_PENDING_ACTION",
+        }:
+            return result
+        sanitized = dict(result)
+        for field in (
+            "schedule_action",
+            "schedule_intent",
+            "target_artifact_type",
+            "source_document_ids",
+            "execution_required",
+        ):
+            sanitized.pop(field, None)
+        return sanitized
+
+    def _example_slot_has_evidence(
+        self,
+        artifact_type: str,
+        result_or_slots: dict[str, Any],
+    ) -> bool:
+        normalized = str(
+            result_or_slots.get("normalized_query")
+            or result_or_slots.get("normalized")
+            or ""
+        ).lower()
+        compact = "".join(normalized.split())
+        evidence_terms = {
+            "REQUIREMENT_SPEC": (
+                "요구사항",
+                "요건",
+                "rfp",
+                "구축요건",
+                "명세서",
+                "정의서",
+            ),
+            "WBS": ("wbs", "일정표", "작업분해도", "작업계획", "작업일정"),
+            "SCREEN_DESIGN": ("화면", "ui", "설계서", "화면설계"),
+            "UNITTEST_SPEC": ("테스트", "테스트케이스", "단위테스트", "unit"),
+        }
+        terms = evidence_terms.get(str(artifact_type).upper())
+        if not terms:
+            return True
+        return self._contains_any(normalized, compact, terms)
 
     def _looks_like_ambiguous_creation(
         self,
@@ -1583,10 +1640,11 @@ class ChatInputAgent:
         source_document_type: str | None,
         normalized_query: str,
         confidence: float,
+        export_format: str | None = None,
     ) -> dict[str, Any]:
         required_slots = ["source_document_ids"]
         missing_slots = [] if source_document_ids else ["source_document_ids"]
-        return {
+        result = {
             "intent": "GENERATE_ARTIFACT",
             "action": "CREATE",
             "artifact_type": target_artifact_type.value,
@@ -1606,6 +1664,9 @@ class ChatInputAgent:
             ),
             "confidence": confidence,
         }
+        if export_format:
+            result["export_format"] = export_format
+        return result
 
     def _download_intent(
         self,
@@ -2093,9 +2154,21 @@ class ChatInputAgent:
         assignee_stopwords = {
             "이번",
             "이번주",
+            "이번주에",
+            "이번주에는",
             "다음",
             "다음주",
+            "다음주에",
+            "다음주에는",
             "오늘",
+            "오늘은",
+            "내일은",
+            "지난",
+            "기한",
+            "금주에",
+            "금주에는",
+            "차주에",
+            "차주에는",
             "회의록",
             "액션아이템",
             "해야",
@@ -2140,12 +2213,24 @@ class ChatInputAgent:
                 ignored = {
                     "이번주",
                     "이번 주",
+                    "이번주에",
+                    "이번주에는",
                     "다음주",
                     "다음 주",
+                    "다음주에",
+                    "다음주에는",
                     "오늘",
+                    "오늘은",
+                    "내일은",
                     "금주",
+                    "금주에",
+                    "금주에는",
+                    "지난",
                     "지난주",
                     "지난 주",
+                    "기한",
+                    "차주에",
+                    "차주에는",
                     "wbs",
                     "WBS",
                 }

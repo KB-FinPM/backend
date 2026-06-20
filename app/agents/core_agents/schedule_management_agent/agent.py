@@ -455,6 +455,15 @@ class ScheduleManagementAgent:
         return has_action_keyword and (has_obligation or has_due_signal or assignee)
 
     def _extract_assignee(self, sentence: str) -> str | None:
+        due_then_assignee_match = re.search(
+            r"(?:내일까지|낼까지|오늘까지|오늘|이번\s*주\s*(?:월요일|화요일|수요일|목요일|금요일|토요일|일요일|월|화|수|목|금|토|일)?(?:까지)?|다음\s*주\s*(?:월요일|화요일|수요일|목요일|금요일|토요일|일요일|월|화|수|목|금|토|일)?(?:까지)?|\d{1,2}월\s*\d{1,2}일(?:까지)?)\s+([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})(?:님)?(?:은|는|이|가)\s+",
+            sentence,
+            re.IGNORECASE,
+        )
+        if due_then_assignee_match:
+            candidate = due_then_assignee_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
         proper_explicit_match = re.search(
             r"(?:담당자|담당|owner)\s*[:：-]?\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})",
             sentence,
@@ -533,15 +542,29 @@ class ScheduleManagementAgent:
         return None
 
     def _is_invalid_assignee(self, candidate: str) -> bool:
-        if candidate.strip() in {
+        stripped = candidate.strip()
+        normalized = re.sub(r"(?:에는|에|은|는|이|가)$", "", stripped)
+        if stripped in {
             "해야",
             "할일",
             "할",
             "TODO",
             "todo",
             "이번주",
+            "이번주에",
+            "이번주에는",
+            "금주에",
+            "금주에는",
             "다음주",
+            "다음주에",
+            "다음주에는",
+            "차주에",
+            "차주에는",
             "오늘",
+            "오늘은",
+            "내일은",
+            "지난",
+            "기한",
             "회의록",
             "액션아이템",
             "담당자",
@@ -550,9 +573,20 @@ class ScheduleManagementAgent:
             "담당자 미정",
         }:
             return True
-        if candidate.strip() in self.KO_PLACEHOLDER_ASSIGNEES:
+        if normalized in {
+            "이번주",
+            "금주",
+            "다음주",
+            "차주",
+            "오늘",
+            "내일",
+            "지난",
+            "기한",
+        }:
             return True
-        return candidate.endswith("에서") or candidate in {
+        if stripped in self.KO_PLACEHOLDER_ASSIGNEES:
+            return True
+        return stripped.endswith("에서") or stripped in {
             "회의",
             "미팅",
             "오늘",
@@ -837,6 +871,7 @@ class ScheduleManagementAgent:
         due_text: str | None,
     ) -> str:
         title = sentence
+        title = re.sub(r"^\s*(?:해야\s*할\s*일|TODO|todo|액션아이템)\s*[:：-]\s*", "", title)
         if assignee:
             title = re.sub(
                 rf"^\s*{re.escape(assignee)}(?:은|는|이|가)\s+",
@@ -884,7 +919,19 @@ class ScheduleManagementAgent:
 
         if due_text:
             title = title.replace(due_text, "")
+        if assignee:
+            title = re.sub(
+                rf"^\s*{re.escape(assignee)}(?:님)?(?:은|는|이|가)\s+",
+                "",
+                title,
+            )
         title = re.sub(r"(?:까지|전까지|전)\s*", " ", title)
+        if assignee:
+            title = re.sub(
+                rf"^\s*{re.escape(assignee)}(?:님)?(?:은|는|이|가)\s+",
+                "",
+                title,
+            )
         title = re.sub(
             r"\s*(?:완료한다|완료|진행한다|진행|공유한다|공유|검토한다|정리한다|작성한다)\.?\s*$",
             "",
@@ -907,10 +954,11 @@ class ScheduleManagementAgent:
         title = re.sub(r"\s*(?:한다|합니다|했다|했습니다|할 것|해 주세요|해주세요)\.?\s*$", "", title)
         title = re.sub(r"\s*(?:필요|필요함|해야 함|해야함)\s*$", "", title)
         title = re.sub(
-            r"\s+(?:진행|공유|전달|완료|수정|보완|업데이트|협의|확정|검증|리뷰|개발|테스트|배포)\s*$",
+            r"\s+(?:진행|전달|완료|수정|업데이트|협의|확정|검증|리뷰|개발|테스트|배포)\s*$",
             "",
             title,
         )
+        title = re.sub(r"\s+함\s*$", "", title)
         title = re.sub(r"\s*(?:을|를)\s+", " ", title)
         title = re.sub(r"\s*(?:을|를)\s*$", "", title)
         title = re.sub(r"\s+", " ", title)

@@ -87,6 +87,20 @@ async def _evaluate_input_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
                     f"artifact type mismatch: {case['message']} "
                     f"expected={expected_artifact_type} actual={actual_artifact_type}"
                 )
+        if case.get("expected_absent_artifact_type"):
+            actual_artifact_type = (
+                context.get("target_artifact_type")
+                or context.get("artifact_type")
+                or context.get("artifact_type_slot")
+            )
+            metrics["artifact_absence_total"] += 1
+            if actual_artifact_type is None:
+                metrics["artifact_absence_passed"] += 1
+            else:
+                failures.append(
+                    f"artifact type over-propagated: {case['message']} "
+                    f"actual={actual_artifact_type}"
+                )
 
         expected_schedule_action = case.get("expected_schedule_action")
         if expected_schedule_action:
@@ -98,6 +112,55 @@ async def _evaluate_input_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
                     f"schedule action mismatch: {case['message']} "
                     f"expected={expected_schedule_action} "
                     f"actual={context.get('schedule_action')}"
+                )
+
+        expected_artifact_id = case.get("expected_artifact_id")
+        if expected_artifact_id:
+            metrics["artifact_id_total"] += 1
+            if context.get("artifact_id") == expected_artifact_id:
+                metrics["artifact_id_passed"] += 1
+            else:
+                failures.append(
+                    f"artifact id mismatch: {case['message']} "
+                    f"expected={expected_artifact_id} actual={context.get('artifact_id')}"
+                )
+
+        expected_missing_slots = case.get("expected_missing_slots")
+        if expected_missing_slots:
+            metrics["missing_slot_total"] += 1
+            if context.get("missing_slots") == expected_missing_slots:
+                metrics["missing_slot_passed"] += 1
+            else:
+                failures.append(
+                    f"missing slot mismatch: {case['message']} "
+                    f"expected={expected_missing_slots} actual={context.get('missing_slots')}"
+                )
+
+        expected_export_format = case.get("expected_export_format")
+        if expected_export_format:
+            metrics["export_format_total"] += 1
+            if context.get("export_format") == expected_export_format:
+                metrics["export_format_passed"] += 1
+            else:
+                failures.append(
+                    f"export format mismatch: {case['message']} "
+                    f"expected={expected_export_format} actual={context.get('export_format')}"
+                )
+
+        expected_assignee = case.get("expected_assignee")
+        if expected_assignee:
+            metrics["assignee_total"] += 1
+            actual_assignee = (
+                context.get("assignee")
+                or context.get("entities", {}).get("assignee")
+                or context.get("semantic_slots", {}).get("assignee")
+            )
+            if actual_assignee == expected_assignee:
+                metrics["assignee_passed"] += 1
+            else:
+                failures.append(
+                    f"assignee mismatch: {case['message']} "
+                    f"expected={expected_assignee} actual={actual_assignee}"
                 )
 
         expected_corrections = case.get("expected_corrections") or []
@@ -125,6 +188,17 @@ async def _evaluate_input_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
                 failures.append(
                     f"negative guard failed: {case['message']} "
                     f"forbidden={forbidden_intent}"
+                )
+
+        for field in case.get("forbidden_top_level_fields", []):
+            metrics["forbidden_field_total"] += 1
+            if field not in context or context.get(field) in (None, [], {}):
+                metrics["forbidden_field_passed"] += 1
+            else:
+                metrics["false_positive_count"] += 1
+                failures.append(
+                    f"forbidden top-level field present: {case['message']} "
+                    f"field={field} value={context.get(field)}"
                 )
 
         if expected_intent in {"CONFIRM_PENDING_ACTION", "CANCEL_PENDING_ACTION"}:
@@ -177,16 +251,34 @@ async def _evaluate_schedule_cases(cases: list[dict[str, Any]]) -> dict[str, Any
                 )
             )
             todos = (response.result or {}).get("todos") or []
-            if case["name"] == "stopword_not_assignee":
+            if case.get("expected_success") is False:
+                ok = response.success is False
+            elif case["name"] == "stopword_not_assignee" or case.get(
+                "expected_forbidden_assignee_values"
+            ):
                 forbidden = set(case["expected_forbidden_assignee_values"])
-                ok = all(todo.get("assignee") not in forbidden for todo in todos)
+                ok = response.success and all(
+                    todo.get("assignee") not in forbidden for todo in todos
+                )
             else:
                 first = todos[0] if todos else {}
-                ok = (
-                    response.success
-                    and first.get("due_date") == case["expected_due_date"]
-                    and first.get("assignee") == case["expected_assignee"]
-                )
+                ok = response.success
+                if "expected_due_date" in case:
+                    ok = ok and first.get("due_date") == case["expected_due_date"]
+                if "expected_assignee" in case:
+                    ok = ok and first.get("assignee") == case["expected_assignee"]
+                if case.get("expected_status"):
+                    ok = ok and first.get("status") == case["expected_status"]
+                if case.get("expected_title_contains"):
+                    ok = ok and case["expected_title_contains"] in first.get("title", "")
+                for forbidden_title in case.get("expected_title_not_contains", []):
+                    ok = ok and forbidden_title not in first.get("title", "")
+                if case.get("expected_unparsed_due"):
+                    ok = (
+                        ok
+                        and first.get("metadata", {}).get("unparsed_due_date_text")
+                        == case["expected_unparsed_due"]
+                    )
 
         if ok:
             passed += 1
@@ -217,7 +309,7 @@ async def _evaluate_output_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
             forbidden not in message for forbidden in case["forbidden_internal_terms"]
         )
         preserves_corrections = (
-            response.display_payload.get("corrections")
+            response.display_payload.get("corrections", [])
             == case["result_json"].get("corrections")
         )
         if response.success and contains_expected and hides_internal and preserves_corrections:
@@ -252,6 +344,26 @@ async def main() -> int:
             metrics.get("correction_passed", 0),
             metrics.get("correction_total", 0),
         ),
+        "artifact_absence_accuracy": _ratio(
+            metrics.get("artifact_absence_passed", 0),
+            metrics.get("artifact_absence_total", 0),
+        ),
+        "missing_slot_accuracy": _ratio(
+            metrics.get("missing_slot_passed", 0),
+            metrics.get("missing_slot_total", 0),
+        ),
+        "export_format_accuracy": _ratio(
+            metrics.get("export_format_passed", 0),
+            metrics.get("export_format_total", 0),
+        ),
+        "assignee_accuracy": _ratio(
+            metrics.get("assignee_passed", 0),
+            metrics.get("assignee_total", 0),
+        ),
+        "forbidden_field_accuracy": _ratio(
+            metrics.get("forbidden_field_passed", 0),
+            metrics.get("forbidden_field_total", 0),
+        ),
         "negative_guard_accuracy": _ratio(
             metrics.get("negative_guard_passed", 0),
             metrics.get("negative_guard_total", 0),
@@ -284,6 +396,11 @@ async def main() -> int:
         "input_intent_accuracy": 0.95,
         "artifact_type_accuracy": 0.98,
         "schedule_action_accuracy": 0.95,
+        "artifact_absence_accuracy": 1.0,
+        "missing_slot_accuracy": 1.0,
+        "export_format_accuracy": 1.0,
+        "assignee_accuracy": 1.0,
+        "forbidden_field_accuracy": 1.0,
         "negative_guard_accuracy": 1.0,
         "confirm_cancel_accuracy": 1.0,
         "schedule_agent_accuracy": 1.0,

@@ -306,17 +306,6 @@ class ChatOutputAgent:
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
-        return {
-            "state": ChatState.WAITING_REQUIRED_INFO.value,
-            "message": result_json.get("question")
-            or "어떤 문서나 업무를 기준으로 처리할까요?",
-            "result": {
-                "semantic_slots": result_json.get("semantic_slots") or {},
-                "clarification_required": True,
-            },
-            "suggested_actions": [],
-            "recommended_prompts": self._default_recommended_prompts(),
-        }
 
     def _safe_corrections(self, value: Any) -> list[dict[str, str]]:
         if not isinstance(value, list):

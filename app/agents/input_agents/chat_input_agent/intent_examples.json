@@ -59,6 +59,38 @@
     "polarity": "positive"
   },
   {
+    "id": "input.download.generic.001",
+    "text": "엑셀로 받아볼래",
+    "intent": "DOWNLOAD_ARTIFACT",
+    "export_format": "xlsx",
+    "missing_slots": ["artifact_id"],
+    "polarity": "positive"
+  },
+  {
+    "id": "input.requirement.generate.xlsx.001",
+    "text": "요구사항 정의서 엑셀로 만들어줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "REQUIREMENT_SPEC",
+    "export_format": "xlsx",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.screen.generate.pptx.001",
+    "text": "화면설계서 PPT로 만들어줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "SCREEN_DESIGN",
+    "export_format": "pptx",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.wbs.generate.xlsx.001",
+    "text": "WBS 엑셀로 만들어줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "WBS",
+    "export_format": "xlsx",
+    "polarity": "positive"
+  },
+  {
     "id": "input.schedule.this_week.001",
     "text": "이번주 할 일 알려줘",
     "intent": "SCHEDULE_QUERY",

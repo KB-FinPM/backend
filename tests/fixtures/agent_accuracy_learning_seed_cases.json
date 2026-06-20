@@ -142,6 +142,255 @@
       "message": "일정표 만들어줘",
       "expected_intent": "GENERATE_ARTIFACT",
       "expected_artifact_type": "WBS"
+    },
+    {
+      "message": "회의 메모에서 액션아이템 정리해줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING"
+    },
+    {
+      "message": "미팅 내용에서 해야 할 일 뽑아줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING"
+    },
+    {
+      "message": "회의록에서 후속작업 나눠줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING"
+    },
+    {
+      "message": "회의 결과 액션아템 추려줘",
+      "normalized_query": "회의 결과 액션아이템 추려줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+      "expected_corrections": [{"source": "액션아템", "target": "액션아이템"}]
+    },
+    {
+      "message": "주간회의 TODO 정리해줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING"
+    },
+    {
+      "message": "회의록 다시 보여줘",
+      "expected_intent": "GENERAL_QA",
+      "expected_topic": "MEETING_NOTES",
+      "negative_assertions": ["EXTRACT_ACTION_ITEMS"],
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "execution_required"]
+    },
+    {
+      "message": "회의 메모 요약해줘",
+      "expected_intent": "GENERAL_QA",
+      "expected_topic": "MEETING_NOTES",
+      "negative_assertions": ["EXTRACT_ACTION_ITEMS"],
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "execution_required"]
+    },
+    {
+      "message": "미팅 내용 정리만 해줘",
+      "expected_intent": "GENERAL_QA",
+      "expected_topic": "MEETING_NOTES",
+      "negative_assertions": ["EXTRACT_ACTION_ITEMS"],
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "execution_required"]
+    },
+    {
+      "message": "요구사항명새서 작성해줘",
+      "normalized_query": "요구사항 명세서 작성해줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_corrections": [{"source": "요구사항명새서", "target": "요구사항명세서"}]
+    },
+    {
+      "message": "요구사항 정의서 생성",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC"
+    },
+    {
+      "message": "구축요건저의서 보고 요구사향 정리해줘",
+      "normalized_query": "구축요건정의서 보고 요구사항 정리해줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION"
+    },
+    {
+      "message": "RFP 보고 요구사항 뽑아줘",
+      "normalized_query": "구축요건정의서 보고 요구사항 뽑아줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION"
+    },
+    {
+      "message": "작업분해도 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "WBS"
+    },
+    {
+      "message": "작업 일정 짜줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "WBS"
+    },
+    {
+      "message": "UI설계서 작성해줘",
+      "normalized_query": "UI 설계서 작성해줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "SCREEN_DESIGN"
+    },
+    {
+      "message": "화면정의서 만들어줘",
+      "normalized_query": "화면설계서 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "SCREEN_DESIGN"
+    },
+    {
+      "message": "태스트케이스 생성해줘",
+      "normalized_query": "테스트케이스 생성해줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "UNITTEST_SPEC"
+    },
+    {
+      "message": "테스트캐이스 작성해줘",
+      "normalized_query": "테스트케이스 작성해줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "UNITTEST_SPEC"
+    },
+    {
+      "message": "엑셀로 받아볼래",
+      "expected_intent": "DOWNLOAD_ARTIFACT",
+      "expected_export_format": "xlsx",
+      "expected_missing_slots": ["artifact_id"],
+      "expected_absent_artifact_type": true
+    },
+    {
+      "message": "방금 만든거 엑셀로 받아볼래",
+      "context": {
+        "generated_artifacts": [
+          {"artifact_id": "ART-REQ-001", "artifact_type": "REQUIREMENT_SPEC", "name": "요구사항 정의서"}
+        ]
+      },
+      "expected_intent": "DOWNLOAD_ARTIFACT",
+      "expected_artifact_id": "ART-REQ-001",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_export_format": "xlsx"
+    },
+    {
+      "message": "요구사항 정의서 엑셀로 받아볼래",
+      "context": {
+        "generated_artifacts": [
+          {"artifact_id": "ART-REQ-002", "artifact_type": "REQUIREMENT_SPEC", "name": "요구사항 정의서"},
+          {"artifact_id": "ART-WBS-002", "artifact_type": "WBS", "name": "WBS"}
+        ]
+      },
+      "expected_intent": "DOWNLOAD_ARTIFACT",
+      "expected_artifact_id": "ART-REQ-002",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_export_format": "xlsx"
+    },
+    {
+      "message": "요구사항 정의서 다운로드해줘",
+      "expected_intent": "DOWNLOAD_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_missing_slots": ["artifact_id"]
+    },
+    {
+      "message": "다운로드해줘",
+      "expected_intent": "DOWNLOAD_ARTIFACT",
+      "expected_missing_slots": ["artifact_id"],
+      "expected_absent_artifact_type": true
+    },
+    {
+      "message": "요구사항 정의서 엑셀로 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_export_format": "xlsx"
+    },
+    {
+      "message": "화면설계서 PPT로 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "SCREEN_DESIGN",
+      "expected_export_format": "pptx"
+    },
+    {
+      "message": "WBS 엑셀로 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "WBS",
+      "expected_export_format": "xlsx"
+    },
+    {
+      "message": "단위테스트케이스 엑셀로 작성해줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "UNITTEST_SPEC",
+      "expected_export_format": "xlsx"
+    },
+    {
+      "message": "기한 지난 할일 보여줘",
+      "normalized_query": "기한 지난 할 일 보여줘",
+      "expected_intent": "SCHEDULE_QUERY",
+      "expected_schedule_action": "SHOW_OVERDUE_TODOS",
+      "expected_time_range": "OVERDUE",
+      "forbidden_assignee_values": ["지난", "기한"]
+    },
+    {
+      "message": "오늘 할 일 보여줘",
+      "expected_intent": "SCHEDULE_QUERY",
+      "expected_schedule_action": "SHOW_TODAY_TODOS",
+      "expected_time_range": "TODAY"
+    },
+    {
+      "message": "김대리 할 일 뭐 남았어",
+      "expected_intent": "SCHEDULE_QUERY",
+      "expected_schedule_action": "SHOW_ASSIGNEE_TODOS",
+      "expected_assignee": "김대리"
+    },
+    {
+      "message": "다음주에 뭐 해야 해?",
+      "expected_intent": "SCHEDULE_QUERY",
+      "expected_schedule_action": "SHOW_NEXT_WEEK_TODOS",
+      "expected_time_range": "NEXT_WEEK",
+      "forbidden_assignee_values": ["다음주에", "다음주"]
+    },
+    {
+      "message": "요구사항 정의서가 뭐야?",
+      "expected_intent": "GENERAL_QA",
+      "expected_topic": "REQUIREMENT_SPEC",
+      "negative_assertions": ["GENERATE_ARTIFACT"],
+      "forbidden_top_level_fields": ["target_artifact_type", "source_document_ids", "execution_required"]
+    },
+    {
+      "message": "테스트가 뭐야?",
+      "expected_intent": "GENERAL_QA",
+      "negative_assertions": ["GENERATE_ARTIFACT"],
+      "forbidden_top_level_fields": ["target_artifact_type", "source_document_ids", "execution_required"]
+    },
+    {
+      "message": "오키 진행",
+      "context": {"pending_action": {"action_id": "ACT-002", "action_type": "GENERATE_REQUIREMENT", "status": "WAITING_CONFIRMATION"}},
+      "expected_intent": "CONFIRM_PENDING_ACTION",
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "target_artifact_type", "execution_required"]
+    },
+    {
+      "message": "노노 취소",
+      "context": {"pending_action": {"action_id": "ACT-002", "action_type": "GENERATE_REQUIREMENT", "status": "WAITING_CONFIRMATION"}},
+      "expected_intent": "CANCEL_PENDING_ACTION",
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "target_artifact_type", "execution_required"]
+    },
+    {
+      "message": "ㄱㄱ",
+      "context": {"pending_action": {"action_id": "ACT-002", "action_type": "GENERATE_REQUIREMENT", "status": "WAITING_CONFIRMATION"}},
+      "expected_intent": "CONFIRM_PENDING_ACTION",
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "target_artifact_type", "execution_required"]
+    },
+    {
+      "message": "도와줘",
+      "expected_intent": "GENERAL_QA",
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "target_artifact_type", "source_document_ids", "execution_required"]
+    },
+    {
+      "message": "이거 해줘",
+      "expected_intent": "CLARIFICATION_REQUIRED",
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "target_artifact_type", "source_document_ids", "execution_required"]
+    },
+    {
+      "message": "뭐 할 수 있어?",
+      "expected_intent": "GENERAL_QA",
+      "forbidden_top_level_fields": ["schedule_action", "schedule_intent", "target_artifact_type", "source_document_ids", "execution_required"]
     }
   ],
   "schedule_agent_cases": [
@@ -170,6 +419,96 @@
       "current_date": "2026-06-10",
       "expected_due_date": "2026-06-11",
       "expected_assignee": "박PM"
+    },
+    {
+      "name": "overdue_stopword_not_assignee",
+      "meeting_notes": "기한 지난 할일 보여줘",
+      "expected_success": false,
+      "expected_forbidden_assignee_values": ["지난", "기한", "할일", "TODO"]
+    },
+    {
+      "name": "this_week_particle_not_assignee",
+      "meeting_notes": "이번주에는 일정 현황 공유 예정",
+      "expected_forbidden_assignee_values": ["이번주에", "이번주에는", "이번주"]
+    },
+    {
+      "name": "next_week_particle_not_assignee",
+      "meeting_notes": "다음주에는 QA 결과 공유 예정",
+      "expected_forbidden_assignee_values": ["다음주에", "다음주에는", "다음주"]
+    },
+    {
+      "name": "assignee_after_due_date",
+      "meeting_notes": "내일까지 김대리가 로그인 API 검토 필요",
+      "current_date": "2026-06-10",
+      "expected_due_date": "2026-06-11",
+      "expected_assignee": "김대리",
+      "expected_title_contains": "로그인 API 검토",
+      "expected_title_not_contains": ["김대리", "내일까지"]
+    },
+    {
+      "name": "todo_prefix_removed",
+      "meeting_notes": "해야 할 일: 로그인 API 확인 필요",
+      "current_date": "2026-06-10",
+      "expected_assignee": null,
+      "expected_due_date": null,
+      "expected_status": "NEEDS_CONFIRMATION",
+      "expected_title_contains": "로그인 API 확인",
+      "expected_title_not_contains": ["해야 할 일", "TODO"]
+    },
+    {
+      "name": "unparsed_next_meeting_preserves_action_title",
+      "meeting_notes": "다음 회의 전까지 화면설계서 보완 필요",
+      "current_date": "2026-06-10",
+      "expected_assignee": null,
+      "expected_due_date": null,
+      "expected_status": "NEEDS_CONFIRMATION",
+      "expected_unparsed_due": "다음 회의 전까지",
+      "expected_title_contains": "화면설계서 보완"
+    },
+    {
+      "name": "this_week_friday_title_cleanup",
+      "meeting_notes": "김대리는 이번 주 금요일까지 결제 정책 정리하기로 함",
+      "current_date": "2026-06-10",
+      "expected_due_date": "2026-06-12",
+      "expected_assignee": "김대리",
+      "expected_title_contains": "결제 정책 정리",
+      "expected_title_not_contains": ["하기로", "함"]
+    },
+    {
+      "name": "today_due_date",
+      "meeting_notes": "오늘 이PM이 배포 승인 확인 필요",
+      "current_date": "2026-06-10",
+      "expected_due_date": "2026-06-10",
+      "expected_assignee": "이PM",
+      "expected_title_contains": "배포 승인 확인"
+    },
+    {
+      "name": "next_week_due_date_with_assignee_after_due",
+      "meeting_notes": "다음 주 월요일까지 QA가 회귀 테스트 결과 공유 필요",
+      "current_date": "2026-06-10",
+      "expected_due_date": "2026-06-15",
+      "expected_assignee": "QA",
+      "expected_title_contains": "회귀 테스트 결과 공유"
+    },
+    {
+      "name": "todo_colon_prefix_removed",
+      "meeting_notes": "TODO: 정산 배치 오류 확인 필요",
+      "current_date": "2026-06-10",
+      "expected_assignee": null,
+      "expected_due_date": null,
+      "expected_status": "NEEDS_CONFIRMATION",
+      "expected_title_contains": "정산 배치 오류 확인",
+      "expected_title_not_contains": ["TODO:"]
+    },
+    {
+      "name": "action_item_prefix_removed",
+      "meeting_notes": "액션아이템: 알림톡 템플릿 보완 필요",
+      "current_date": "2026-06-10",
+      "expected_assignee": null,
+      "expected_due_date": null,
+      "expected_status": "NEEDS_CONFIRMATION",
+      "expected_title_contains": "알림톡 템플릿 보완",
+      "expected_title_not_contains": ["액션아이템:"]
     }
   ],
   "output_agent_cases": [
@@ -183,6 +522,52 @@
       },
       "expected_user_message_contains": ["어떤 산출물", "화면설계서"],
       "forbidden_internal_terms": ["CLARIFICATION_REQUIRED"]
+    },
+    {
+      "event": "GENERAL_QA",
+      "result_json": {
+        "event": "GENERAL_QA",
+        "topic": "REQUIREMENT_SPEC",
+        "query": "요구사항 정의서가 뭐야?",
+        "corrections": []
+      },
+      "expected_user_message_contains": ["요구사항 정의서", "기준 문서"],
+      "forbidden_internal_terms": ["GENERAL_QA", "GENERATE_ARTIFACT"],
+      "expected_state": "IDLE"
+    },
+    {
+      "event": "ARTIFACT_DOWNLOAD_REQUIRED_INFO",
+      "result_json": {
+        "event": "ARTIFACT_DOWNLOAD_REQUIRED_INFO",
+        "missing_fields": ["artifact_id"],
+        "corrections": []
+      },
+      "expected_user_message_contains": ["다운로드할 산출물"],
+      "forbidden_internal_terms": ["ARTIFACT_DOWNLOAD_REQUIRED_INFO"],
+      "expected_state": "WAITING_REQUIRED_INFO"
+    },
+    {
+      "event": "ACTION_FAILED",
+      "result_json": {
+        "event": "ACTION_FAILED",
+        "error": "Traceback: internal enum GENERATE_ARTIFACT failed",
+        "corrections": []
+      },
+      "expected_user_message_contains": ["요청을 처리하지 못했습니다"],
+      "forbidden_internal_terms": ["Traceback", "GENERATE_ARTIFACT"],
+      "expected_state": "FAILED"
+    },
+    {
+      "event": "REQUIRED_INFO",
+      "result_json": {
+        "event": "REQUIRED_INFO",
+        "target_artifact_type": "WBS",
+        "query": "WBS 만들어줘",
+        "corrections": []
+      },
+      "expected_user_message_contains": ["WBS", "요구사항 정의서"],
+      "forbidden_internal_terms": ["REQUIRED_INFO"],
+      "expected_state": "WAITING_REQUIRED_INFO"
     }
   ]
 }

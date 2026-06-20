@@ -33,35 +33,43 @@
 
 ### Chat Input Agent
 
-`tests/fixtures/agent_accuracy_learning_seed_cases.json`의 input case 23개와 기존 `input_agent_commands.json` 골든 케이스를 함께 검증한다.
+`tests/fixtures/agent_accuracy_learning_seed_cases.json`의 input case 62개와 기존 `input_agent_commands.json` 골든 케이스를 함께 검증한다.
 
 - 회의록/액션아이템/화면설계서/단위테스트케이스/일정 표현 오타 보정
 - 회의록 TODO 추출과 회의록 요약/정리 요청 분리
 - 요구사항/구축요건정의서 기반 산출물 생성 분류
+- generic download와 artifact-specific download 분리
+- 생성 요청과 다운로드 요청 충돌 처리
 - 이번주/다음주 할 일 조회
 - TODO 완료/상태 변경 alias
 - pending action confirm/cancel 축약어
 - 다운로드 요청의 missing slot
 - `일정이 뭐야?`, `일정 만들어줘`, `일정표 만들어줘` 구분
+- GENERAL_QA/CLARIFICATION 결과에서 실행용 top-level field 제거
 
 ### Schedule Management Agent
 
-seed schedule case와 기존 회의록 골든 케이스를 함께 검증한다.
+seed schedule case 15개와 기존 회의록 골든 케이스를 함께 검증한다.
 
 - `해야`, `할일`, `TODO`, `이번주`, `다음주`, `오늘`, `회의록`, `액션아이템` assignee 방지
+- `지난`, `기한`, `이번주에`, `다음주에는`, `오늘은`, `내일은` 같은 기간/조사 결합 표현 assignee 방지
 - `내일까지`, `낼까지`, `이번 주 금요일까지`, `다음 주 월요일까지` 날짜 해석
+- due date 표현 뒤에 담당자가 나오는 회의록 문장 처리
 - `다음 회의 전까지`는 due date를 invent하지 않고 미확정 상태 유지
+- `해야 할 일:`, `TODO:`, `액션아이템:` prefix 제거
+- `보완 필요`, `검토 필요`, `정리 필요` 같은 title 핵심 action 보존
 - `블락`, `막힘`, `보류` 같은 상태 alias
 - 중복 TODO 제거와 ambiguous match 처리
 
 ### Chat Output Agent
 
-seed output case와 기존 output event 골든 케이스를 함께 검증한다.
+seed output case 5개와 기존 output event 골든 케이스를 함께 검증한다.
 
 - correction notice를 자연어로 표시
 - 내부 enum/event 문자열을 사용자 메시지에 노출하지 않음
 - clarification command action 유지
 - progress/download/result payload 안정성 유지
+- `_clarification_payload()`의 unreachable return 제거
 
 ### Frontend
 
@@ -82,6 +90,11 @@ seed output case와 기존 output event 골든 케이스를 함께 검증한다.
 - Artifact type accuracy: 100%
 - Schedule action accuracy: 100%
 - Correction accuracy: 100%
+- Artifact absence accuracy: 100%
+- Missing slot accuracy: 100%
+- Export format accuracy: 100%
+- Assignee accuracy: 100%
+- Forbidden field accuracy: 100%
 - Negative guard accuracy: 100%
 - Confirm/cancel accuracy: 100%
 - Schedule agent accuracy: 100%
@@ -91,9 +104,10 @@ seed output case와 기존 output event 골든 케이스를 함께 검증한다.
 
 ## 검증 결과
 
-- `python -m pytest --collect-only`: 437 collected
-- `python -m pytest`: 437 passed
+- `python -m pytest --collect-only -q`: 491 collected
+- `python -m pytest -q`: 491 passed
 - `python scripts/evaluate_agent_accuracy.py`: passed, all metrics 100%
+- `npm ci`: passed, npm audit reported 4 existing vulnerabilities
 - `npm test`: passed
 - `npm run build`: passed
 

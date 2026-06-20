@@ -55,6 +55,8 @@ async def test_chat_input_agent_seed_accuracy_cases(case: dict) -> None:
         assert context.get("source_document_type") == case["expected_source_document_type"]
     if case.get("expected_export_format"):
         assert context.get("export_format") == case["expected_export_format"]
+    if case.get("expected_artifact_id"):
+        assert context.get("artifact_id") == case["expected_artifact_id"]
     if case.get("expected_time_range"):
         assert (
             context.get("time_range")
@@ -63,6 +65,12 @@ async def test_chat_input_agent_seed_accuracy_cases(case: dict) -> None:
         ) == case["expected_time_range"]
     if case.get("expected_status"):
         assert context.get("entities", {}).get("status") == case["expected_status"]
+    if case.get("expected_assignee"):
+        assert (
+            context.get("assignee")
+            or context.get("entities", {}).get("assignee")
+            or context.get("semantic_slots", {}).get("assignee")
+        ) == case["expected_assignee"]
     if case.get("expected_topic"):
         assert context.get("topic") == case["expected_topic"]
     if case.get("expected_missing_slots"):
@@ -72,11 +80,17 @@ async def test_chat_input_agent_seed_accuracy_cases(case: dict) -> None:
             "todo_title_query",
             "",
         )
+    if case.get("expected_absent_artifact_type"):
+        assert context.get("artifact_type") is None
+        assert context.get("target_artifact_type") is None
+        assert context.get("artifact_type_slot") is None
     for forbidden in case.get("forbidden_assignee_values", []):
         assert context.get("assignee") != forbidden
         assert context.get("entities", {}).get("assignee") != forbidden
     for forbidden_intent in case.get("negative_assertions", []):
         assert context["intent"] != forbidden_intent
+    for field in case.get("forbidden_top_level_fields", []):
+        assert field not in context or context.get(field) in (None, [], {})
 
     corrections = context.get("corrections") or []
     for expected_correction in case.get("expected_corrections", []):

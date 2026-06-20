@@ -34,4 +34,9 @@ async def test_chat_output_agent_seed_correction_messages(case: dict) -> None:
         assert expected in response.message
     for forbidden in case["forbidden_internal_terms"]:
         assert forbidden not in response.message
-    assert response.display_payload["corrections"] == case["result_json"]["corrections"]
+    assert response.display_payload.get("corrections", []) == case["result_json"].get(
+        "corrections",
+        [],
+    )
+    if case.get("expected_state"):
+        assert response.display_payload["state"] == case["expected_state"]
