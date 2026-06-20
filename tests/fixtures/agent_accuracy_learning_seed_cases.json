@@ -1,0 +1,188 @@
+{
+  "description": "Seed cases for PM Agent Input/Output/Schedule accuracy improvement. These are curated examples, not raw user logs.",
+  "input_agent_cases": [
+    {
+      "message": "회이록에서 액션아이템 뽑아줘",
+      "normalized_query": "회의록에서 액션아이템 뽑아줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+      "expected_corrections": [{"source": "회이록", "target": "회의록"}]
+    },
+    {
+      "message": "회의록에서 액션아이탬 뽑아줘",
+      "normalized_query": "회의록에서 액션아이템 뽑아줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+      "expected_corrections": [{"source": "액션아이탬", "target": "액션아이템"}]
+    },
+    {
+      "message": "회으록 기반 할일 정리해줘",
+      "normalized_query": "회의록 기반 할 일 정리해줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING"
+    },
+    {
+      "message": "회의록 정리해줘",
+      "expected_intent": "GENERAL_QA",
+      "expected_topic": "MEETING_NOTES",
+      "negative_assertions": ["EXTRACT_ACTION_ITEMS"]
+    },
+    {
+      "message": "회의록 요약해줘",
+      "expected_intent": "GENERAL_QA",
+      "expected_topic": "MEETING_NOTES",
+      "negative_assertions": ["EXTRACT_ACTION_ITEMS"]
+    },
+    {
+      "message": "미팅록에서 해야할일 추출해줘",
+      "normalized_query": "회의록에서 해야 할 일 추출해줘",
+      "expected_intent": "EXTRACT_ACTION_ITEMS",
+      "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+      "forbidden_assignee_values": ["해야", "할일", "TODO"]
+    },
+    {
+      "message": "요구사향 명세서 만들어줘",
+      "normalized_query": "요구사항 명세서 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC"
+    },
+    {
+      "message": "요구사항정위서 만들어줘",
+      "normalized_query": "요구사항정의서 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC"
+    },
+    {
+      "message": "구축요건정위서로 요구사항 뽑아줘",
+      "normalized_query": "구축요건정의서로 요구사항 뽑아줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "REQUIREMENT_SPEC",
+      "expected_source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION"
+    },
+    {
+      "message": "화면 설개서 만들어줘",
+      "normalized_query": "화면설계서 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "SCREEN_DESIGN"
+    },
+    {
+      "message": "화면설꼐서 만들어줘",
+      "normalized_query": "화면설계서 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "SCREEN_DESIGN"
+    },
+    {
+      "message": "단위태스트케이스 만들어줘",
+      "normalized_query": "단위테스트케이스 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "UNITTEST_SPEC"
+    },
+    {
+      "message": "테스트 캐이스 엑셀로 받아볼래",
+      "normalized_query": "테스트 케이스 엑셀로 받아볼래",
+      "expected_intent": "DOWNLOAD_ARTIFACT",
+      "expected_artifact_type": "UNITTEST_SPEC",
+      "expected_export_format": "xlsx",
+      "expected_missing_slots": ["artifact_id"]
+    },
+    {
+      "message": "이번쥬 할일 알려줘",
+      "normalized_query": "이번주 할 일 알려줘",
+      "expected_intent": "SCHEDULE_QUERY",
+      "expected_schedule_action": "SHOW_THIS_WEEK_TODOS",
+      "expected_time_range": "THIS_WEEK",
+      "forbidden_assignee_values": ["이번쥬", "이번주"]
+    },
+    {
+      "message": "다음쥬 일정 알려줘",
+      "normalized_query": "다음주 일정 알려줘",
+      "expected_intent": "SCHEDULE_QUERY",
+      "expected_schedule_action": "SHOW_NEXT_WEEK_TODOS",
+      "expected_time_range": "NEXT_WEEK"
+    },
+    {
+      "message": "로그인 API 완뇨했어",
+      "normalized_query": "로그인 API 완료했어",
+      "expected_intent": "COMPLETE_TODO",
+      "expected_schedule_action": "COMPLETE_TODO",
+      "expected_todo_title_contains": "로그인 API"
+    },
+    {
+      "message": "로그인 API 블락으로 바꿔줘",
+      "normalized_query": "로그인 API BLOCKED로 바꿔줘",
+      "expected_intent": "UPDATE_TODO_STATUS",
+      "expected_schedule_action": "UPDATE_TODO_STATUS",
+      "expected_status": "BLOCKED"
+    },
+    {
+      "message": "ㅇㅋ 진행해",
+      "context": {"pending_action": {"action_id": "ACT-001", "action_type": "GENERATE_WBS", "status": "WAITING_CONFIRMATION"}},
+      "expected_intent": "CONFIRM_PENDING_ACTION"
+    },
+    {
+      "message": "ㄴㄴ 취소",
+      "context": {"pending_action": {"action_id": "ACT-001", "action_type": "GENERATE_WBS", "status": "WAITING_CONFIRMATION"}},
+      "expected_intent": "CANCEL_PENDING_ACTION"
+    },
+    {
+      "message": "방금거 진행",
+      "context": {"pending_action": {"action_id": "ACT-001", "action_type": "GENERATE_WBS", "status": "WAITING_CONFIRMATION"}},
+      "expected_intent": "CONFIRM_PENDING_ACTION"
+    },
+    {
+      "message": "일정이 뭐야?",
+      "expected_intent": "GENERAL_QA",
+      "negative_assertions": ["SCHEDULE_QUERY", "GENERATE_ARTIFACT"]
+    },
+    {
+      "message": "일정 만들어줘",
+      "expected_intent": "CLARIFICATION_REQUIRED"
+    },
+    {
+      "message": "일정표 만들어줘",
+      "expected_intent": "GENERATE_ARTIFACT",
+      "expected_artifact_type": "WBS"
+    }
+  ],
+  "schedule_agent_cases": [
+    {
+      "name": "stopword_not_assignee",
+      "meeting_notes": "미팅록에서 해야할일 추출해줘",
+      "expected_forbidden_assignee_values": ["해야", "할일", "TODO"]
+    },
+    {
+      "name": "blocked_status_alias",
+      "normalized_input": {"entities": {"status": "BLOCKED"}, "todo_title_query": "로그인 API"},
+      "todos": [{"todo_id": "TODO-001", "title": "로그인 API 개발", "status": "IN_PROGRESS"}],
+      "expected_status": "READY_TO_UPDATE",
+      "expected_next_status": "BLOCKED"
+    },
+    {
+      "name": "next_week_monday_due_date",
+      "meeting_notes": "김민수는 권한 정책 검토를 다음 주 월요일까지 완료한다.",
+      "current_date": "2026-06-10",
+      "expected_due_date": "2026-06-15",
+      "expected_assignee": "김민수"
+    },
+    {
+      "name": "tomorrow_due_date",
+      "meeting_notes": "박PM은 회의록 정리를 내일까지 공유한다.",
+      "current_date": "2026-06-10",
+      "expected_due_date": "2026-06-11",
+      "expected_assignee": "박PM"
+    }
+  ],
+  "output_agent_cases": [
+    {
+      "event": "CLARIFICATION_REQUIRED",
+      "result_json": {
+        "event": "CLARIFICATION_REQUIRED",
+        "question": "어떤 산출물을 만들까요?",
+        "candidates": ["REQUIREMENT_SPEC", "WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"],
+        "corrections": [{"source": "화면 설개서", "target": "화면설계서"}]
+      },
+      "expected_user_message_contains": ["어떤 산출물", "화면설계서"],
+      "forbidden_internal_terms": ["CLARIFICATION_REQUIRED"]
+    }
+  ]
+}

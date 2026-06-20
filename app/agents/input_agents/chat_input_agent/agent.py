@@ -3,6 +3,13 @@
 import re
 from typing import Any
 
+from app.agents.input_agents.chat_input_agent.intent_example_retriever import (
+    IntentExampleMatch,
+    IntentExampleRetriever,
+)
+from app.agents.input_agents.chat_input_agent.korean_command_normalizer import (
+    KoreanCommandNormalizer,
+)
 from app.schemas.artifact import ArtifactType, DocumentType
 from app.schemas.chat import ChatCommandType
 from app.schemas.io_agent import (
@@ -22,6 +29,8 @@ class ChatInputAgent:
     """
 
     AGENT_NAME = "ChatInputAgent"
+    EXAMPLE_SCORE_THRESHOLD = 0.82
+    EXAMPLE_MARGIN_THRESHOLD = 0.08
     GENERATION_TOKENS = (
         "만들",
         "만드",
@@ -248,6 +257,18 @@ class ChatInputAgent:
     KO_STATUS_UPDATE_ACTION_TERMS = ("바꿔", "변경", "처리", "해줘", "수정")
     KO_LOW_CONFIDENCE_ACTION_TERMS = ("해줘", "만들어줘", "생성해줘", "작성해줘")
 
+    def __init__(
+        self,
+        *,
+        command_normalizer: KoreanCommandNormalizer | None = None,
+        intent_example_retriever: IntentExampleRetriever | None = None,
+    ) -> None:
+        self.command_normalizer = command_normalizer or KoreanCommandNormalizer()
+        self.intent_example_retriever = (
+            intent_example_retriever
+            or IntentExampleRetriever(normalizer=self.command_normalizer)
+        )
+
     async def parse(self, request: InputAgentRequest) -> InputAgentResponse:
         if request.input_type != InputType.TEXT:
             return InputAgentResponse(
@@ -269,7 +290,7 @@ class ChatInputAgent:
                 validation_errors=["message is required"],
             )
 
-        structured_context = self._build_structured_context(
+        structured_context = await self._build_structured_context(
             message=message,
             action=action,
             request_context=request.context,
@@ -285,7 +306,7 @@ class ChatInputAgent:
             },
         )
 
-    def _build_structured_context(
+    async def _build_structured_context(
         self,
         *,
         message: str,
@@ -299,6 +320,7 @@ class ChatInputAgent:
                 "action_id": action.get("action_id")
                 or action.get("payload", {}).get("action_id"),
                 "confidence": 1.0,
+                "intent_source": "rule",
             }
         if action_type == ChatCommandType.CANCEL_PENDING_ACTION.value:
             return {
@@ -306,17 +328,28 @@ class ChatInputAgent:
                 "action_id": action.get("action_id")
                 or action.get("payload", {}).get("action_id"),
                 "confidence": 1.0,
+                "intent_source": "rule",
             }
 
         slots = self.extract_semantic_slots(message, request_context)
-        return self._classify_semantic_intent(
+        rule_result = self._classify_semantic_intent(
             message=message,
             request_context=request_context,
             slots=slots,
         )
+        matches = await self.intent_example_retriever.retrieve(
+            str(slots.get("normalized_query") or ""),
+            top_k=3,
+        )
+        return self._reconcile_intent_examples(
+            rule_result=rule_result,
+            slots=slots,
+            matches=matches,
+            request_context=request_context,
+        )
 
     def normalize_text(self, message: str) -> str:
-        text = str(message or "").strip()
+        text = self.command_normalizer.normalize(str(message or "")).normalized_text
         typo_replacements = (
             ("요구사항저의서", "요구사항정의서"),
             ("요구사항 저의서", "요구사항 정의서"),
@@ -357,7 +390,8 @@ class ChatInputAgent:
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         request_context = context or {}
-        normalized_query = self._normalize_query(self.normalize_text(message))
+        normalization = self.command_normalizer.normalize(message)
+        normalized_query = self._normalize_query(normalization.normalized_text)
         normalized = normalized_query.lower()
         compact_message = "".join(normalized.split())
         context_snapshot = self._context_snapshot(request_context)
@@ -382,7 +416,7 @@ class ChatInputAgent:
             artifact_target=artifact_target,
         )
         time_range = self._detect_time_range(normalized, compact_message)
-        assignee = self._extract_assignee_query(message)
+        assignee = self._extract_assignee_query(normalized_query)
         todo_target = (
             self._todo_completion_query(normalized_query)
             if action == "COMPLETE"
@@ -448,6 +482,14 @@ class ChatInputAgent:
                 if clarification_required
                 else None
             ),
+            "corrections": [
+                {
+                    "source": correction.source,
+                    "target": correction.target,
+                    "type": correction.type,
+                }
+                for correction in normalization.corrections
+            ],
             "context_snapshot": context_snapshot,
         }
 
@@ -663,6 +705,237 @@ class ChatInputAgent:
             "confidence": float(slots.get("confidence") or 0.5),
         }
 
+    def _reconcile_intent_examples(
+        self,
+        *,
+        rule_result: dict[str, Any],
+        slots: dict[str, Any],
+        matches: list[IntentExampleMatch],
+        request_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = dict(rule_result)
+        result.setdefault("intent_source", "rule")
+        result["corrections"] = slots.get("corrections") or []
+        result["matched_intent_examples"] = [
+            match.to_public_dict()
+            for match in matches
+            if match.score >= self.EXAMPLE_SCORE_THRESHOLD
+        ][:3]
+
+        if not matches:
+            return result
+
+        top = matches[0]
+        second_score = matches[1].score if len(matches) > 1 else 0.0
+        has_margin = top.score == 1.0 or (
+            top.score - second_score >= self.EXAMPLE_MARGIN_THRESHOLD
+        )
+        if top.score < self.EXAMPLE_SCORE_THRESHOLD or not has_margin:
+            return result
+
+        if top.polarity == "negative":
+            if result.get("intent") in (top.payload.get("negative_assertions") or []):
+                result = self._result_from_example(
+                    top,
+                    current=result,
+                    slots=slots,
+                    request_context=request_context,
+                )
+            elif result.get("intent") != top.intent:
+                result = self._result_from_example(
+                    top,
+                    current=result,
+                    slots=slots,
+                    request_context=request_context,
+                )
+            result["intent_source"] = "rule+example"
+            result["confidence"] = max(float(result.get("confidence") or 0.0), top.score)
+            result["corrections"] = slots.get("corrections") or []
+            result["matched_intent_examples"] = [top.to_public_dict()]
+            return result
+
+        if self._should_apply_example(top, result):
+            result = self._result_from_example(
+                top,
+                current=result,
+                slots=slots,
+                request_context=request_context,
+            )
+            result["intent_source"] = "example"
+        else:
+            result["intent_source"] = "rule+example"
+        result["confidence"] = max(float(result.get("confidence") or 0.0), top.score)
+        result["corrections"] = slots.get("corrections") or []
+        result["matched_intent_examples"] = [top.to_public_dict()]
+        return result
+
+    def _should_apply_example(
+        self,
+        match: IntentExampleMatch,
+        result: dict[str, Any],
+    ) -> bool:
+        if result.get("intent") != match.intent:
+            return True
+        if match.artifact_type and (
+            result.get("target_artifact_type")
+            or result.get("artifact_type")
+            or result.get("artifact_type_slot")
+        ) != match.artifact_type:
+            return True
+        if match.schedule_action and result.get("schedule_action") != match.schedule_action:
+            return True
+        return float(result.get("confidence") or 0.0) < 0.72
+
+    def _result_from_example(
+        self,
+        match: IntentExampleMatch,
+        *,
+        current: dict[str, Any],
+        slots: dict[str, Any],
+        request_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = match.payload
+        intent = match.intent
+        normalized_query = str(slots.get("normalized_query") or "")
+        source_document_ids = self._resolve_source_document_ids(request_context, slots)
+
+        if intent == "GENERATE_ARTIFACT":
+            artifact_type = self._artifact_type_from_slot(payload.get("artifact_type"))
+            if artifact_type is not None:
+                source_document_type = (
+                    payload.get("source_document_type")
+                    or self._source_document_type_from_slot(slots.get("source_type"))
+                    or self._default_source_document_type(artifact_type.value)
+                )
+                result = {
+                    **self._artifact_intent(
+                        target_artifact_type=artifact_type,
+                        source_document_ids=source_document_ids,
+                        source_document_type=source_document_type,
+                        normalized_query=normalized_query,
+                        confidence=match.score,
+                    ),
+                    **self._semantic_payload(slots),
+                }
+                result["source_document_type"] = source_document_type
+                return result
+
+        if intent == "EXTRACT_ACTION_ITEMS":
+            return {
+                **current,
+                "intent": "EXTRACT_ACTION_ITEMS",
+                "action": "CREATE",
+                "schedule_action": payload.get("schedule_action")
+                or "EXTRACT_TODOS_FROM_MEETING",
+                "schedule_intent": "SCHEDULE_ASSISTANT",
+                "meeting_notes": normalized_query,
+                "normalized_query": normalized_query,
+                "entities": {
+                    **current.get("entities", {}),
+                    **self._slot_entities(slots),
+                },
+            }
+
+        if intent == "SCHEDULE_QUERY":
+            time_range = payload.get("time_range") or slots.get("time_range")
+            return {
+                **current,
+                "intent": "SCHEDULE_QUERY",
+                "action": "QUERY",
+                "schedule_action": payload.get("schedule_action"),
+                "schedule_intent": "SCHEDULE_ASSISTANT",
+                "time_range": time_range,
+                "normalized_query": normalized_query,
+                "entities": {
+                    **current.get("entities", {}),
+                    "time_range": time_range,
+                    **self._slot_entities(slots),
+                },
+            }
+
+        if intent == "COMPLETE_TODO":
+            todo_title_query = self._todo_completion_query(normalized_query)
+            return {
+                **current,
+                "intent": "COMPLETE_TODO",
+                "action": "UPDATE",
+                "schedule_action": "COMPLETE_TODO",
+                "todo_title_query": todo_title_query,
+                "normalized_query": normalized_query,
+                "entities": {
+                    **current.get("entities", {}),
+                    "todo_title": todo_title_query,
+                },
+            }
+
+        if intent == "UPDATE_TODO_STATUS":
+            todo_title_query = normalized_query
+            status = payload.get("status") or self._detect_requested_status(
+                str(slots.get("normalized") or ""),
+                str(slots.get("compact") or ""),
+            )
+            return {
+                **current,
+                "intent": "UPDATE_TODO_STATUS",
+                "action": "UPDATE",
+                "schedule_action": "UPDATE_TODO_STATUS",
+                "todo_title_query": todo_title_query,
+                "normalized_query": normalized_query,
+                "entities": {
+                    **current.get("entities", {}),
+                    "status": status,
+                },
+            }
+
+        if intent == "DOWNLOAD_ARTIFACT":
+            result = self._download_intent(slots=slots, normalized_query=normalized_query)
+            if payload.get("artifact_type"):
+                result["artifact_type"] = payload.get("artifact_type")
+            if payload.get("export_format"):
+                result["export_format"] = payload.get("export_format")
+            if payload.get("missing_slots"):
+                result["missing_slots"] = payload.get("missing_slots")
+            return result
+
+        if intent == "CONFIRM_PENDING_ACTION":
+            return {
+                **current,
+                "intent": "CONFIRM_PENDING_ACTION",
+                "action": "CONFIRM",
+                "normalized_query": normalized_query,
+            }
+
+        if intent == "CANCEL_PENDING_ACTION":
+            return {
+                **current,
+                "intent": "CANCEL_PENDING_ACTION",
+                "action": "CANCEL",
+                "normalized_query": normalized_query,
+            }
+
+        if intent == "CLARIFICATION_REQUIRED":
+            return {
+                **current,
+                "intent": "CLARIFICATION_REQUIRED",
+                "action": "ASK_CLARIFICATION",
+                "clarification_required": True,
+                "clarification_question": current.get("clarification_question")
+                or "어떤 산출물이나 일정을 처리할까요?",
+                "normalized_query": normalized_query,
+            }
+
+        if intent == "GENERAL_QA":
+            return {
+                **current,
+                "intent": "GENERAL_QA",
+                "action": "EXPLAIN",
+                "topic": payload.get("topic") or current.get("topic"),
+                "qa_type": current.get("qa_type") or "ASK_PM_CONCEPT",
+                "normalized_query": normalized_query,
+            }
+
+        return current
+
     def _looks_like_ambiguous_creation(
         self,
         normalized_message: str,
@@ -670,6 +943,8 @@ class ChatInputAgent:
         slots: dict[str, Any],
     ) -> bool:
         if not self._has_generation_signal(normalized_message, compact_message):
+            return False
+        if slots.get("schedule_action"):
             return False
         if slots.get("artifact_type"):
             return False
@@ -848,6 +1123,16 @@ class ChatInputAgent:
         normalized_message: str,
         compact_message: str,
     ) -> bool:
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            ("BLOCKED", "IN_PROGRESS", "DONE", "CANCELLED", "블락", "블록", "막힘", "보류"),
+        ) and self._contains_any(
+            normalized_message,
+            compact_message,
+            ("바꿔", "변경", "상태", "처리"),
+        ):
+            return True
         has_status_word = self._contains_any(
             normalized_message,
             compact_message,
@@ -865,6 +1150,15 @@ class ChatInputAgent:
         normalized_message: str,
         compact_message: str,
     ) -> str | None:
+        direct_status_terms = (
+            ("IN_PROGRESS", ("진행중", "진행 중", "in progress")),
+            ("DONE", ("완료", "완뇨", "끝냄", "처리함", "done", "complete")),
+            ("BLOCKED", ("BLOCKED", "블락", "블록", "막힘", "막혔어", "보류", "blocked")),
+            ("CANCELLED", ("취소", "드랍", "cancel", "cancelled", "canceled")),
+        )
+        for status, terms in direct_status_terms:
+            if self._contains_any(normalized_message, compact_message, terms):
+                return status
         status_terms = (
             ("IN_PROGRESS", ("진행중", "진행 중", "in progress")),
             ("DONE", ("완료", "done", "complete")),
@@ -1022,6 +1316,7 @@ class ChatInputAgent:
             "confidence": slots.get("confidence"),
             "clarification_required": slots.get("clarification_required"),
             "clarification_question": slots.get("clarification_question"),
+            "corrections": slots.get("corrections") or [],
         }
         return {
             "semantic_slots": semantic_slots,
@@ -1032,6 +1327,7 @@ class ChatInputAgent:
             "target_type": slots.get("target_type"),
             "time_range": slots.get("time_range"),
             "artifact_type_slot": slots.get("artifact_type"),
+            "corrections": slots.get("corrections") or [],
         }
 
     def _slot_entities(self, slots: dict[str, Any]) -> dict[str, Any]:
@@ -1794,12 +2090,30 @@ class ChatInputAgent:
     def _extract_assignee_query(self, message: str) -> str | None:
         compact = self.normalize_text(message)
         normalized = compact.lower()
+        assignee_stopwords = {
+            "이번",
+            "이번주",
+            "다음",
+            "다음주",
+            "오늘",
+            "회의록",
+            "액션아이템",
+            "해야",
+            "할",
+            "할일",
+            "TODO",
+            "todo",
+            "WBS",
+            "wbs",
+        }
         real_korean_match = re.search(
             r"([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})\s*(?:할 일|할일|업무|TODO|todo)",
             compact,
         )
         if real_korean_match:
             candidate = real_korean_match.group(1).strip()
+            if candidate in assignee_stopwords:
+                return None
             ignored = {
                 "이번",
                 "다음",
@@ -1894,6 +2208,12 @@ class ChatInputAgent:
         normalized_message: str,
         compact_message: str,
     ) -> bool:
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            ("완료", "완료했어", "끝냈어", "처리했어", "반영했어", "done", "complete"),
+        ):
+            return True
         return self._contains_any(
             normalized_message,
             compact_message,
@@ -1902,6 +2222,8 @@ class ChatInputAgent:
 
     def _todo_completion_query(self, message: str) -> str:
         query = self.normalize_text(message)
+        for term in ("완료했어", "완료", "끝냈어", "처리했어", "반영했어", "done", "complete"):
+            query = query.replace(term, "")
         for term in self.TODO_COMPLETION_TERMS:
             query = query.replace(term, "")
         query = re.sub(r"\b(done|complete)\b", " ", query, flags=re.IGNORECASE)
@@ -1980,21 +2302,14 @@ class ChatInputAgent:
         normalized = self.normalize_text(message)
         replacements = (
             ("요구 사항", "요구사항"),
-            ("요구사항정의서", "요구사항 정의서"),
             ("요구사항명세서", "요구사항 명세서"),
             ("구축 요건 정의서", "구축요건 정의서"),
-            ("구축요건정의서", "구축요건 정의서"),
-            ("요건정의서", "구축요건 정의서"),
             ("화면 설계서", "화면설계서"),
             ("화면기획서", "화면설계서"),
             ("단위 테스트 케이스", "단위테스트케이스"),
             ("단위 테스트 계획서", "단위테스트계획서"),
             ("단위테스트 계획서", "단위테스트계획서"),
             ("테스트 계획서", "테스트계획서"),
-            ("테스트케이스", "단위테스트케이스"),
-            ("회의록 할일", "회의록 TODO"),
-            ("할 일", "TODO"),
-            ("할일", "TODO"),
         )
         for source, target in replacements:
             normalized = normalized.replace(source, target)
@@ -2015,6 +2330,17 @@ class ChatInputAgent:
 
     def _looks_like_confirmation(self, normalized_message: str) -> bool:
         compact_message = "".join(normalized_message.split())
+        if compact_message in {
+            "확인",
+            "확인진행해",
+            "진행",
+            "진행해",
+            "방금거진행",
+            "방금것진행",
+            "오케이",
+            "오키",
+        }:
+            return True
         if compact_message in {
             "응",
             "응진행해",
@@ -2046,6 +2372,15 @@ class ChatInputAgent:
 
     def _looks_like_cancellation(self, normalized_message: str) -> bool:
         compact_message = "".join(normalized_message.split())
+        if compact_message in {
+            "취소",
+            "취소해",
+            "취소진행",
+            "방금거취소",
+            "방금것취소",
+            "노노",
+        }:
+            return True
         if compact_message in {
             "아니",
             "아니취소",

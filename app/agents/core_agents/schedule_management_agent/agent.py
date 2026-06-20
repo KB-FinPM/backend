@@ -403,6 +403,37 @@ class ScheduleManagementAgent:
 
     def _is_action_candidate(self, sentence: str, current_date: date) -> bool:
         normalized = sentence.lower()
+        proper_action_keywords = (
+            "검토",
+            "정리",
+            "확인",
+            "작성",
+            "준비",
+            "진행",
+            "공유",
+            "전달",
+            "완료",
+            "수정",
+            "보완",
+            "업데이트",
+            "추출",
+            "개발",
+            "테스트",
+        )
+        proper_obligation_keywords = (
+            "필요",
+            "해야",
+            "하기",
+            "담당",
+            "까지",
+            "할 일",
+            "액션아이템",
+        )
+        if any(keyword in normalized for keyword in proper_action_keywords) and (
+            any(keyword in normalized for keyword in proper_obligation_keywords)
+            or self._extract_assignee(sentence)
+        ):
+            return True
         if any(
             phrase.lower() in normalized
             for phrase in self.TODO_TRIGGER_PHRASES + self.KO_TODO_TRIGGER_PHRASES
@@ -424,6 +455,31 @@ class ScheduleManagementAgent:
         return has_action_keyword and (has_obligation or has_due_signal or assignee)
 
     def _extract_assignee(self, sentence: str) -> str | None:
+        proper_explicit_match = re.search(
+            r"(?:담당자|담당|owner)\s*[:：-]?\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})",
+            sentence,
+            re.IGNORECASE,
+        )
+        if proper_explicit_match:
+            candidate = proper_explicit_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
+        proper_colon_match = re.match(
+            r"^\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})\s*[:：]\s+",
+            sentence,
+        )
+        if proper_colon_match:
+            candidate = proper_colon_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
+        proper_subject_match = re.match(
+            r"^\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})(?:은|는|이|가)\s+",
+            sentence,
+        )
+        if proper_subject_match:
+            candidate = proper_subject_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
         explicit_korean_match = re.search(
             r"(?:담당자|담당|owner)\s*[:：-]?\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})",
             sentence,
@@ -477,6 +533,23 @@ class ScheduleManagementAgent:
         return None
 
     def _is_invalid_assignee(self, candidate: str) -> bool:
+        if candidate.strip() in {
+            "해야",
+            "할일",
+            "할",
+            "TODO",
+            "todo",
+            "이번주",
+            "다음주",
+            "오늘",
+            "회의록",
+            "액션아이템",
+            "담당자",
+            "담당",
+            "미정",
+            "담당자 미정",
+        }:
+            return True
         if candidate.strip() in self.KO_PLACEHOLDER_ASSIGNEES:
             return True
         return candidate.endswith("에서") or candidate in {
@@ -615,6 +688,72 @@ class ScheduleManagementAgent:
                 raw_text=month_day_match.group(0),
             )
 
+        if "내일까지" in sentence or "내일" in sentence or "낼까지" in sentence:
+            return (current_date + timedelta(days=1)).isoformat(), {
+                "raw_text": "내일까지" if "내일까지" in sentence else "내일"
+            }
+        if "오늘" in sentence:
+            return current_date.isoformat(), {"raw_text": "오늘"}
+
+        week_day_match = re.search(
+            r"((?:이번|다음)\s*주)\s*(월요일|화요일|수요일|목요일|금요일|토요일|일요일|월|화|수|목|금|토|일)",
+            sentence,
+        )
+        if week_day_match:
+            week_text, weekday_text = week_day_match.groups()
+            weekday_index = {
+                "월요일": 0,
+                "월": 0,
+                "화요일": 1,
+                "화": 1,
+                "수요일": 2,
+                "수": 2,
+                "목요일": 3,
+                "목": 3,
+                "금요일": 4,
+                "금": 4,
+                "토요일": 5,
+                "토": 5,
+                "일요일": 6,
+                "일": 6,
+            }[weekday_text]
+            week_start, _ = self._week_bounds(current_date)
+            if "다음" in week_text:
+                week_start += timedelta(days=7)
+            return (
+                (week_start + timedelta(days=weekday_index)).isoformat(),
+                {"raw_text": week_day_match.group(0)},
+            )
+
+        if "다음 회의 전까지" in sentence or "다음 회의 전" in sentence:
+            return None, {
+                "raw_text": "다음 회의 전까지",
+                "unparsed_due_date_text": "다음 회의 전까지",
+            }
+
+        full_date_match = re.search(
+            r"(20\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일",
+            sentence,
+        )
+        if full_date_match:
+            year, month, day = (int(part) for part in full_date_match.groups())
+            return self._safe_due_date(
+                year,
+                month,
+                day,
+                raw_text=full_date_match.group(0),
+            )
+
+        month_day_match = re.search(r"(\d{1,2})월\s*(\d{1,2})일", sentence)
+        if month_day_match:
+            month, day = (int(part) for part in month_day_match.groups())
+            return self._safe_due_date(
+                current_date.year,
+                month,
+                day,
+                raw_text=month_day_match.group(0),
+            )
+
         if "내일" in sentence:
             return (current_date + timedelta(days=1)).isoformat(), {"raw_text": "내일"}
         if "오늘" in sentence:
@@ -716,6 +855,22 @@ class ScheduleManagementAgent:
                 flags=re.IGNORECASE,
             )
             title = re.sub(
+                rf"^\s*{re.escape(assignee)}(?:은|는|이|가)\s+",
+                "",
+                title,
+            )
+            title = re.sub(
+                rf"^\s*{re.escape(assignee)}\s*[:：]\s*",
+                "",
+                title,
+            )
+            title = re.sub(
+                rf"^(?:담당자|담당|owner)\s*[:：-]?\s*{re.escape(assignee)}\s*",
+                "",
+                title,
+                flags=re.IGNORECASE,
+            )
+            title = re.sub(
                 rf"^\s*{re.escape(assignee)}(?:님)?(?:은|는|이|가)\s+",
                 "",
                 title,
@@ -729,6 +884,12 @@ class ScheduleManagementAgent:
 
         if due_text:
             title = title.replace(due_text, "")
+        title = re.sub(r"(?:까지|전까지|전)\s*", " ", title)
+        title = re.sub(
+            r"\s*(?:완료한다|완료|진행한다|진행|공유한다|공유|검토한다|정리한다|작성한다)\.?\s*$",
+            "",
+            title,
+        )
         title = re.sub(r"(?:까지|전까지|전)\s*", " ", title)
         title = re.sub(
             r"\s*(?:진행한다|진행|공유 예정|공유|검토한다|정리한다|작성한다)\.?\s*$",

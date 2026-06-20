@@ -287,6 +287,25 @@ class ChatOutputAgent:
         }
 
     def _clarification_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
+        corrections = self._safe_corrections(result_json.get("corrections"))
+        message = result_json.get("question") or "어떤 요청인지 조금만 더 알려주세요."
+        correction_notice = self._correction_notice(corrections)
+        if correction_notice:
+            message = f"{correction_notice}\n{message}"
+        candidates = result_json.get("candidates") or []
+        return {
+            "state": ChatState.WAITING_REQUIRED_INFO.value,
+            "message": message,
+            "result": {
+                "semantic_slots": result_json.get("semantic_slots") or {},
+                "clarification_required": True,
+                "candidates": candidates,
+                "command_actions": self._clarification_command_actions(candidates),
+            },
+            "corrections": corrections,
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
         return {
             "state": ChatState.WAITING_REQUIRED_INFO.value,
             "message": result_json.get("question")
@@ -298,6 +317,47 @@ class ChatOutputAgent:
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
+
+    def _safe_corrections(self, value: Any) -> list[dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+        corrections = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or "").strip()
+            target = str(item.get("target") or "").strip()
+            if source and target:
+                corrections.append({"source": source, "target": target})
+        return corrections
+
+    def _correction_notice(self, corrections: list[dict[str, str]]) -> str:
+        if not corrections:
+            return ""
+        messages = [
+            f"'{item['source']}'을 '{item['target']}'으로 이해했어요."
+            for item in corrections[:3]
+        ]
+        return " ".join(messages)
+
+    def _clarification_command_actions(
+        self,
+        candidates: list[Any],
+    ) -> list[dict[str, str]]:
+        labels = {
+            "REQUIREMENT_SPEC": "요구사항 명세서",
+            "WBS": "WBS",
+            "SCREEN_DESIGN": "화면설계서",
+            "UNITTEST_SPEC": "단위테스트케이스",
+        }
+        return [
+            {
+                "label": labels.get(str(candidate), str(candidate)),
+                "message": f"{labels.get(str(candidate), str(candidate))} 만들어줘",
+            }
+            for candidate in candidates
+            if str(candidate)
+        ]
 
     def _required_info_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         artifact_type = result_json.get("target_artifact_type")

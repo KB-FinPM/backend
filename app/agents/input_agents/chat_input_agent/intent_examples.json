@@ -1,0 +1,161 @@
+[
+  {
+    "id": "input.meeting.action_items.001",
+    "text": "회의록에서 액션아이템 뽑아줘",
+    "intent": "EXTRACT_ACTION_ITEMS",
+    "schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.meeting.action_items.002",
+    "text": "회의록 기반 할 일 정리해줘",
+    "intent": "EXTRACT_ACTION_ITEMS",
+    "schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.meeting.action_items.003",
+    "text": "회의록에서 해야 할 일 추출해줘",
+    "intent": "EXTRACT_ACTION_ITEMS",
+    "schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.requirement.generate.001",
+    "text": "요구사항 명세서 만들어줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "REQUIREMENT_SPEC",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.requirement.generate.002",
+    "text": "구축요건정의서로 요구사항 뽑아줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "REQUIREMENT_SPEC",
+    "source_document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.screen.generate.001",
+    "text": "화면설계서 만들어줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "SCREEN_DESIGN",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.unittest.generate.001",
+    "text": "단위테스트케이스 만들어줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "UNITTEST_SPEC",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.unittest.download.001",
+    "text": "테스트 케이스 엑셀로 받아볼래",
+    "intent": "DOWNLOAD_ARTIFACT",
+    "artifact_type": "UNITTEST_SPEC",
+    "export_format": "xlsx",
+    "missing_slots": ["artifact_id"],
+    "polarity": "positive"
+  },
+  {
+    "id": "input.schedule.this_week.001",
+    "text": "이번주 할 일 알려줘",
+    "intent": "SCHEDULE_QUERY",
+    "schedule_action": "SHOW_THIS_WEEK_TODOS",
+    "time_range": "THIS_WEEK",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.schedule.next_week.001",
+    "text": "다음주 일정 알려줘",
+    "intent": "SCHEDULE_QUERY",
+    "schedule_action": "SHOW_NEXT_WEEK_TODOS",
+    "time_range": "NEXT_WEEK",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.todo.complete.001",
+    "text": "로그인 API 완료했어",
+    "intent": "COMPLETE_TODO",
+    "schedule_action": "COMPLETE_TODO",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.todo.status.001",
+    "text": "로그인 API BLOCKED로 바꿔줘",
+    "intent": "UPDATE_TODO_STATUS",
+    "schedule_action": "UPDATE_TODO_STATUS",
+    "status": "BLOCKED",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.pending.confirm.001",
+    "text": "확인 진행해",
+    "intent": "CONFIRM_PENDING_ACTION",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.pending.cancel.001",
+    "text": "취소 취소",
+    "intent": "CANCEL_PENDING_ACTION",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.pending.confirm.002",
+    "text": "방금거 진행",
+    "intent": "CONFIRM_PENDING_ACTION",
+    "polarity": "positive"
+  },
+  {
+    "id": "input.schedule_table.generate.001",
+    "text": "일정표 만들어줘",
+    "intent": "GENERATE_ARTIFACT",
+    "artifact_type": "WBS",
+    "polarity": "positive"
+  },
+  {
+    "id": "negative.meeting.summary.001",
+    "text": "회의록 정리해줘",
+    "intent": "GENERAL_QA",
+    "topic": "MEETING_NOTES",
+    "negative_assertions": ["EXTRACT_ACTION_ITEMS"],
+    "polarity": "negative"
+  },
+  {
+    "id": "negative.meeting.summary.002",
+    "text": "회의록 요약해줘",
+    "intent": "GENERAL_QA",
+    "topic": "MEETING_NOTES",
+    "negative_assertions": ["EXTRACT_ACTION_ITEMS"],
+    "polarity": "negative"
+  },
+  {
+    "id": "negative.schedule.question.001",
+    "text": "일정이 뭐야?",
+    "intent": "GENERAL_QA",
+    "negative_assertions": ["SCHEDULE_QUERY", "GENERATE_ARTIFACT"],
+    "polarity": "negative"
+  },
+  {
+    "id": "negative.schedule.ambiguous.001",
+    "text": "일정 만들어줘",
+    "intent": "CLARIFICATION_REQUIRED",
+    "polarity": "negative"
+  },
+  {
+    "id": "negative.requirement.question.001",
+    "text": "요구사항 정의서가 뭐야?",
+    "intent": "GENERAL_QA",
+    "topic": "REQUIREMENT_SPEC",
+    "negative_assertions": ["GENERATE_ARTIFACT"],
+    "polarity": "negative"
+  },
+  {
+    "id": "negative.test.question.001",
+    "text": "테스트가 뭐야?",
+    "intent": "GENERAL_QA",
+    "negative_assertions": ["GENERATE_ARTIFACT"],
+    "polarity": "negative"
+  }
+]
