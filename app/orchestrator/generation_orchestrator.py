@@ -1,6 +1,7 @@
 # EN: Orchestrates source-document based artifact generation flows.
 # KO: 선행 문서 기반 후행 산출물 생성 흐름을 제어합니다.
 
+import inspect
 from typing import Any
 from time import perf_counter
 from uuid import uuid4
@@ -24,6 +25,98 @@ from util.agent_generation_utils import extract_requirement_atoms_from_pipe_tabl
 
 logger = get_logger(__name__)
 LLM_LOG_PREFIX = "!!! LLM"
+
+
+class AgentRuntimeInvoker:
+    """Per-request runtime boundary exposed to core agents."""
+
+    def __init__(
+        self,
+        *,
+        llm=llm_service,
+        progress_reporter: Any = None,
+    ) -> None:
+        self.llm = llm
+        self.progress_reporter = progress_reporter
+
+    async def invoke_agent_llm(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_index: int | None = None,
+        call_total: int | None = None,
+        call_label: str | None = None,
+    ) -> str:
+        progress_text = (
+            f"{call_index}/{call_total}"
+            if call_index is not None and call_total is not None
+            else "n/a"
+        )
+        logger.info(
+            f"[Orchestrator] {LLM_LOG_PREFIX} invoke request | "
+            f"label={call_label or 'n/a'} | progress={progress_text} | "
+            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)}"
+        )
+        logger.debug(
+            f"[Orchestrator] {LLM_LOG_PREFIX} user prompt preview | "
+            f"text={user_prompt[:300]}"
+        )
+        response = await self.llm.invoke(
+            user_prompt,
+            system=system_prompt,
+            call_index=call_index,
+            call_total=call_total,
+            call_label=call_label,
+        )
+        logger.info(
+            f"[Orchestrator] {LLM_LOG_PREFIX} invoke response | "
+            f"label={call_label or 'n/a'} | progress={progress_text} | "
+            f"response_chars={len(response)}"
+        )
+        logger.debug(
+            f"[Orchestrator] {LLM_LOG_PREFIX} response preview | "
+            f"text={response[:300]}"
+        )
+        await self._report_progress(
+            current=call_index,
+            total=call_total,
+            label=call_label,
+        )
+        return response
+
+    def extract_requirement_atoms_from_pipe_tables(
+        self,
+        documents: list[dict],
+    ) -> list[dict]:
+        return extract_requirement_atoms_from_pipe_tables(documents)
+
+    async def _report_progress(
+        self,
+        *,
+        current: int | None,
+        total: int | None,
+        label: str | None,
+    ) -> None:
+        if self.progress_reporter is None:
+            return
+        current_value = int(current or 0)
+        total_value = int(total or 0)
+        progress = (
+            0
+            if total_value <= 0
+            else int(round(current_value * 100 / total_value))
+        )
+        payload = {
+            "current": current_value,
+            "total": total_value,
+            "progress": progress,
+            "progress_text": f"{current_value}/{total_value}",
+            "label": label or "",
+        }
+        result = self.progress_reporter(payload)
+        if inspect.isawaitable(result):
+            await result
 
 
 class GenerationOrchestrator:
@@ -55,6 +148,7 @@ class GenerationOrchestrator:
         retrieval_service: Any = None,
         template_service: Any = None,
         document_service: Any = None,
+        progress_reporter: Any = None,
     ) -> GenerationResponse:
         return await self.generate_artifact(
             request,
@@ -62,6 +156,7 @@ class GenerationOrchestrator:
             retrieval_service=retrieval_service,
             template_service=template_service,
             document_service=document_service,
+            progress_reporter=progress_reporter,
         )
 
     async def generate_artifact(
@@ -71,6 +166,7 @@ class GenerationOrchestrator:
         retrieval_service: Any = None,
         template_service: Any = None,
         document_service: Any = None,
+        progress_reporter: Any = None,
     ) -> GenerationResponse:
         generation_flow = request.generation_flow()
         logger.info(
@@ -92,6 +188,7 @@ class GenerationOrchestrator:
                 retrieval_service=retrieval_service,
                 template_service=template_service,
                 document_service=document_service,
+                progress_reporter=progress_reporter,
             )
 
         # TODO: Wire Action Items agent into this dispatch table when it becomes
@@ -109,9 +206,15 @@ class GenerationOrchestrator:
         retrieval_service: Any = None,
         template_service: Any = None,
         document_service: Any = None,
+        progress_reporter: Any = None,
     ) -> GenerationResponse:
         started_at = perf_counter()
         generation_flow = request.generation_flow()
+        request_context = dict(request.context or {})
+        progress_reporter = progress_reporter or request_context.pop(
+            "generation_progress_reporter",
+            None,
+        )
         logger.info(
             "[Orchestrator] generate_artifact start | "
             f"project_id={request.project_id} | "
@@ -201,12 +304,15 @@ class GenerationOrchestrator:
                 "created_by": request.created_by,
                 "user_id": request.user_id,
                 "permission_scope": request.permission_scope,
-                "generation_orchestrator": self,
-                **(request.context or {}),
+                **request_context,
             },
         )
         agent_started_at = perf_counter()
-        agent_response = await generator.generate(agent_request)
+        runtime_generator = self._generator_with_runtime(
+            generator,
+            AgentRuntimeInvoker(progress_reporter=progress_reporter),
+        )
+        agent_response = await runtime_generator.generate(agent_request)
         logger.info(
             "[Orchestrator] agent generation done | "
             f"project_id={request.project_id} | "
@@ -216,7 +322,10 @@ class GenerationOrchestrator:
         if not agent_response.success:
             return self._failed_response(request, agent_response)
 
-        validated_response = await self.validator.validate(agent_response.result)
+        validated_response = await self._validate_agent_result(
+            agent_response.result,
+            expected_artifact_type=generation_flow.target_artifact_type,
+        )
         if not validated_response.success:
             return self._failed_response(request, validated_response)
 
@@ -295,47 +404,14 @@ class GenerationOrchestrator:
         call_total: int | None = None,
         call_label: str | None = None,
     ) -> str:
-        """Delegates agent LLM execution through the orchestrator boundary.
-
-        Core agents must not instantiate Bedrock or other model clients directly.
-        The current backend LLM service accepts a single prompt, so the system
-        and user prompts are composed here.
-        """
-        prompt = (
-            f"System instruction:\n{system_prompt.strip()}\n\n"
-            f"User input:\n{user_prompt.strip()}"
-        )
-        progress_text = (
-            f"{call_index}/{call_total}"
-            if call_index is not None and call_total is not None
-            else "n/a"
-        )
-        logger.info(
-            f"[Orchestrator] {LLM_LOG_PREFIX} invoke request | "
-            f"label={call_label or 'n/a'} | progress={progress_text} | "
-            f"system_chars={len(system_prompt)} | user_chars={len(user_prompt)} | "
-            f"prompt_chars={len(prompt)}"
-        )
-        logger.debug(
-            f"[Orchestrator] {LLM_LOG_PREFIX} prompt preview | "
-            f"text={prompt[:300]}"
-        )
-        response = await llm_service.invoke(
-            prompt,
+        """Delegates agent LLM execution through the orchestrator boundary."""
+        return await AgentRuntimeInvoker().invoke_agent_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             call_index=call_index,
             call_total=call_total,
             call_label=call_label,
         )
-        logger.info(
-            f"[Orchestrator] {LLM_LOG_PREFIX} invoke response | "
-            f"label={call_label or 'n/a'} | progress={progress_text} | "
-            f"response_chars={len(response)}"
-        )
-        logger.debug(
-            f"[Orchestrator] {LLM_LOG_PREFIX} response preview | "
-            f"text={response[:300]}"
-        )
-        return response
 
     def extract_requirement_atoms_from_pipe_tables(
         self,
@@ -343,6 +419,25 @@ class GenerationOrchestrator:
     ) -> list[dict]:
         """Expose table extraction through the orchestrator boundary."""
         return extract_requirement_atoms_from_pipe_tables(documents)
+
+    def _generator_with_runtime(self, generator: Any, runtime: AgentRuntimeInvoker):
+        if hasattr(generator, "with_model_invoker"):
+            return generator.with_model_invoker(runtime)
+        return generator
+
+    async def _validate_agent_result(
+        self,
+        result: Any,
+        *,
+        expected_artifact_type: ArtifactType,
+    ) -> AgentResponse:
+        try:
+            return await self.validator.validate(
+                result,
+                expected_artifact_type=expected_artifact_type,
+            )
+        except TypeError:
+            return await self.validator.validate(result)
 
     async def search_agent_context(
         self,

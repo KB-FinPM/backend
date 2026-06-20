@@ -133,10 +133,7 @@ async def _execute_generation_action(
                 result_json=current_result,
             )
 
-        generation_request.context = {
-            "generation_progress_reporter": _report_progress,
-            "action_id": action.action_id,
-        }
+        generation_request.context = {"action_id": action.action_id}
 
         await conversation_repository.update_action_status(
             project_id=action.project_id,
@@ -160,4 +157,5 @@ async def _execute_generation_action(
             retrieval_service=retrieval_service,
             template_service=template_service,
             document_service=document_service,
+            progress_reporter=_report_progress,
         )

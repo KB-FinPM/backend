@@ -65,7 +65,7 @@ async def test_document_ingestion_orchestrator_indexes_supported_text(
 
 
 @pytest.mark.anyio
-async def test_document_ingestion_orchestrator_keeps_unsupported_file_uploaded(
+async def test_document_ingestion_orchestrator_marks_unsupported_file_failed(
     session_factory,
 ) -> None:
     async with session_factory() as session:
@@ -86,7 +86,7 @@ async def test_document_ingestion_orchestrator_keeps_unsupported_file_uploaded(
             document_id="DOC-001",
         )
 
-    assert document.status == DocumentStatus.UPLOADED
+    assert document.status == DocumentStatus.FAILED
     assert chunks == []
 
 

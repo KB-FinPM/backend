@@ -107,7 +107,6 @@ class GenerationService:
         if target_artifact_type == ArtifactType.SCREEN_DESIGN:
             return [
                 DocumentType.REQUIREMENT_SPEC,
-                DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION,
             ]
         required_source_type = self.required_source_type_for(target_artifact_type)
         return [required_source_type] if required_source_type is not None else []
@@ -205,6 +204,7 @@ class GenerationService:
         retrieval_service: Any = None,
         template_service: Any = None,
         document_service: Any = None,
+        progress_reporter: Any = None,
     ) -> GenerationResponse:
         logger.info(
             f"!!! GenerationService generate_requirement | project_id={request.project_id} | "
@@ -214,13 +214,15 @@ class GenerationService:
         )
         started_at = perf_counter()
         try:
-            return await self.orchestrator.generate_requirement(
-                request,
-                artifact_service=artifact_service,
-                retrieval_service=retrieval_service,
-                template_service=template_service,
-                document_service=document_service,
-            )
+            kwargs = {
+                "artifact_service": artifact_service,
+                "retrieval_service": retrieval_service,
+                "template_service": template_service,
+                "document_service": document_service,
+            }
+            if progress_reporter is not None:
+                kwargs["progress_reporter"] = progress_reporter
+            return await self.orchestrator.generate_requirement(request, **kwargs)
         finally:
             elapsed_ms = int((perf_counter() - started_at) * 1000)
             logger.info(
@@ -236,6 +238,7 @@ class GenerationService:
         retrieval_service: Any = None,
         template_service: Any = None,
         document_service: Any = None,
+        progress_reporter: Any = None,
     ) -> GenerationResponse:
         logger.info(
             f"!!! GenerationService generate_artifact | project_id={request.project_id} | "
@@ -245,13 +248,15 @@ class GenerationService:
         )
         started_at = perf_counter()
         try:
-            return await self.orchestrator.generate_artifact(
-                request,
-                artifact_service=artifact_service,
-                retrieval_service=retrieval_service,
-                template_service=template_service,
-                document_service=document_service,
-            )
+            kwargs = {
+                "artifact_service": artifact_service,
+                "retrieval_service": retrieval_service,
+                "template_service": template_service,
+                "document_service": document_service,
+            }
+            if progress_reporter is not None:
+                kwargs["progress_reporter"] = progress_reporter
+            return await self.orchestrator.generate_artifact(request, **kwargs)
         finally:
             elapsed_ms = int((perf_counter() - started_at) * 1000)
             logger.info(

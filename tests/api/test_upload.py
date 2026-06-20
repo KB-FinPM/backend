@@ -186,6 +186,28 @@ def test_upload_document_rejects_empty_file(
     assert body["error_code"] == "EMPTY_UPLOAD_FILE"
 
 
+def test_upload_document_rejects_oversized_file(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("app.api.upload.settings.UPLOAD_MAX_BYTES", 4)
+    monkeypatch.setattr("app.api.upload.settings.UPLOAD_READ_CHUNK_BYTES", 2)
+
+    response = client.post(
+        "/api/upload",
+        data={
+            "project_id": "PRJ-001",
+            "document_type": "REQUIREMENT_SPEC",
+        },
+        files={"file": ("requirements.txt", b"12345", "text/plain")},
+    )
+
+    assert response.status_code == 413
+    body = response.json()
+    assert body["success"] is False
+    assert body["error_code"] == "UPLOAD_FILE_TOO_LARGE"
+
+
 def test_upload_document_returns_422_when_input_normalization_fails(
     client: TestClient,
 ) -> None:

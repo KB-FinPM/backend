@@ -2,8 +2,10 @@
 
 from fastapi import APIRouter, Body, Depends, Query, status
 
+from app.core.auth import CurrentUser, assert_project_access
 from app.core.exceptions import ApiError
 from app.dependencies import (
+    get_current_user,
     get_chat_service,
     get_conversation_repository,
     get_output_orchestrator,
@@ -39,9 +41,13 @@ CHAT_ERROR_RESPONSES = {
 )
 async def create_chat_message(
     request: ChatMessageRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
     chat_service: ChatService = Depends(get_chat_service),
 ) -> ChatResponse:
     """Handle one chat message and optionally prepare or execute PM actions."""
+    permissions = assert_project_access(current_user, request.project_id, "chat:write")
+    request.user_id = current_user.user_id
+    request.permission_scope = permissions.scopes
     return await chat_service.handle_message(request)
 
 
@@ -53,11 +59,13 @@ async def create_chat_message(
 async def get_chat_action_status(
     action_id: str,
     project_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     conversation_repository: ConversationRepository = Depends(
         get_conversation_repository
     ),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
 ) -> ChatActionStatusResponse:
+    assert_project_access(current_user, project_id, "project:read")
     action = await conversation_repository.get_action(
         project_id=project_id,
         action_id=action_id,

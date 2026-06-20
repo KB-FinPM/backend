@@ -153,11 +153,13 @@ async def test_requirement_agent_batches_table_candidates() -> None:
         for index in range(1, 6)
     ]
     orchestrator = FakeRequirementOrchestrator(atoms)
-    agent = RequirementAgent()
+    agent = RequirementAgent(
+        model_invoker=orchestrator,
+        requirement_atom_extractor=orchestrator.extract_requirement_atoms_from_pipe_tables,
+    )
     request = AgentRequest(
         project_id="PRJ-001",
         documents=[{"chunk_id": "CHUNK-001", "document_id": "DOC-001", "text": "dummy"}],
-        context={"generation_orchestrator": orchestrator},
     )
 
     response = await agent.generate(request)
@@ -171,7 +173,10 @@ async def test_requirement_agent_batches_table_candidates() -> None:
 @pytest.mark.anyio
 async def test_requirement_agent_includes_meeting_note_context() -> None:
     orchestrator = CapturingRequirementOrchestrator([])
-    agent = RequirementAgent()
+    agent = RequirementAgent(
+        model_invoker=orchestrator,
+        requirement_atom_extractor=orchestrator.extract_requirement_atoms_from_pipe_tables,
+    )
     request = AgentRequest(
         project_id="PRJ-001",
         documents=[
@@ -194,7 +199,6 @@ async def test_requirement_agent_includes_meeting_note_context() -> None:
                 },
             },
         ],
-        context={"generation_orchestrator": orchestrator},
     )
 
     response = await agent.generate(request)

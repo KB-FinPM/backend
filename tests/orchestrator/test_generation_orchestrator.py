@@ -1,6 +1,8 @@
 # EN: Tests for generation orchestrator flow coordination.
 # KO: 산출물 생성 오케스트레이터의 흐름 제어를 검증하는 테스트입니다.
 
+import json
+
 import pytest
 
 from app.orchestrator.generation_orchestrator import GenerationOrchestrator
@@ -79,7 +81,7 @@ class StubValidatorAgent:
         self.success = success
         self.received_result: dict | None = None
 
-    async def validate(self, result: dict) -> AgentResponse:
+    async def validate(self, result: dict, *, expected_artifact_type=None) -> AgentResponse:
         self.calls.append("validator")
         self.received_result = result
         if not self.success:
@@ -201,9 +203,8 @@ async def test_generate_requirement_calls_retrieval_agent_and_validator() -> Non
         "project:read",
         "artifact:generate",
     ]
-    assert requirement.received_request.context["generation_orchestrator"] is (
-        orchestrator
-    )
+    assert "generation_orchestrator" not in requirement.received_request.context
+    json.dumps(requirement.received_request.context)
     assert validator.received_result == {"requirements": [{"id": "RQ-001"}]}
 
 
@@ -320,9 +321,7 @@ async def test_generate_artifact_dispatches_unit_test_agent_adapter() -> None:
     assert unit_test_agent.received_request.context["target_artifact_type"] == (
         "UNITTEST_SPEC"
     )
-    assert unit_test_agent.received_request.context["generation_orchestrator"] is (
-        orchestrator
-    )
+    assert "generation_orchestrator" not in unit_test_agent.received_request.context
 
 
 @pytest.mark.anyio

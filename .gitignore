@@ -126,15 +126,21 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env.example
 .env
 .env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Project generated/runtime files
+*.sqlite
+*.sqlite3
+.mock_s3/
+node_modules/
 
 # Spyder project settings
 .spyderproject

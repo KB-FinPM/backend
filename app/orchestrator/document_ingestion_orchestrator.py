@@ -67,7 +67,10 @@ class DocumentIngestionOrchestrator:
                 )
             )
             if not parsed_response.success:
-                return document
+                return await self._mark_failed(
+                    document_repository=document_repository,
+                    document=document,
+                )
             parsed_context = parsed_response.structured_context
 
         parsed_text = str(parsed_context.get("text", ""))
@@ -197,7 +200,10 @@ class DocumentIngestionOrchestrator:
         else:
             chunks = split_text_into_chunks(parsed_text)
             if not chunks:
-                return document
+                return await self._mark_failed(
+                    document_repository=document_repository,
+                    document=document,
+                )
 
             embeddings = await self.embedding_service.embed_texts(
                 [chunk.text for chunk in chunks]
@@ -228,6 +234,19 @@ class DocumentIngestionOrchestrator:
             status=DocumentStatus.INDEXED,
         )
         return indexed_document or document
+
+    async def _mark_failed(
+        self,
+        *,
+        document_repository: DocumentRepository,
+        document: DocumentMetadata,
+    ) -> DocumentMetadata:
+        failed_document = await document_repository.update_document_status(
+            project_id=document.project_id,
+            document_id=document.document_id,
+            status=DocumentStatus.FAILED,
+        )
+        return failed_document or document
 
 
 document_ingestion_orchestrator = DocumentIngestionOrchestrator()

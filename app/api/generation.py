@@ -3,9 +3,11 @@
 
 from fastapi import APIRouter, Body, Depends, status
 
+from app.core.auth import CurrentUser, assert_project_access
 from app.core.exceptions import ApiError
 from app.core.logger import get_logger
 from app.dependencies import (
+    get_current_user,
     get_artifact_service,
     get_document_service,
     get_generation_service,
@@ -119,6 +121,7 @@ async def generate_requirement(
     project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> GenerationResponse:
     """Generate a requirement artifact through the PM agent orchestrator."""
     logger.info(f"generate_requirement | project_id={request.project_id}")
@@ -133,6 +136,7 @@ async def generate_requirement(
         project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
+        current_user=current_user,
     )
 
 
@@ -151,6 +155,7 @@ async def generate_wbs(
     project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> GenerationResponse:
     """Generate a WBS artifact through the PM agent orchestrator."""
     logger.info(f"generate_wbs | project_id={request.project_id}")
@@ -169,6 +174,7 @@ async def generate_wbs(
         project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
+        current_user=current_user,
     )
 
 
@@ -190,6 +196,7 @@ async def generate_screen_design(
     project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> GenerationResponse:
     """Generate a screen design artifact through the PM agent orchestrator."""
     logger.info(f"generate_screen_design | project_id={request.project_id}")
@@ -208,6 +215,7 @@ async def generate_screen_design(
         project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
+        current_user=current_user,
     )
 
 
@@ -229,6 +237,7 @@ async def generate_unittest(
     project_service: ProjectService = Depends(get_project_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> GenerationResponse:
     """Generate a unit test case artifact through the PM agent orchestrator."""
     logger.info(f"generate_unittest | project_id={request.project_id}")
@@ -247,6 +256,7 @@ async def generate_unittest(
         project_service=project_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
+        current_user=current_user,
     )
 
 
@@ -261,7 +271,15 @@ async def _generate_artifact_response(
     project_service: ProjectService,
     input_orchestrator: InputOrchestrator,
     output_orchestrator: OutputOrchestrator,
+    current_user: CurrentUser,
 ) -> GenerationResponse:
+    permissions = assert_project_access(
+        current_user,
+        request.project_id,
+        "artifact:generate",
+    )
+    request.user_id = current_user.user_id
+    request.permission_scope = permissions.scopes
     await _hydrate_project_metadata(request, project_service)
     await _validate_source_documents(
         request=request,

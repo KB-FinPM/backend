@@ -1,9 +1,13 @@
 """Shared SQLAlchemy column types for PostgreSQL-first models."""
 
-from pgvector.sqlalchemy import Vector as PGVector
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.types import TypeDecorator, UserDefinedType
+from sqlalchemy.types import TypeDecorator
+
+try:
+    from pgvector.sqlalchemy import Vector as PGVector
+except ImportError:  # pragma: no cover - depends on local test environment.
+    PGVector = None
 
 
 JSONBType = JSON().with_variant(JSONB, "postgresql")
@@ -12,7 +16,8 @@ JSONBType = JSON().with_variant(JSONB, "postgresql")
 class Vector(TypeDecorator):
     cache_ok = True
     impl = JSON
-    comparator_factory = PGVector.comparator_factory
+    if PGVector is not None:
+        comparator_factory = PGVector.comparator_factory
 
     def __init__(self, dimensions: int) -> None:
         super().__init__()
@@ -20,6 +25,11 @@ class Vector(TypeDecorator):
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "postgresql":
+            if PGVector is None:
+                raise RuntimeError(
+                    "pgvector is required for PostgreSQL vector columns. "
+                    "Install the pgvector package or use SQLite for local tests."
+                )
             return dialect.type_descriptor(PGVector(self.dimensions))
         return dialect.type_descriptor(JSON())
 

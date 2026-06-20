@@ -53,6 +53,12 @@ class UnitTestAgent:
 
     AGENT_NAME = "UnitTestAgent"
 
+    def __init__(self, *, model_invoker=None) -> None:
+        self.model_invoker = model_invoker
+
+    def with_model_invoker(self, model_invoker) -> "UnitTestAgent":
+        return UnitTestAgent(model_invoker=model_invoker)
+
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(
             f"[{self.AGENT_NAME}] generate start | project_id={request.project_id}"
@@ -107,8 +113,8 @@ class UnitTestAgent:
         request: AgentRequest,
         requirements: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        orchestrator = (request.context or {}).get("generation_orchestrator")
-        if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
+        model_invoker = self.model_invoker
+        if model_invoker is None or not hasattr(model_invoker, "invoke_agent_llm"):
             return []
 
         prompt = f"""
@@ -118,7 +124,7 @@ Requirement summary:
 {json.dumps(self._build_requirement_digest(requirements), ensure_ascii=False, default=str)}
 """.strip()
 
-        llm_result = await orchestrator.invoke_agent_llm(
+        llm_result = await model_invoker.invoke_agent_llm(
             system_prompt=UNIT_TEST_LLM_SYSTEM_PROMPT,
             user_prompt=prompt,
             call_index=1,
