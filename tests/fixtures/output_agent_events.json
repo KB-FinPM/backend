@@ -1,0 +1,158 @@
+[
+  {
+    "event": "CONFIRMATION_REQUIRED",
+    "result_json": {
+      "event": "CONFIRMATION_REQUIRED",
+      "pending_action": {
+        "action_id": "ACT-001",
+        "action_type": "GENERATE_WBS",
+        "payload": {
+          "target_artifact_type": "WBS",
+          "source_document_ids": ["DOC-REQ-001"]
+        }
+      }
+    },
+    "expected_state": "WAITING_CONFIRMATION"
+  },
+  {
+    "event": "ACTION_STARTED",
+    "result_json": {
+      "event": "ACTION_STARTED",
+      "action_id": "ACT-001",
+      "generation_progress": {
+        "progress": 45,
+        "stage": "CORE_AGENT_EXTRACTION",
+        "stage_label": "Core Agent 요구사항 추출 중",
+        "sub_progress": {
+          "type": "SOURCE_CHUNK_PROCESSING",
+          "label": "원본 문서 chunk 처리",
+          "current": 137,
+          "total": 236,
+          "unit": "chunks"
+        }
+      }
+    },
+    "expected_state": "EXECUTING_ACTION"
+  },
+  {
+    "event": "ACTION_COMPLETED",
+    "result_json": {
+      "event": "ACTION_COMPLETED",
+      "result": {
+        "artifact": {
+          "artifact_id": "ART-WBS-001",
+          "artifact_type": "WBS",
+          "name": "WBS"
+        },
+        "exported_file": {
+          "file_name": "WBS.xlsx",
+          "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        }
+      }
+    },
+    "expected_state": "COMPLETED"
+  },
+  {
+    "event": "ACTION_FAILED",
+    "result_json": {
+      "event": "ACTION_FAILED",
+      "error": "source document not found",
+      "generation_progress": {
+        "progress": 45,
+        "stage": "CORE_AGENT_EXTRACTION",
+        "batch_progress": {
+          "type": "LLM_BATCH",
+          "label": "LLM batch 처리",
+          "current": 15,
+          "total": 30,
+          "unit": "batches"
+        }
+      }
+    },
+    "expected_state": "FAILED"
+  },
+  {
+    "event": "CLARIFICATION_REQUIRED",
+    "result_json": {
+      "event": "CLARIFICATION_REQUIRED",
+      "question": "어떤 산출물을 만들까요?"
+    },
+    "expected_state": "WAITING_REQUIRED_INFO"
+  },
+  {
+    "event": "REQUIRED_INFO",
+    "result_json": {
+      "event": "REQUIRED_INFO",
+      "target_artifact_type": "REQUIREMENT_SPEC"
+    },
+    "expected_state": "WAITING_REQUIRED_INFO"
+  },
+  {
+    "event": "GENERAL_QA",
+    "result_json": {
+      "event": "GENERAL_QA",
+      "topic": "WBS",
+      "query": "WBS가 뭐야?"
+    },
+    "expected_state": "IDLE"
+  },
+  {
+    "event": "SCHEDULE_RESULT",
+    "result_json": {
+      "event": "SCHEDULE_RESULT",
+      "result": {
+        "artifact_type": "SCHEDULE_TODO_LIST",
+        "action": "SHOW_THIS_WEEK_TODOS",
+        "status": "SUCCESS",
+        "todos": []
+      }
+    },
+    "expected_state": "COMPLETED"
+  },
+  {
+    "event": "TODO_COMPLETED",
+    "result_json": {
+      "event": "TODO_COMPLETED",
+      "result": {
+        "todos": [
+          {
+            "todo_id": "TODO-001",
+            "title": "로그인 API 검토",
+            "status": "DONE"
+          }
+        ]
+      }
+    },
+    "expected_state": "COMPLETED"
+  },
+  {
+    "event": "ARTIFACT_DOWNLOAD_READY",
+    "result_json": {
+      "event": "ARTIFACT_DOWNLOAD_READY",
+      "artifact": {
+        "artifact_id": "ART-REQ-001",
+        "artifact_type": "REQUIREMENT_SPEC",
+        "name": "요구사항 명세서"
+      },
+      "file_name": "요구사항_명세서.xlsx",
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "download_url": "/api/projects/PRJ-001/artifacts/ART-REQ-001/download"
+    },
+    "expected_state": "COMPLETED"
+  },
+  {
+    "event": "ARTIFACT_DOWNLOAD_REQUIRED_INFO",
+    "result_json": {
+      "event": "ARTIFACT_DOWNLOAD_REQUIRED_INFO",
+      "missing_fields": ["artifact_id"]
+    },
+    "expected_state": "WAITING_REQUIRED_INFO"
+  },
+  {
+    "event": "UNKNOWN_EVENT",
+    "result_json": {
+      "event": "UNKNOWN_EVENT"
+    },
+    "expected_state": "IDLE"
+  }
+]

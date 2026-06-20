@@ -37,6 +37,10 @@ class ChatOutputAgent:
             return self._started_payload(result_json)
         if event == "ACTION_COMPLETED":
             return self._completed_payload(result_json)
+        if event == "ARTIFACT_DOWNLOAD_READY":
+            return self._artifact_download_ready_payload(result_json)
+        if event == "ARTIFACT_DOWNLOAD_REQUIRED_INFO":
+            return self._artifact_download_required_info_payload(result_json)
         if event == "TODO_COMPLETED":
             return self._todo_completed_payload(result_json)
         if event == "SCHEDULE_RESULT":
@@ -86,7 +90,7 @@ class ChatOutputAgent:
 
         return {
             "state": ChatState.WAITING_CONFIRMATION.value,
-            "message": message,
+            "message": self._with_large_document_message(message, payload),
             "pending_action": action,
             "suggested_actions": [
                 {
@@ -101,6 +105,28 @@ class ChatOutputAgent:
                 },
             ],
         }
+
+    def _with_large_document_message(
+        self,
+        message: str,
+        payload: dict[str, Any],
+    ) -> str:
+        large_document_message = self._large_document_message(
+            payload.get("large_document_hint") or {}
+        )
+        if not large_document_message:
+            return message
+        return f"{message}\n{large_document_message}"
+
+    def _large_document_message(self, hint: dict[str, Any]) -> str:
+        if not isinstance(hint, dict) or not hint.get("is_large_document"):
+            return ""
+        chunk_count = hint.get("chunk_count")
+        chunk_text = f" 예상 chunk 수: {chunk_count}." if chunk_count else ""
+        return (
+            "문서가 큰 경우 chunk/batch 처리에 시간이 걸릴 수 있습니다."
+            f"{chunk_text}"
+        )
 
     def _completed_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         generation_result = result_json.get("result") or {}
@@ -126,6 +152,52 @@ class ChatOutputAgent:
             "recommended_prompts": self._default_recommended_prompts(),
         }
 
+    def _artifact_download_ready_payload(
+        self,
+        result_json: dict[str, Any],
+    ) -> dict[str, Any]:
+        artifact = result_json.get("artifact") or {}
+        exported_file = {
+            "file_name": result_json.get("file_name"),
+            "content_type": result_json.get("content_type"),
+            "download_url": result_json.get("download_url"),
+        }
+        artifact_type = artifact.get("artifact_type")
+        artifact_label = self._artifact_label(artifact_type)
+        return {
+            "state": ChatState.COMPLETED.value,
+            "message": f"{artifact_label} 다운로드를 준비했습니다.",
+            "result": {
+                "artifact_id": artifact.get("artifact_id"),
+                "artifact_type": artifact_type,
+                "filename": result_json.get("file_name"),
+            },
+            "artifact_refs": self._artifact_refs_payload(artifact),
+            "download_files": self._download_files_payload(
+                artifact=artifact,
+                exported_file=exported_file,
+            ),
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
+
+    def _artifact_download_required_info_payload(
+        self,
+        result_json: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "state": ChatState.WAITING_REQUIRED_INFO.value,
+            "message": "다운로드할 산출물을 선택해 주세요.",
+            "result": {
+                "missing_fields": result_json.get("missing_fields") or ["artifact_id"],
+                "available_artifacts": result_json.get("available_artifacts") or [],
+            },
+            "download_files": [],
+            "artifact_refs": result_json.get("available_artifacts") or [],
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
+
     def _started_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         action = result_json.get("pending_action") or {}
         action_id = action.get("action_id") or result_json.get("action_id")
@@ -137,6 +209,9 @@ class ChatOutputAgent:
                 "action_id": action_id,
                 "job_id": action_id,
                 "status": "EXECUTING",
+                "generation_progress": self._safe_progress_payload(
+                    result_json.get("generation_progress")
+                ),
             },
             "suggested_actions": [],
             "recommended_prompts": [],
@@ -147,7 +222,12 @@ class ChatOutputAgent:
         return {
             "state": ChatState.FAILED.value,
             "message": self._user_error_message(str(error)),
-            "result": {"error": error},
+            "result": {
+                "error": error,
+                "generation_progress": self._safe_progress_payload(
+                    result_json.get("generation_progress")
+                ),
+            },
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
@@ -283,12 +363,7 @@ class ChatOutputAgent:
                 upload_request = {
                     "required": True,
                     "label": "WBS 업로드",
-                    "acceptedTypes": [
-                        ".xlsx",
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        ".xls",
-                        "application/vnd.ms-excel",
-                    ],
+                    "acceptedTypes": [".xlsx"],
                     "documentType": "WBS",
                     "originalMessage": "WBS 기준으로 일정 알려줘",
                 }
@@ -300,14 +375,14 @@ class ChatOutputAgent:
                 ]
             else:
                 message = (
-                    "WBS 생성을 위해 기준 문서가 필요합니다. 요구사항 정의서를 업로드하거나 "
-                    "먼저 생성해 주세요."
+                    "현재 프로젝트에서 WBS를 찾지 못했습니다. WBS를 업로드하거나, "
+                    "요구사항 정의서를 먼저 생성한 뒤 WBS를 생성해 주세요."
                 )
                 upload_request = {
                     "required": True,
-                    "label": "요구사항 정의서 업로드",
-                    "acceptedTypes": self._document_upload_accept_types(),
-                    "documentType": "REQUIREMENT_SPEC",
+                    "label": "WBS 업로드",
+                    "acceptedTypes": [".xlsx"],
+                    "documentType": "WBS",
                     "originalMessage": "WBS 기준으로 일정 알려줘",
                 }
                 command_actions = [
@@ -864,13 +939,20 @@ class ChatOutputAgent:
             exported_file.get("content_type")
             or self._default_mime_type(artifact.get("artifact_type"))
         )
-        return [
-            {
-                "artifact_id": artifact_id,
-                "file_name": file_name,
-                "mime_type": mime_type,
-            }
-        ]
+        payload = {
+            "artifact_id": artifact_id,
+            "artifact_type": artifact.get("artifact_type"),
+            "file_name": file_name,
+            "mime_type": mime_type,
+            "content_type": mime_type,
+        }
+        download_url = exported_file.get("download_url")
+        if download_url:
+            payload["download_url"] = download_url
+        return [payload]
+
+    def _safe_progress_payload(self, progress: Any) -> dict[str, Any]:
+        return dict(progress) if isinstance(progress, dict) else {}
 
     def _default_file_name(self, artifact_type: str | None) -> str:
         if artifact_type == "REQUIREMENT_SPEC":

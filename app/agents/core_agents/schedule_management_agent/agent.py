@@ -31,9 +31,11 @@ class ScheduleManagementAgent:
         "ASSISTANT_BRIEFING",
         "COMPARE_WEEKLY_MEETING_TODOS",
         "COMPLETE_TODO",
+        "UPDATE_TODO_STATUS",
         "UPDATE_TODO_DUE_DATE",
         "UPDATE_TODO_ASSIGNEE",
     }
+    VALID_TODO_STATUSES = ("TODO", "IN_PROGRESS", "DONE", "BLOCKED", "CANCELLED")
     ACTION_KEYWORDS = (
         "검토",
         "정리",
@@ -136,6 +138,63 @@ class ScheduleManagementAgent:
         "보류": "ON_HOLD",
         "hold": "ON_HOLD",
     }
+    KO_ACTION_KEYWORDS = (
+        "검토",
+        "정리",
+        "확인",
+        "작성",
+        "준비",
+        "진행",
+        "공유",
+        "전달",
+        "완료",
+        "수정",
+        "보완",
+        "업데이트",
+        "정의",
+        "확정",
+        "검증",
+        "리뷰",
+        "개발",
+        "테스트",
+        "배포",
+    )
+    KO_OBLIGATION_KEYWORDS = (
+        "필요",
+        "해야",
+        "하기",
+        "담당",
+        "까지",
+        "todo",
+        "TODO",
+        "할 일",
+        "액션아이템",
+    )
+    KO_TODO_TRIGGER_PHRASES = (
+        "하기로",
+        "진행한다",
+        "공유 예정",
+        "필요",
+        "다음 회의 전까지",
+        "보완 후",
+    )
+    KO_WEEKDAY_INDEX = {
+        "월요일": 0,
+        "월": 0,
+        "화요일": 1,
+        "화": 1,
+        "수요일": 2,
+        "수": 2,
+        "목요일": 3,
+        "목": 3,
+        "금요일": 4,
+        "금": 4,
+        "토요일": 5,
+        "토": 5,
+        "일요일": 6,
+        "일": 6,
+    }
+    KO_PLACEHOLDER_ASSIGNEES = {"담당자", "담당", "미정", "담당자 미정", "TBD", "tbd", "-"}
 
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(
@@ -177,6 +236,8 @@ class ScheduleManagementAgent:
                 return self._success(self._weekly_meeting_comparison_result(context))
             if action == "COMPLETE_TODO":
                 return self._success(self._complete_todo_result(context))
+            if action == "UPDATE_TODO_STATUS":
+                return self._success(self._update_todo_status_result(context))
         except (KeyError, TypeError, ValueError) as exc:
             logger.warning(
                 "[%s] schedule context fallback returned required info | action=%s | error=%s",
@@ -300,7 +361,26 @@ class ScheduleManagementAgent:
                 }
             )
 
-        return todos
+        return self._dedupe_extracted_todos(todos)
+
+    def _dedupe_extracted_todos(
+        self,
+        todos: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for todo in todos:
+            key = (
+                self._normalize_match_text(str(todo.get("title") or "")),
+                str(todo.get("assignee") or ""),
+                str(todo.get("due_date") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            todo["todo_id"] = f"TODO-TEMP-{len(deduped) + 1:03d}"
+            deduped.append(todo)
+        return deduped
 
     def _split_candidate_sentences(self, meeting_notes: str) -> list[str]:
         normalized = meeting_notes.replace("\r\n", "\n").replace("\r", "\n")
@@ -323,11 +403,18 @@ class ScheduleManagementAgent:
 
     def _is_action_candidate(self, sentence: str, current_date: date) -> bool:
         normalized = sentence.lower()
-        if any(phrase.lower() in normalized for phrase in self.TODO_TRIGGER_PHRASES):
+        if any(
+            phrase.lower() in normalized
+            for phrase in self.TODO_TRIGGER_PHRASES + self.KO_TODO_TRIGGER_PHRASES
+        ):
             return True
-        has_action_keyword = any(keyword in normalized for keyword in self.ACTION_KEYWORDS)
+        has_action_keyword = any(
+            keyword in normalized
+            for keyword in self.ACTION_KEYWORDS + self.KO_ACTION_KEYWORDS
+        )
         has_obligation = any(
-            keyword in normalized for keyword in self.OBLIGATION_KEYWORDS
+            keyword in normalized
+            for keyword in self.OBLIGATION_KEYWORDS + self.KO_OBLIGATION_KEYWORDS
         )
         due_date, due_metadata = self._extract_due_date(sentence, current_date)
         has_due_signal = bool(due_date or due_metadata.get("unparsed_due_date_text"))
@@ -337,6 +424,32 @@ class ScheduleManagementAgent:
         return has_action_keyword and (has_obligation or has_due_signal or assignee)
 
     def _extract_assignee(self, sentence: str) -> str | None:
+        explicit_korean_match = re.search(
+            r"(?:담당자|담당|owner)\s*[:：-]?\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})",
+            sentence,
+            re.IGNORECASE,
+        )
+        if explicit_korean_match:
+            candidate = explicit_korean_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
+        colon_korean_match = re.match(
+            r"^\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})\s*[:：]\s+",
+            sentence,
+        )
+        if colon_korean_match:
+            candidate = colon_korean_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
+        subject_korean_match = re.match(
+            r"^\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})(?:은|는|이|가)\s+",
+            sentence,
+        )
+        if subject_korean_match:
+            candidate = subject_korean_match.group(1).strip()
+            if not self._is_invalid_assignee(candidate):
+                return candidate
+
         explicit_match = re.search(
             r"(?:담당자?|owner)\s*[:：]?\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})",
             sentence,
@@ -364,6 +477,8 @@ class ScheduleManagementAgent:
         return None
 
     def _is_invalid_assignee(self, candidate: str) -> bool:
+        if candidate.strip() in self.KO_PLACEHOLDER_ASSIGNEES:
+            return True
         return candidate.endswith("에서") or candidate in {
             "회의",
             "미팅",
@@ -379,6 +494,10 @@ class ScheduleManagementAgent:
         sentence: str,
         current_date: date,
     ) -> tuple[str | None, dict[str, str]]:
+        korean_result = self._extract_korean_due_date(sentence, current_date)
+        if korean_result is not None:
+            return korean_result
+
         iso_match = re.search(r"(20\d{2})[-./](\d{1,2})[-./](\d{1,2})", sentence)
         if iso_match:
             year, month, day = iso_match.groups()
@@ -468,6 +587,91 @@ class ScheduleManagementAgent:
 
         return None, {}
 
+    def _extract_korean_due_date(
+        self,
+        sentence: str,
+        current_date: date,
+    ) -> tuple[str | None, dict[str, str]] | None:
+        full_date_match = re.search(
+            r"(20\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일",
+            sentence,
+        )
+        if full_date_match:
+            year, month, day = (int(part) for part in full_date_match.groups())
+            return self._safe_due_date(
+                year,
+                month,
+                day,
+                raw_text=full_date_match.group(0),
+            )
+
+        month_day_match = re.search(r"(\d{1,2})월\s*(\d{1,2})일", sentence)
+        if month_day_match:
+            month, day = (int(part) for part in month_day_match.groups())
+            return self._safe_due_date(
+                current_date.year,
+                month,
+                day,
+                raw_text=month_day_match.group(0),
+            )
+
+        if "내일" in sentence:
+            return (current_date + timedelta(days=1)).isoformat(), {"raw_text": "내일"}
+        if "오늘" in sentence:
+            return current_date.isoformat(), {"raw_text": "오늘"}
+
+        week_day_match = re.search(
+            r"((?:이번|다음)\s*주)\s*(월요일|화요일|수요일|목요일|금요일|토요일|일요일|월|화|수|목|금|토|일)",
+            sentence,
+        )
+        if week_day_match:
+            week_text, weekday_text = week_day_match.groups()
+            week_start, _ = self._week_bounds(current_date)
+            if "다음" in week_text:
+                week_start += timedelta(days=7)
+            weekday_index = self.KO_WEEKDAY_INDEX[weekday_text]
+            return (
+                (week_start + timedelta(days=weekday_index)).isoformat(),
+                {"raw_text": week_day_match.group(0)},
+            )
+
+        if "이번 주까지" in sentence or "이번주까지" in sentence:
+            return self._week_bounds(current_date)[1].isoformat(), {
+                "raw_text": "이번 주까지"
+            }
+        if "다음 주까지" in sentence or "다음주까지" in sentence:
+            next_week_start = self._week_bounds(current_date)[0] + timedelta(days=7)
+            return (next_week_start + timedelta(days=6)).isoformat(), {
+                "raw_text": "다음 주까지"
+            }
+        if "월말" in sentence:
+            last_day = calendar.monthrange(current_date.year, current_date.month)[1]
+            return date(current_date.year, current_date.month, last_day).isoformat(), {
+                "raw_text": "월말"
+            }
+        if "다음 회의 전까지" in sentence or "다음 회의 전" in sentence:
+            return None, {
+                "raw_text": "다음 회의 전까지",
+                "unparsed_due_date_text": "다음 회의 전까지",
+            }
+        return None
+
+    def _safe_due_date(
+        self,
+        year: int,
+        month: int,
+        day: int,
+        *,
+        raw_text: str,
+    ) -> tuple[str | None, dict[str, str]]:
+        try:
+            return date(year, month, day).isoformat(), {"raw_text": raw_text}
+        except ValueError:
+            return None, {
+                "raw_text": raw_text,
+                "unparsed_due_date_text": raw_text,
+            }
+
     def _week_relative_date(
         self,
         current_date: date,
@@ -496,6 +700,22 @@ class ScheduleManagementAgent:
         title = sentence
         if assignee:
             title = re.sub(
+                rf"^\s*{re.escape(assignee)}(?:은|는|이|가)\s+",
+                "",
+                title,
+            )
+            title = re.sub(
+                rf"^\s*{re.escape(assignee)}\s*[:：]\s*",
+                "",
+                title,
+            )
+            title = re.sub(
+                rf"^(?:담당자|담당|owner)\s*[:：-]?\s*{re.escape(assignee)}\s*",
+                "",
+                title,
+                flags=re.IGNORECASE,
+            )
+            title = re.sub(
                 rf"^\s*{re.escape(assignee)}(?:님)?(?:은|는|이|가)\s+",
                 "",
                 title,
@@ -509,6 +729,14 @@ class ScheduleManagementAgent:
 
         if due_text:
             title = title.replace(due_text, "")
+        title = re.sub(r"(?:까지|전까지|전)\s*", " ", title)
+        title = re.sub(
+            r"\s*(?:진행한다|진행|공유 예정|공유|검토한다|정리한다|작성한다)\.?\s*$",
+            "",
+            title,
+        )
+        for phrase in self.KO_TODO_TRIGGER_PHRASES:
+            title = title.replace(phrase, "")
         title = re.sub(r"(?:까지|전까지|까지는|까지로)\s*", "", title)
         for phrase in self.TODO_TRIGGER_PHRASES:
             if phrase.startswith("하기로"):
@@ -949,7 +1177,6 @@ class ScheduleManagementAgent:
             "project_id": task.get("project_id"),
             "source_document_id": task.get("source_document_id"),
             "source_document_name": source_document_name,
-            "source_artifact_id": task.get("source_artifact_id"),
             "row_number": row_number,
             "wbs_id": wbs_id,
             "title": title,
@@ -968,6 +1195,11 @@ class ScheduleManagementAgent:
             "related_artifact": "WBS",
             "related_document": source_document_name or "WBS",
             "source_type": "WBS",
+            "source_artifact_id": self._task_value(
+                task,
+                "source_artifact_id",
+                "artifact_id",
+            ),
             "status": status,
             "status_display": self._wbs_status_display(status),
             "metadata": {
@@ -1114,6 +1346,12 @@ class ScheduleManagementAgent:
         task: dict[str, Any],
         project_bounds: tuple[date | None, date | None],
     ) -> bool:
+        title = str(task.get("title") or "").replace(" ", "")
+        if not any(
+            token in title
+            for token in ("프로젝트관리", "관리영역", "상시", "PMO", "품질관리")
+        ):
+            return False
         project_start, project_end = project_bounds
         task_start = self._parse_date(task.get("planned_start_date"))
         task_end = self._parse_date(task.get("planned_end_date"))
@@ -1332,6 +1570,126 @@ class ScheduleManagementAgent:
             "message_key": "TODO_NOT_FOUND",
             "candidates": [],
         }
+
+    def _update_todo_status_result(self, context: dict[str, Any]) -> dict[str, Any]:
+        target_status = self._normalize_requested_status(context)
+        if target_status not in self.VALID_TODO_STATUSES:
+            return {
+                "action": "UPDATE_TODO_STATUS",
+                "status": "INVALID_STATUS",
+                "message_key": "INVALID_TODO_STATUS",
+                "requested_status": target_status,
+                "allowed_statuses": list(self.VALID_TODO_STATUSES),
+                "candidates": [],
+            }
+
+        todos = [self._normalize_todo(todo) for todo in self._context_todos(context)]
+        if not todos:
+            return {
+                "action": "UPDATE_TODO_STATUS",
+                "status": "NOT_FOUND",
+                "message_key": "TODO_NOT_FOUND",
+                "missing_fields": ["todos"],
+                "candidates": [],
+            }
+
+        matched = self._find_status_update_todo(context, todos)
+        if matched is None:
+            return {
+                "action": "UPDATE_TODO_STATUS",
+                "status": "NOT_FOUND",
+                "message_key": "TODO_NOT_FOUND",
+                "candidates": [
+                    {
+                        "todo_id": todo.get("todo_id"),
+                        "title": todo.get("title"),
+                        "status": todo.get("status"),
+                    }
+                    for todo in todos
+                ],
+            }
+
+        matched_todo = self._matched_todo(matched)
+        matched_todo["next_status"] = target_status
+        if str(matched.get("status") or "").upper() == target_status:
+            return {
+                "action": "UPDATE_TODO_STATUS",
+                "status": "ALREADY_UP_TO_DATE",
+                "matched_todo": matched_todo,
+                "candidates": [],
+            }
+        return {
+            "action": "UPDATE_TODO_STATUS",
+            "status": "READY_TO_UPDATE",
+            "matched_todo": matched_todo,
+            "candidates": [],
+        }
+
+    def _normalize_requested_status(self, context: dict[str, Any]) -> str | None:
+        normalized_input = context.get("normalized_input") or {}
+        entities = normalized_input.get("entities") or {}
+        raw_status = (
+            context.get("status")
+            or context.get("target_status")
+            or context.get("next_status")
+            or entities.get("status")
+        )
+        if raw_status is None:
+            return None
+        status_text = str(raw_status).strip()
+        status_key = status_text.lower()
+        aliases = {
+            "todo": "TODO",
+            "to_do": "TODO",
+            "not_started": "TODO",
+            "not started": "TODO",
+            "진행전": "TODO",
+            "진행 전": "TODO",
+            "in_progress": "IN_PROGRESS",
+            "in progress": "IN_PROGRESS",
+            "진행중": "IN_PROGRESS",
+            "진행 중": "IN_PROGRESS",
+            "done": "DONE",
+            "complete": "DONE",
+            "completed": "DONE",
+            "완료": "DONE",
+            "blocked": "BLOCKED",
+            "block": "BLOCKED",
+            "막힘": "BLOCKED",
+            "보류": "BLOCKED",
+            "cancelled": "CANCELLED",
+            "canceled": "CANCELLED",
+            "cancel": "CANCELLED",
+            "취소": "CANCELLED",
+        }
+        return aliases.get(status_key, status_text.upper())
+
+    def _find_status_update_todo(
+        self,
+        context: dict[str, Any],
+        todos: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        todo_id = str(context.get("todo_id") or "").strip().upper()
+        if todo_id:
+            for todo in todos:
+                if str(todo.get("todo_id") or "").upper() == todo_id:
+                    return todo
+
+        target_text = str(
+            context.get("target_text")
+            or context.get("todo_title")
+            or context.get("title")
+            or ""
+        ).strip()
+        if not target_text and len(todos) == 1:
+            return todos[0]
+
+        scored = [
+            (self._todo_match_score(target_text, todo), todo)
+            for todo in todos
+        ]
+        candidates = [todo for score, todo in scored if score >= 2]
+        return candidates[0] if len(candidates) == 1 else None
 
     def _source_availability(self, context: dict[str, Any]) -> dict[str, Any]:
         normalized_input = context.get("normalized_input") or {}

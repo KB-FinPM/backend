@@ -1,6 +1,9 @@
 # EN: Tests for schedule management MVP todo extraction.
 # KO: 일정관리 Agent MVP todo 추출 동작 테스트입니다.
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agents.core_agents.schedule_management_agent.agent import (
@@ -8,6 +11,44 @@ from app.agents.core_agents.schedule_management_agent.agent import (
 )
 from app.schemas.agent import AgentRequest
 from app.schemas.schedule import ScheduleTodoList
+
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def _load_schedule_meeting_cases() -> list[dict]:
+    return json.loads(
+        (FIXTURE_DIR / "schedule_meeting_notes.json").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", _load_schedule_meeting_cases(), ids=lambda case: case["name"])
+async def test_schedule_management_agent_real_korean_meeting_note_golden_cases(
+    case: dict,
+) -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "EXTRACT_TODOS_FROM_MEETING",
+                "meeting_notes": case["meeting_notes"],
+                "current_date": case["current_date"],
+            },
+        )
+    )
+
+    assert response.success is True
+    todo_list = ScheduleTodoList.model_validate(response.result)
+    assert len(todo_list.todos) == case["expected_count"]
+    todo = todo_list.todos[0]
+    assert todo.assignee == case["expected_assignee"]
+    assert todo.due_date == case["expected_due_date"]
+    assert case["expected_title_contains"] in todo.title
+    assert todo.status == case["expected_status"]
+    if case.get("expected_unparsed_due"):
+        assert todo.metadata["unparsed_due_date_text"] == case["expected_unparsed_due"]
 
 
 @pytest.mark.anyio
@@ -534,6 +575,95 @@ async def test_schedule_management_agent_keeps_duplicate_wbs_ids_by_row() -> Non
         "업무인스턴스및코드설계",
         "데이터클린징설계",
     }
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_prepares_valid_status_update() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "UPDATE_TODO_STATUS",
+                "todo_id": "TODO-001",
+                "status": "BLOCKED",
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "Review requirement spec",
+                        "status": "TODO",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "READY_TO_UPDATE"
+    assert response.result["matched_todo"]["todo_id"] == "TODO-001"
+    assert response.result["matched_todo"]["next_status"] == "BLOCKED"
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_rejects_invalid_status_update() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "UPDATE_TODO_STATUS",
+                "todo_id": "TODO-001",
+                "status": "MAYBE_LATER",
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "Review requirement spec",
+                        "status": "TODO",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "INVALID_STATUS"
+    assert response.result["message_key"] == "INVALID_TODO_STATUS"
+    assert response.result["allowed_statuses"] == [
+        "TODO",
+        "IN_PROGRESS",
+        "DONE",
+        "BLOCKED",
+        "CANCELLED",
+    ]
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_status_update_is_idempotent() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "UPDATE_TODO_STATUS",
+                "todo_id": "TODO-001",
+                "status": "DONE",
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "Review requirement spec",
+                        "status": "DONE",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "ALREADY_UP_TO_DATE"
+    assert response.result["matched_todo"]["todo_id"] == "TODO-001"
 
 
 @pytest.mark.anyio

@@ -1,9 +1,14 @@
 # EN: Tests for user-facing chat output rendering.
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agents.output_agents.chat_agent.agent import ChatOutputAgent
 from app.schemas.io_agent import OutputAgentRequest, OutputResponseType
+
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 INTERNAL_NAMES = {
@@ -14,6 +19,108 @@ INTERNAL_NAMES = {
     "ACTION_COMPLETED",
     "SCHEDULE_TODO_LIST",
 }
+
+
+def _load_output_events() -> list[dict]:
+    return json.loads(
+        (FIXTURE_DIR / "output_agent_events.json").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", _load_output_events(), ids=lambda case: case["event"])
+async def test_chat_output_agent_event_golden_matrix(case: dict) -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json=case["result_json"],
+        )
+    )
+
+    assert response.success is True
+    assert response.display_payload["state"] == case["expected_state"]
+    assert response.message
+    assert not any(name in response.message for name in INTERNAL_NAMES | {case["event"]})
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_download_files_have_stable_schema() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "ARTIFACT_DOWNLOAD_READY",
+                "artifact": {
+                    "artifact_id": "ART-REQ-001",
+                    "artifact_type": "REQUIREMENT_SPEC",
+                    "name": "요구사항 명세서",
+                },
+                "file_name": "요구사항_명세서.xlsx",
+                "content_type": (
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                "download_url": "/api/projects/PRJ-001/artifacts/ART-REQ-001/download",
+            },
+        )
+    )
+
+    assert response.download_files == [
+        {
+            "artifact_id": "ART-REQ-001",
+            "artifact_type": "REQUIREMENT_SPEC",
+            "file_name": "요구사항_명세서.xlsx",
+            "mime_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            "content_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            "download_url": "/api/projects/PRJ-001/artifacts/ART-REQ-001/download",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_preserves_failed_progress_and_ignores_malformed_progress() -> None:
+    agent = ChatOutputAgent()
+
+    failed = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "ACTION_FAILED",
+                "error": "source document not found",
+                "generation_progress": {
+                    "progress": 45,
+                    "batch_progress": {"current": 15, "total": 30},
+                },
+            },
+        )
+    )
+    started = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "ACTION_STARTED",
+                "action_id": "ACT-001",
+                "generation_progress": "bad-progress",
+            },
+        )
+    )
+
+    assert failed.display_payload["result"]["generation_progress"]["progress"] == 45
+    assert started.display_payload["result"]["generation_progress"] == {}
 
 
 @pytest.mark.anyio
@@ -47,6 +154,39 @@ async def test_chat_output_agent_renders_artifact_completion() -> None:
         {"artifact_id": "ART-001", "artifact_type": "WBS", "name": "WBS"}
     ]
     assert not any(name in response.message for name in INTERNAL_NAMES)
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_preserves_generation_sub_progress_on_start() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "ACTION_STARTED",
+                "action_id": "ACT-001",
+                "generation_progress": {
+                    "progress": 45,
+                    "stage": "CORE_AGENT_EXTRACTION",
+                    "stage_label": "Core Agent 요구사항 추출 중",
+                    "sub_progress": {
+                        "type": "CHUNK_PROCESSING",
+                        "label": "원본 문서 chunk 처리",
+                        "current": 137,
+                        "total": 236,
+                        "unit": "chunks",
+                    },
+                },
+            },
+        )
+    )
+
+    progress = response.display_payload["result"]["generation_progress"]
+    assert response.success is True
+    assert progress["progress"] == 45
+    assert progress["sub_progress"]["current"] == 137
 
 
 @pytest.mark.anyio
@@ -96,6 +236,38 @@ async def test_chat_output_agent_renders_confirmation_request() -> None:
     assert "화면설계서" in response.message
     assert response.display_payload["suggested_actions"][0]["label"] == "생성하기"
     assert not any(name in response.message for name in INTERNAL_NAMES)
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_confirmation_mentions_large_document_hint() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "CONFIRMATION_REQUIRED",
+                "pending_action": {
+                    "action_id": "ACT-001",
+                    "action_type": "GENERATE_REQUIREMENT",
+                    "payload": {
+                        "target_artifact_type": "REQUIREMENT_SPEC",
+                        "source_document_ids": ["DOC-LARGE-001"],
+                        "large_document_hint": {
+                            "is_large_document": True,
+                            "chunk_count": 236,
+                            "message": "문서가 큰 경우 chunk/batch 처리에 시간이 걸릴 수 있습니다.",
+                        },
+                    },
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    assert "문서가 큰 경우" in response.message
+    assert "236" in response.message
 
 
 @pytest.mark.anyio
@@ -372,6 +544,78 @@ async def test_chat_output_agent_renders_ambiguous_complete_todo() -> None:
     assert response.success is True
     assert "어떤 업무를 완료했는지 선택" in response.message
     assert response.display_payload["result"]["items"][0]["todo_id"] == "TODO-001"
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_renders_download_ready_with_korean_filename() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "ARTIFACT_DOWNLOAD_READY",
+                "artifact": {
+                    "artifact_id": "ART-REQ-001",
+                    "artifact_type": "REQUIREMENT_SPEC",
+                    "name": "요구사항 명세서",
+                },
+                "file_name": "요구사항_명세서.xlsx",
+                "content_type": (
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.display_payload["state"] == "COMPLETED"
+    assert response.download_files == [
+        {
+            "artifact_id": "ART-REQ-001",
+            "artifact_type": "REQUIREMENT_SPEC",
+            "file_name": "요구사항_명세서.xlsx",
+            "mime_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            "content_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        }
+    ]
+    assert response.artifact_refs == [
+        {
+            "artifact_id": "ART-REQ-001",
+            "artifact_type": "REQUIREMENT_SPEC",
+            "name": "요구사항 명세서",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_requests_artifact_when_download_is_ambiguous() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "ARTIFACT_DOWNLOAD_REQUIRED_INFO",
+                "missing_fields": ["artifact_id"],
+                "available_artifacts": [],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.display_payload["state"] == "WAITING_REQUIRED_INFO"
+    assert response.download_files == []
+    assert response.display_payload["result"]["missing_fields"] == ["artifact_id"]
 
 
 @pytest.mark.anyio

@@ -1,0 +1,97 @@
+[
+  {
+    "message": "요구사항 뽑아줘",
+    "expected_intent": "GENERATE_ARTIFACT",
+    "expected_artifact_type": "REQUIREMENT_SPEC",
+    "expected_missing_slots": ["source_document_ids"]
+  },
+  {
+    "message": "요구사항저의서 만들어줘",
+    "expected_intent": "GENERATE_ARTIFACT",
+    "expected_artifact_type": "REQUIREMENT_SPEC",
+    "expected_missing_slots": ["source_document_ids"]
+  },
+  {
+    "message": "WBS 짜줘",
+    "expected_intent": "GENERATE_ARTIFACT",
+    "expected_artifact_type": "WBS",
+    "expected_missing_slots": ["source_document_ids"]
+  },
+  {
+    "message": "일정표 만들어줘",
+    "expected_intent": "GENERATE_ARTIFACT",
+    "expected_artifact_type": "WBS",
+    "expected_missing_slots": ["source_document_ids"]
+  },
+  {
+    "message": "화면설계서 만들어줘",
+    "expected_intent": "GENERATE_ARTIFACT",
+    "expected_artifact_type": "SCREEN_DESIGN",
+    "expected_missing_slots": ["source_document_ids"]
+  },
+  {
+    "message": "UI 설계서 만들어줘",
+    "expected_intent": "GENERATE_ARTIFACT",
+    "expected_artifact_type": "SCREEN_DESIGN",
+    "expected_missing_slots": ["source_document_ids"]
+  },
+  {
+    "message": "테스트케이스 만들어줘",
+    "expected_intent": "GENERATE_ARTIFACT",
+    "expected_artifact_type": "UNITTEST_SPEC",
+    "expected_missing_slots": ["source_document_ids"]
+  },
+  {
+    "message": "방금 회의록에서 액션아이템 뽑아줘",
+    "context": {
+      "selected_document_ids": ["DOC-MEETING-001"],
+      "uploaded_documents": [
+        {
+          "document_id": "DOC-MEETING-001",
+          "document_type": "MEETING_NOTES",
+          "file_name": "weekly-notes.txt"
+        }
+      ]
+    },
+    "expected_intent": "EXTRACT_ACTION_ITEMS",
+    "expected_schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+    "expected_missing_slots": []
+  },
+  {
+    "message": "이번 주 할 일 알려줘",
+    "expected_intent": "SCHEDULE_QUERY",
+    "expected_schedule_action": "SHOW_THIS_WEEK_TODOS"
+  },
+  {
+    "message": "상태 진행중으로 바꿔줘",
+    "expected_intent": "UPDATE_TODO_STATUS",
+    "expected_schedule_action": "UPDATE_TODO_STATUS",
+    "expected_status": "IN_PROGRESS"
+  },
+  {
+    "message": "요구사항 정의서가 뭐야?",
+    "expected_intent": "GENERAL_QA",
+    "expected_topic": "REQUIREMENT_SPEC"
+  },
+  {
+    "message": "문서 만들어줘",
+    "expected_intent": "CLARIFICATION_REQUIRED"
+  },
+  {
+    "message": "일정 만들어줘",
+    "expected_intent": "CLARIFICATION_REQUIRED"
+  },
+  {
+    "message": "다운로드해줘",
+    "expected_intent": "DOWNLOAD_ARTIFACT",
+    "expected_missing_slots": ["artifact_id"]
+  },
+  {
+    "message": "응 진행해",
+    "expected_intent": "CONFIRM_PENDING_ACTION"
+  },
+  {
+    "message": "아니 취소",
+    "expected_intent": "CANCEL_PENDING_ACTION"
+  }
+]

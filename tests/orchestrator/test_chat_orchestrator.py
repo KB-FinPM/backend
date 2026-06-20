@@ -252,6 +252,73 @@ async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> No
 
 
 @pytest.mark.anyio
+async def test_chat_orchestrator_returns_download_file_for_recent_artifact() -> None:
+    orchestrator = ChatOrchestrator(
+        conversation_repository=StubConversationRepository(),
+        generation_service=StubGenerationService(),
+        schedule_service=StubScheduleService(),
+        document_service=StubDocumentService(),
+        artifact_service=StubArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+    )
+
+    response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            user_id="USER-001",
+            message="download latest WBS as xlsx",
+        )
+    )
+
+    assert response.state == "COMPLETED"
+    assert response.download_files == [
+        {
+            "artifact_id": "ART-WBS-001",
+            "artifact_type": "WBS",
+            "file_name": "WBS.xlsx",
+            "mime_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            "content_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_chat_orchestrator_requests_artifact_for_ambiguous_download() -> None:
+    class EmptyArtifactService:
+        async def list_artifacts(self, *, project_id):
+            return []
+
+    orchestrator = ChatOrchestrator(
+        conversation_repository=StubConversationRepository(),
+        generation_service=StubGenerationService(),
+        schedule_service=StubScheduleService(),
+        document_service=StubDocumentService(),
+        artifact_service=EmptyArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+    )
+
+    response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            user_id="USER-001",
+            message="download export file",
+        )
+    )
+
+    assert response.state == "WAITING_REQUIRED_INFO"
+    assert response.download_files == []
+    assert response.result["missing_fields"] == ["artifact_id"]
+
+
+@pytest.mark.anyio
 async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
     repository = StubConversationRepository()
     conversation = await repository.create_conversation(

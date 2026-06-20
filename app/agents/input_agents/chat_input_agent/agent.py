@@ -191,6 +191,63 @@ class ChatInputAgent:
     GENERATE_ACTION_TERMS = ("만들", "생성", "작성", "만드")
     LOW_CONFIDENCE_ACTION_TERMS = ("해줘", "알려줘", "보여줘", "정리해줘")
 
+    KO_GENERATION_TERMS = ("만들", "생성", "작성", "뽑", "추출", "정리", "짜")
+    KO_QUESTION_TERMS = ("뭐야", "무엇", "차이", "언제", "어떤", "설명")
+    KO_REQUIREMENT_TERMS = (
+        "요구사항정의서",
+        "요구사항 정의서",
+        "요구사항저의서",
+        "요구사항 저의서",
+        "요구사항명세서",
+        "요구사항 명세서",
+        "요구사항",
+        "요건정의서",
+        "요건 정의서",
+    )
+    KO_CONSTRUCTION_REQUIREMENT_TERMS = (
+        "구축요건정의서",
+        "구축요건 정의서",
+        "RFP",
+    )
+    KO_WBS_TERMS = ("WBS", "wbs", "일정표", "작업계획", "작업 계획")
+    KO_SCREEN_DESIGN_TERMS = (
+        "화면설계서",
+        "화면 설계서",
+        "화면설계",
+        "화면 설계",
+        "UI 설계서",
+        "ui 설계서",
+    )
+    KO_UNIT_TEST_TERMS = (
+        "테스트케이스",
+        "테스트 케이스",
+        "단위테스트",
+        "단위 테스트",
+        "단위테스트계획서",
+    )
+    KO_MEETING_TERMS = ("회의록", "회의 내용", "회의내용", "미팅 내용", "미팅내용")
+    KO_TODO_TERMS = (
+        "할 일",
+        "할일",
+        "해야 할 일",
+        "TODO",
+        "todo",
+        "액션아이템",
+        "액션 아이템",
+        "업무",
+    )
+    KO_COMPLETION_TERMS = ("완료", "완료했어", "완료 처리", "처리해줘")
+    KO_THIS_WEEK_TERMS = ("이번 주", "이번주", "금주")
+    KO_NEXT_WEEK_TERMS = ("다음 주", "다음주", "차주")
+    KO_TODAY_TERMS = ("오늘", "금일")
+    KO_OVERDUE_TERMS = ("기한 지난", "지연", "연체")
+    KO_SHOW_TERMS = ("알려줘", "보여줘", "보여", "뭐야")
+    KO_EXTRACT_TERMS = ("뽑아줘", "추출", "정리", "찾아줘")
+    KO_DOWNLOAD_TERMS = ("다운로드", "내려줘", "내려받기", "받아볼래", "파일")
+    KO_STATUS_UPDATE_TERMS = ("상태", "진행중", "진행 중", "차단", "보류", "취소", "완료")
+    KO_STATUS_UPDATE_ACTION_TERMS = ("바꿔", "변경", "처리", "해줘", "수정")
+    KO_LOW_CONFIDENCE_ACTION_TERMS = ("해줘", "만들어줘", "생성해줘", "작성해줘")
+
     async def parse(self, request: InputAgentRequest) -> InputAgentResponse:
         if request.input_type != InputType.TEXT:
             return InputAgentResponse(
@@ -262,6 +319,8 @@ class ChatInputAgent:
         text = str(message or "").strip()
         typo_replacements = (
             ("요구사항저의서", "요구사항정의서"),
+            ("요구사항 저의서", "요구사항 정의서"),
+            ("요구사항저의서", "요구사항정의서"),
             ("요구사항 명새서", "요구사항 명세서"),
             ("요구사항명새서", "요구사항명세서"),
             ("구축요건저의서", "구축요건정의서"),
@@ -302,6 +361,7 @@ class ChatInputAgent:
         normalized = normalized_query.lower()
         compact_message = "".join(normalized.split())
         context_snapshot = self._context_snapshot(request_context)
+        large_document_hint = self._large_document_hint(request_context)
         source_type = self._detect_source_type(
             normalized,
             compact_message,
@@ -338,6 +398,16 @@ class ChatInputAgent:
             assignee=assignee,
         )
         artifact_type = artifact_target.value if artifact_target is not None else None
+        download_requested = self._looks_like_download_request(
+            normalized,
+            compact_message,
+        )
+        download_artifact = self._resolve_download_artifact(
+            message=message,
+            context=request_context,
+            artifact_target=artifact_target,
+        )
+        export_format = self._detect_export_format(normalized, compact_message)
         confidence = self._semantic_confidence(
             source_type=source_type,
             target_type=target_type,
@@ -351,7 +421,7 @@ class ChatInputAgent:
             and self._contains_any(
                 normalized,
                 compact_message,
-                self.LOW_CONFIDENCE_ACTION_TERMS,
+                self.LOW_CONFIDENCE_ACTION_TERMS + self.KO_LOW_CONFIDENCE_ACTION_TERMS,
             )
         )
         return {
@@ -364,6 +434,11 @@ class ChatInputAgent:
             "time_range": time_range,
             "assignee": assignee,
             "artifact_type": artifact_type,
+            "artifact_id": download_artifact.get("artifact_id"),
+            "artifact_ref": download_artifact,
+            "download_requested": download_requested,
+            "export_format": export_format,
+            "large_document_hint": large_document_hint,
             "todo_target": todo_target,
             "schedule_action": schedule_action,
             "confidence": confidence,
@@ -405,6 +480,23 @@ class ChatInputAgent:
                 "confidence": 0.85,
             }
 
+        if slots.get("download_requested"):
+            return self._download_intent(
+                slots=slots,
+                normalized_query=normalized_query,
+            )
+
+        if self._looks_like_ambiguous_creation(normalized, compact_message, slots):
+            return {
+                "intent": "CLARIFICATION_REQUIRED",
+                "action": "ASK_CLARIFICATION",
+                "normalized_query": normalized_query,
+                "clarification_required": True,
+                "clarification_question": "어떤 산출물이나 일정을 처리할까요?",
+                **semantic_payload,
+                "confidence": float(slots.get("confidence") or 0.45),
+            }
+
         source_document_ids = self._resolve_source_document_ids(
             request_context,
             slots,
@@ -421,6 +513,38 @@ class ChatInputAgent:
             or self._default_source_document_type(slots.get("artifact_type"))
         )
         schedule_action = slots.get("schedule_action")
+        topic = self._detect_pm_topic(normalized, compact_message)
+
+        if (
+            topic
+            and self._looks_like_question(normalized, compact_message)
+            and slots.get("target_type") == "ARTIFACT"
+        ):
+            return {
+                "intent": "GENERAL_QA",
+                "action": "EXPLAIN",
+                "topic": topic,
+                "qa_type": "ASK_PM_CONCEPT",
+                "normalized_query": normalized_query,
+                **semantic_payload,
+                "confidence": max(float(slots.get("confidence") or 0.0), 0.78),
+            }
+
+        if schedule_action == "UPDATE_TODO_STATUS":
+            target_status = self._detect_requested_status(normalized, compact_message)
+            return {
+                "intent": "UPDATE_TODO_STATUS",
+                "action": "UPDATE",
+                "schedule_action": "UPDATE_TODO_STATUS",
+                "todo_title_query": str(slots.get("todo_target") or "").strip(),
+                "entities": {
+                    "status": target_status,
+                    **self._slot_entities(slots),
+                },
+                "normalized_query": normalized_query,
+                **semantic_payload,
+                "confidence": max(float(slots.get("confidence") or 0.0), 0.84),
+            }
 
         if schedule_action == "COMPLETE_TODO":
             todo_title_query = (
@@ -498,7 +622,6 @@ class ChatInputAgent:
                 **semantic_payload,
             }
 
-        topic = self._detect_pm_topic(normalized, compact_message)
         if topic and self._looks_like_question(normalized, compact_message):
             return {
                 "intent": "GENERAL_QA",
@@ -540,6 +663,31 @@ class ChatInputAgent:
             "confidence": float(slots.get("confidence") or 0.5),
         }
 
+    def _looks_like_ambiguous_creation(
+        self,
+        normalized_message: str,
+        compact_message: str,
+        slots: dict[str, Any],
+    ) -> bool:
+        if not self._has_generation_signal(normalized_message, compact_message):
+            return False
+        if slots.get("artifact_type"):
+            return False
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.AMBIGUOUS_DOCUMENT_TERMS
+            if hasattr(self, "AMBIGUOUS_DOCUMENT_TERMS")
+            else ("문서", "산출물"),
+        ):
+            return True
+        if (
+            self._contains_any(normalized_message, compact_message, ("일정",))
+            and not self._contains_any(normalized_message, compact_message, ("일정표",))
+        ):
+            return True
+        return False
+
     def _detect_source_type(
         self,
         normalized_message: str,
@@ -549,27 +697,32 @@ class ChatInputAgent:
         if self._contains_any(
             normalized_message,
             compact_message,
-            self.MEETING_TERMS,
+            self.MEETING_TERMS + self.KO_MEETING_TERMS,
         ):
             return "MEETING_NOTES"
         if self._contains_any(
             normalized_message,
             compact_message,
-            self.CONSTRUCTION_REQUIREMENT_TERMS,
+            self.CONSTRUCTION_REQUIREMENT_TERMS
+            + self.KO_CONSTRUCTION_REQUIREMENT_TERMS,
         ):
             return DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION.value
-        if self._contains_any(normalized_message, compact_message, self.WBS_TERMS):
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.WBS_TERMS + self.KO_WBS_TERMS,
+        ):
             return DocumentType.WBS.value
         if self._contains_any(
             normalized_message,
             compact_message,
-            self.SCREEN_DESIGN_TERMS,
+            self.SCREEN_DESIGN_TERMS + self.KO_SCREEN_DESIGN_TERMS,
         ):
             return ArtifactType.SCREEN_DESIGN.value
         if self._contains_any(
             normalized_message,
             compact_message,
-            self.REQUIREMENT_TERMS,
+            self.REQUIREMENT_TERMS + self.KO_REQUIREMENT_TERMS,
         ):
             return DocumentType.REQUIREMENT_SPEC.value
         if self._contains_any(
@@ -607,6 +760,18 @@ class ChatInputAgent:
         action: str | None,
         artifact_target: ArtifactType | None,
     ) -> str | None:
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_TODO_TERMS,
+        ):
+            return "TODO"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            ("일정", "마감", "업무", "작업", "주차"),
+        ):
+            return "SCHEDULE"
         if self._contains_any(normalized_message, compact_message, self.TODO_TERMS):
             return "TODO"
         if self._contains_any(
@@ -630,18 +795,23 @@ class ChatInputAgent:
         artifact_target: ArtifactType | None,
         context_snapshot: dict[str, Any],
     ) -> str | None:
+        if self._looks_like_status_update(normalized_message, compact_message):
+            return "UPDATE_STATUS"
         if self._looks_like_todo_completion(normalized_message, compact_message):
             return "COMPLETE"
         has_todo = self._contains_any(
             normalized_message,
             compact_message,
-            self.TODO_TERMS,
+            self.TODO_TERMS + self.KO_TODO_TERMS,
         )
         has_meeting = source_type == "MEETING_NOTES"
         if has_meeting and has_todo and self._contains_any(
             normalized_message,
             compact_message,
-            self.EXTRACT_TERMS + self.SHOW_TERMS,
+            self.EXTRACT_TERMS
+            + self.SHOW_TERMS
+            + self.KO_EXTRACT_TERMS
+            + self.KO_SHOW_TERMS,
         ):
             return "EXTRACT"
         if artifact_target is not None and self._has_generation_signal(
@@ -653,13 +823,13 @@ class ChatInputAgent:
         if self._contains_any(
             normalized_message,
             compact_message,
-            self.EXTRACT_TERMS,
+            self.EXTRACT_TERMS + self.KO_EXTRACT_TERMS,
         ):
             return "EXTRACT"
         if self._contains_any(
             normalized_message,
             compact_message,
-            self.SHOW_TERMS,
+            self.SHOW_TERMS + self.KO_SHOW_TERMS,
         ):
             return "SHOW"
         if (
@@ -673,12 +843,50 @@ class ChatInputAgent:
             return "SELECT"
         return None
 
+    def _looks_like_status_update(
+        self,
+        normalized_message: str,
+        compact_message: str,
+    ) -> bool:
+        has_status_word = self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_STATUS_UPDATE_TERMS,
+        )
+        has_update_action = self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_STATUS_UPDATE_ACTION_TERMS,
+        )
+        return has_status_word and has_update_action
+
+    def _detect_requested_status(
+        self,
+        normalized_message: str,
+        compact_message: str,
+    ) -> str | None:
+        status_terms = (
+            ("IN_PROGRESS", ("진행중", "진행 중", "in progress")),
+            ("DONE", ("완료", "done", "complete")),
+            ("BLOCKED", ("차단", "막힘", "보류", "blocked")),
+            ("CANCELLED", ("취소", "cancel", "cancelled", "canceled")),
+            ("TODO", ("예정", "할 일", "todo")),
+        )
+        for status, terms in status_terms:
+            if self._contains_any(normalized_message, compact_message, terms):
+                return status
+        return None
+
     def _detect_time_range(
         self,
         normalized_message: str,
         compact_message: str,
     ) -> str | None:
-        if self._contains_any(normalized_message, compact_message, self.OVERDUE_TERMS):
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.OVERDUE_TERMS + self.KO_OVERDUE_TERMS,
+        ):
             return "OVERDUE"
         if self._contains_any(
             normalized_message,
@@ -686,13 +894,25 @@ class ChatInputAgent:
             self.CURRENT_WEEK_TERMS,
         ):
             return "CURRENT_WEEK"
-        if self._contains_any(normalized_message, compact_message, self.TODAY_TERMS):
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.TODAY_TERMS + self.KO_TODAY_TERMS,
+        ):
             return "TODAY"
-        if self._contains_any(normalized_message, compact_message, self.NEXT_WEEK_TERMS):
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.NEXT_WEEK_TERMS + self.KO_NEXT_WEEK_TERMS,
+        ):
             return "NEXT_WEEK"
         if self._contains_any(normalized_message, compact_message, self.LAST_WEEK_TERMS):
             return "LAST_WEEK"
-        if self._contains_any(normalized_message, compact_message, self.THIS_WEEK_TERMS):
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.THIS_WEEK_TERMS + self.KO_THIS_WEEK_TERMS,
+        ):
             return "THIS_WEEK"
         if self._contains_any(
             normalized_message,
@@ -713,6 +933,8 @@ class ChatInputAgent:
         time_range: str | None,
         assignee: str | None,
     ) -> str | None:
+        if action == "UPDATE_STATUS":
+            return "UPDATE_TODO_STATUS"
         if action == "COMPLETE":
             return "COMPLETE_TODO"
         if (
@@ -804,6 +1026,8 @@ class ChatInputAgent:
         return {
             "semantic_slots": semantic_slots,
             "context_snapshot": slots.get("context_snapshot") or {},
+            "large_document_hint": slots.get("large_document_hint")
+            or {"is_large_document": False},
             "source_type": slots.get("source_type"),
             "target_type": slots.get("target_type"),
             "time_range": slots.get("time_range"),
@@ -814,6 +1038,10 @@ class ChatInputAgent:
         entities: dict[str, Any] = {}
         if slots.get("source_type"):
             entities["source"] = slots.get("source_type")
+        if slots.get("artifact_id"):
+            entities["artifact_id"] = slots.get("artifact_id")
+        if slots.get("export_format"):
+            entities["export_format"] = slots.get("export_format")
         if slots.get("time_range"):
             entities["time_range"] = slots.get("time_range")
         if slots.get("assignee"):
@@ -899,6 +1127,64 @@ class ChatInputAgent:
                     ids.append(str(value))
                     break
         return ids
+
+    def _large_document_hint(self, context: dict[str, Any]) -> dict[str, Any]:
+        documents = self._context_items(
+            context,
+            ("selected_documents", "uploaded_documents", "documents"),
+        )
+        chunk_counts = [
+            self._document_number(
+                document,
+                (
+                    "chunk_count",
+                    "chunks_count",
+                    "total_chunks",
+                    "chunk_total",
+                    "estimated_chunk_count",
+                ),
+            )
+            for document in documents
+        ]
+        file_sizes = [
+            self._document_number(
+                document,
+                ("file_size_bytes", "size_bytes", "file_size", "size"),
+            )
+            for document in documents
+        ]
+        chunk_counts = [count for count in chunk_counts if count is not None]
+        file_sizes = [size for size in file_sizes if size is not None]
+        max_chunk_count = max(chunk_counts) if chunk_counts else None
+        max_file_size = max(file_sizes) if file_sizes else None
+        is_large_document = bool(
+            (max_chunk_count is not None and max_chunk_count >= 200)
+            or (max_file_size is not None and max_file_size >= 10 * 1024 * 1024)
+        )
+        return {
+            "is_large_document": is_large_document,
+            "chunk_count": max_chunk_count,
+            "file_size_bytes": max_file_size,
+            "message": (
+                "문서가 큰 경우 chunk/batch 처리에 시간이 걸릴 수 있습니다."
+                if is_large_document
+                else None
+            ),
+        }
+
+    def _document_number(self, document: Any, keys: tuple[str, ...]) -> int | None:
+        for key in keys:
+            value = self._item_value(document, key)
+            if value is None:
+                metadata = self._item_value(document, "metadata")
+                if isinstance(metadata, dict):
+                    value = metadata.get(key)
+            try:
+                if value is not None and value != "":
+                    return int(float(value))
+            except (TypeError, ValueError):
+                continue
+        return None
 
     def _summarize_pending_action(self, pending_action: Any) -> dict[str, Any] | None:
         if not pending_action:
@@ -1025,11 +1311,172 @@ class ChatInputAgent:
             "confidence": confidence,
         }
 
+    def _download_intent(
+        self,
+        *,
+        slots: dict[str, Any],
+        normalized_query: str,
+    ) -> dict[str, Any]:
+        artifact_ref = slots.get("artifact_ref") or {}
+        artifact_id = artifact_ref.get("artifact_id")
+        missing_slots = [] if artifact_id else ["artifact_id"]
+        return {
+            "intent": "DOWNLOAD_ARTIFACT",
+            "action": "DOWNLOAD",
+            "artifact_id": artifact_id,
+            "artifact_type": artifact_ref.get("artifact_type")
+            or slots.get("artifact_type"),
+            "artifact_ref": artifact_ref,
+            "export_format": slots.get("export_format"),
+            "required_slots": ["artifact_id"],
+            "missing_slots": missing_slots,
+            "available_artifact_ids": (
+                (slots.get("context_snapshot") or {}).get("generated_artifact_ids")
+                or []
+            ),
+            "entities": self._slot_entities(slots),
+            "normalized_query": normalized_query,
+            **self._semantic_payload(slots),
+            "confidence": max(float(slots.get("confidence") or 0.0), 0.82),
+        }
+
+    def _looks_like_download_request(
+        self,
+        normalized_message: str,
+        compact_message: str,
+    ) -> bool:
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_DOWNLOAD_TERMS,
+        ):
+            return True
+        return self._contains_any(
+            normalized_message,
+            compact_message,
+            (
+                "download",
+                "export",
+                "file",
+                "xlsx",
+                "pptx",
+                "pdf",
+                "다운로드",
+                "내보내기",
+                "파일",
+                "받아",
+                "저장",
+                "엑셀",
+                "피피티",
+            ),
+        )
+
+    def _detect_export_format(
+        self,
+        normalized_message: str,
+        compact_message: str,
+    ) -> str | None:
+        korean_format_tokens = (
+            ("xlsx", ("엑셀", "excel")),
+            ("pptx", ("ppt", "피피티", "파워포인트")),
+            ("pdf", ("pdf",)),
+            ("docx", ("워드", "word")),
+        )
+        for export_format, tokens in korean_format_tokens:
+            if self._contains_any(normalized_message, compact_message, tokens):
+                return export_format
+        format_tokens = (
+            ("xlsx", ("xlsx", "excel", "엑셀")),
+            ("pptx", ("pptx", "ppt", "powerpoint", "피피티", "파워포인트")),
+            ("pdf", ("pdf",)),
+            ("docx", ("docx", "word", "워드")),
+            ("markdown", ("markdown", "md")),
+        )
+        for export_format, tokens in format_tokens:
+            if self._contains_any(normalized_message, compact_message, tokens):
+                return export_format
+        return None
+
+    def _resolve_download_artifact(
+        self,
+        *,
+        message: str,
+        context: dict[str, Any],
+        artifact_target: ArtifactType | None,
+    ) -> dict[str, Any]:
+        explicit_artifact_id = self._extract_artifact_id(message)
+        generated_artifacts = self._context_items(
+            context,
+            ("generated_artifacts", "artifacts"),
+        )
+
+        def to_ref(item: Any) -> dict[str, Any]:
+            return {
+                "artifact_id": self._item_value(item, "artifact_id")
+                or self._item_value(item, "id"),
+                "artifact_type": self._item_value(item, "artifact_type"),
+                "name": self._item_value(item, "name"),
+                "file_name": self._item_value(item, "file_name"),
+            }
+
+        if explicit_artifact_id:
+            for artifact in generated_artifacts:
+                artifact_ref = to_ref(artifact)
+                if str(artifact_ref.get("artifact_id") or "").upper() == (
+                    explicit_artifact_id.upper()
+                ):
+                    return artifact_ref
+            return {"artifact_id": explicit_artifact_id}
+
+        if artifact_target is not None:
+            matching_artifacts = [
+                to_ref(artifact)
+                for artifact in generated_artifacts
+                if str(self._item_value(artifact, "artifact_type") or "").upper()
+                == artifact_target.value
+            ]
+            if len(matching_artifacts) == 1:
+                return matching_artifacts[0]
+
+        artifact_refs = [to_ref(artifact) for artifact in generated_artifacts]
+        artifact_refs = [
+            artifact_ref
+            for artifact_ref in artifact_refs
+            if artifact_ref.get("artifact_id")
+        ]
+        if len(artifact_refs) == 1:
+            return artifact_refs[0]
+        return {}
+
+    def _extract_artifact_id(self, message: str) -> str | None:
+        match = re.search(r"\bART-[A-Za-z0-9_-]+\b", str(message or ""))
+        return match.group(0).upper() if match else None
+
     def _detect_artifact_target(
         self,
         normalized_message: str,
         compact_message: str,
     ) -> ArtifactType | None:
+        if self._contains_any(normalized_message, compact_message, self.KO_WBS_TERMS):
+            return ArtifactType.WBS
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_UNIT_TEST_TERMS,
+        ):
+            return ArtifactType.UNITTEST_SPEC
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_SCREEN_DESIGN_TERMS,
+        ):
+            return ArtifactType.SCREEN_DESIGN
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_REQUIREMENT_TERMS,
+        ):
+            return ArtifactType.REQUIREMENT_SPEC
         if self._contains_any(
             normalized_message,
             compact_message,
@@ -1061,6 +1508,20 @@ class ChatInputAgent:
         normalized_message: str,
         compact_message: str,
     ) -> str | None:
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_CONSTRUCTION_REQUIREMENT_TERMS,
+        ):
+            return DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION.value
+        if self._contains_any(normalized_message, compact_message, self.KO_TODO_TERMS):
+            return "ACTION_ITEMS"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_MEETING_TERMS,
+        ):
+            return "MEETING_NOTES"
         if self._contains_any(
             normalized_message,
             compact_message,
@@ -1118,6 +1579,71 @@ class ChatInputAgent:
     ) -> str | None:
         if self._looks_like_todo_completion(normalized_message, compact_message):
             return "COMPLETE_TODO"
+        if self._looks_like_status_update(normalized_message, compact_message):
+            return "UPDATE_TODO_STATUS"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.COMPARISON_TERMS,
+        ) and (
+            self._contains_any(
+                normalized_message,
+                compact_message,
+                self.MEETING_TERMS + self.KO_MEETING_TERMS,
+            )
+            and self._contains_any(
+                normalized_message,
+                compact_message,
+                self.TODO_TERMS + self.KO_TODO_TERMS,
+            )
+        ):
+            return "COMPARE_WEEKLY_MEETING_TODOS"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_OVERDUE_TERMS,
+        ):
+            return "SHOW_OVERDUE_TODOS"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_MEETING_TERMS,
+        ) and self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_TODO_TERMS,
+        ):
+            return "EXTRACT_TODOS_FROM_MEETING"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_TODAY_TERMS,
+        ) and self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_TODO_TERMS,
+        ):
+            return "SHOW_TODAY_TODOS"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_NEXT_WEEK_TERMS,
+        ) and self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_TODO_TERMS + ("일정",),
+        ):
+            return "SHOW_NEXT_WEEK_TODOS"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_THIS_WEEK_TERMS,
+        ) and self._contains_any(
+            normalized_message,
+            compact_message,
+            self.KO_TODO_TERMS + ("일정",),
+        ):
+            return "SHOW_THIS_WEEK_TODOS"
         if self._contains_any(
             normalized_message,
             compact_message,
@@ -1268,6 +1794,23 @@ class ChatInputAgent:
     def _extract_assignee_query(self, message: str) -> str | None:
         compact = self.normalize_text(message)
         normalized = compact.lower()
+        real_korean_match = re.search(
+            r"([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})\s*(?:할 일|할일|업무|TODO|todo)",
+            compact,
+        )
+        if real_korean_match:
+            candidate = real_korean_match.group(1).strip()
+            ignored = {
+                "이번",
+                "다음",
+                "오늘",
+                "WBS",
+                "wbs",
+                "기준으로",
+                "기반으로",
+            }
+            if candidate not in ignored and "기준" not in candidate:
+                return candidate
         explicit_match = re.search(
             r"담당자\s*[:：은는이가]?\s*([0-9A-Za-z가-힣_]{1,30})",
             compact,
@@ -1354,7 +1897,7 @@ class ChatInputAgent:
         return self._contains_any(
             normalized_message,
             compact_message,
-            self.TODO_COMPLETION_TERMS,
+            self.TODO_COMPLETION_TERMS + self.KO_COMPLETION_TERMS,
         )
 
     def _todo_completion_query(self, message: str) -> str:
@@ -1373,7 +1916,7 @@ class ChatInputAgent:
         return self._contains_any(
             normalized_message,
             compact_message,
-            self.GENERATION_TOKENS,
+            self.GENERATION_TOKENS + self.KO_GENERATION_TERMS,
         )
 
     def _contains_any(
@@ -1472,6 +2015,16 @@ class ChatInputAgent:
 
     def _looks_like_confirmation(self, normalized_message: str) -> bool:
         compact_message = "".join(normalized_message.split())
+        if compact_message in {
+            "응",
+            "응진행해",
+            "그래",
+            "그래생성해",
+            "확인",
+            "진행해",
+            "계속해",
+        }:
+            return True
         confirmation_tokens = {
             "응",
             "네",
@@ -1493,6 +2046,15 @@ class ChatInputAgent:
 
     def _looks_like_cancellation(self, normalized_message: str) -> bool:
         compact_message = "".join(normalized_message.split())
+        if compact_message in {
+            "아니",
+            "아니취소",
+            "취소",
+            "방금거취소",
+            "그만",
+            "중단",
+        }:
+            return True
         cancellation_tokens = {
             "아니",
             "취소",
