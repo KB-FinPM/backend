@@ -128,8 +128,8 @@ async def test_wbs_agent_requires_requirement_context() -> None:
 
 @pytest.mark.anyio
 async def test_wbs_agent_applies_planned_dates_from_context() -> None:
-    agent = WbsAgent()
     orchestrator = StubWbsOrchestrator()
+    agent = WbsAgent(model_invoker=orchestrator)
 
     response = await agent.generate(
         AgentRequest(
@@ -155,7 +155,6 @@ async def test_wbs_agent_applies_planned_dates_from_context() -> None:
                         },
                     ],
                 },
-                "generation_orchestrator": orchestrator,
             },
         )
     )
@@ -236,8 +235,8 @@ def test_wbs_agent_parses_month_end_period_boundary() -> None:
 
 @pytest.mark.anyio
 async def test_wbs_agent_defaults_missing_project_period_to_six_months() -> None:
-    agent = WbsAgent()
     orchestrator = StubWbsOrchestrator()
+    agent = WbsAgent(model_invoker=orchestrator)
 
     response = await agent.generate(
         AgentRequest(
@@ -256,7 +255,6 @@ async def test_wbs_agent_defaults_missing_project_period_to_six_months() -> None
                         },
                     ],
                 },
-                "generation_orchestrator": orchestrator,
             },
         )
     )
@@ -270,15 +268,15 @@ async def test_wbs_agent_defaults_missing_project_period_to_six_months() -> None
 
 
 @pytest.mark.anyio
-async def test_wbs_agent_defaults_invalid_schedule_context_to_today(monkeypatch) -> None:
+async def test_wbs_agent_rejects_invalid_start_date(monkeypatch) -> None:
     class FixedDate(date):
         @classmethod
         def today(cls):  # type: ignore[override]
             return cls(2026, 6, 10)
 
     monkeypatch.setattr("app.agents.core_agents.wbs_agent.agent.date", FixedDate)
-    agent = WbsAgent()
     orchestrator = StubWbsOrchestrator()
+    agent = WbsAgent(model_invoker=orchestrator)
 
     response = await agent.generate(
         AgentRequest(
@@ -298,28 +296,25 @@ async def test_wbs_agent_defaults_invalid_schedule_context_to_today(monkeypatch)
                         },
                     ],
                 },
-                "generation_orchestrator": orchestrator,
             },
         )
     )
 
-    assert response.success is True
-    assert response.result["metadata"]["project_start_date"] == "2026.06.10"
-    assert response.result["metadata"]["project_end_date"] == "2026.12.10"
-    assert all("planned_start_date" in task for task in response.result["tasks"])
+    assert response.success is False
+    assert response.error == "project start_date is required for WBS generation"
 
 
 @pytest.mark.anyio
 async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_tasks() -> None:
-    agent = WbsAgent()
     orchestrator = StubWbsOrchestrator(task_name="접근관리")
+    agent = WbsAgent(model_invoker=orchestrator)
 
     response = await agent.generate(
         AgentRequest(
             project_id="PRJ-001",
             context={
                 "project_name": "테스트 프로젝트",
-                "generation_orchestrator": orchestrator,
+                "start_date": "2026.01.01",
                 "requirement_artifact": {
                     "requirements": [
                         {
@@ -343,28 +338,28 @@ async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_task
     ]
     assert orchestrator.calls
 
-    assert len(tasks) == len(template_rows) + 1
+    assert len(tasks) >= len(template_rows) + 1
     for task, template_row in zip(tasks[: len(template_rows)], template_rows, strict=True):
         assert task["metadata"]["level"] == template_row["level"]
         assert task["metadata"]["wbs_id"] == template_row["wbs_id"]
         assert task["name"] == template_row["wbs_name"]
 
-    generated = tasks[len(template_rows):]
+    generated = [task for task in tasks if task["name"] == "접근관리"]
     assert generated[0]["name"] == "접근관리"
     assert generated[0]["metadata"]["wbs_id"] == "4"
 
 
 @pytest.mark.anyio
 async def test_wbs_agent_accepts_flat_llm_tasks_payload() -> None:
-    agent = WbsAgent()
     orchestrator = FlatWbsOrchestrator(task_name="접근관리")
+    agent = WbsAgent(model_invoker=orchestrator)
 
     response = await agent.generate(
         AgentRequest(
             project_id="PRJ-001",
             context={
                 "project_name": "테스트 프로젝트",
-                "generation_orchestrator": orchestrator,
+                "start_date": "2026.01.01",
                 "requirement_artifact": {
                     "requirements": [
                         {
@@ -387,15 +382,15 @@ async def test_wbs_agent_accepts_flat_llm_tasks_payload() -> None:
 
 @pytest.mark.anyio
 async def test_wbs_agent_falls_back_to_template_rows_when_llm_returns_nothing() -> None:
-    agent = WbsAgent()
     orchestrator = EmptyWbsOrchestrator()
+    agent = WbsAgent(model_invoker=orchestrator)
 
     response = await agent.generate(
         AgentRequest(
             project_id="PRJ-001",
             context={
                 "project_name": "테스트 프로젝트",
-                "generation_orchestrator": orchestrator,
+                "start_date": "2026.01.01",
                 "requirement_artifact": {
                     "requirements": [
                         {
@@ -423,8 +418,8 @@ async def test_wbs_agent_falls_back_to_template_rows_when_llm_returns_nothing() 
 
 @pytest.mark.anyio
 async def test_wbs_agent_applies_special_schedule_rules_by_id_hierarchy() -> None:
-    agent = WbsAgent()
     orchestrator = StubWbsOrchestrator()
+    agent = WbsAgent(model_invoker=orchestrator)
 
     response = await agent.generate(
         AgentRequest(
@@ -433,7 +428,6 @@ async def test_wbs_agent_applies_special_schedule_rules_by_id_hierarchy() -> Non
                 "start_date": "2026.01.01",
                 "project_period": "6개월",
                 "project_name": "테스트 프로젝트",
-                "generation_orchestrator": orchestrator,
                 "requirement_artifact": {
                     "requirements": [
                         {

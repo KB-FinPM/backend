@@ -105,13 +105,13 @@ Current adapter slots:
   - Active implementation exists.
 - `WbsAgent`
   - `app/agents/core_agents/wbs_agent/agent.py`
-  - Placeholder adapter. Replace only the inside of `generate`.
+  - Active WBS generation delegate with deterministic fallback and optional LLM runtime.
 - `ScreenDesignAgent`
   - `app/agents/core_agents/screen_design_agent/agent.py`
-  - Placeholder adapter. Replace only the inside of `generate`.
+  - Active screen design generation delegate with deterministic fallback and optional LLM runtime.
 - `ScheduleManagementAgent`
   - `app/agents/core_agents/schedule_management_agent/agent.py`
-  - Placeholder adapter for meeting-notes-based todo extraction.
+  - Active schedule/todo delegate for meeting-note action items and WBS todo/status flows.
 
 The backend intentionally calls the unified `ArtifactAgent` boundary from the
 generation orchestrator. Specialized agents may remain internal delegates, or
@@ -424,12 +424,8 @@ python -m pytest -q
 
 ## Current TODOs
 
-- TODO: Replace `WbsAgent` placeholder with real agent source.
-- TODO: Replace `ScreenDesignAgent` placeholder with real agent source.
 - TODO: Decide whether delivered artifact-generation code replaces
   `ArtifactAgent` as one integrated agent or remains delegated by artifact type.
-- TODO: Replace `ScheduleManagementAgent` placeholder after meeting/todo scope
-  is finalized.
 - TODO: Connect automatic artifact-link persistence to GenerationOrchestrator
   once source requirement artifact IDs are carried by requests or agent metadata.
 - TODO: Add PDF/DOCX Input Agents.

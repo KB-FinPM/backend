@@ -3,10 +3,12 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ScheduleTodoItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     todo_id: str = Field(..., min_length=1, description="Todo item ID")
     project_id: str | None = Field(None, description="Project ID")
     title: str = Field(..., min_length=1, description="Todo title")
@@ -18,6 +20,7 @@ class ScheduleTodoItem(BaseModel):
     source_type: str = Field("MEETING_MINUTES", description="TODO source type")
     status: str = Field("TODO", description="TODO status")
     source_document_id: str | None = Field(None, description="Source document ID")
+    source_artifact_id: str | None = Field(None, description="Source artifact ID")
     source_chunk_ids: list[str] = Field(
         default_factory=list,
         description="Source chunk IDs used to derive this todo",
@@ -29,6 +32,8 @@ class ScheduleTodoItem(BaseModel):
 
 
 class ScheduleTodoList(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     artifact_type: str = Field(
         "SCHEDULE_TODO_LIST",
         description="Meeting action-item extraction result type",

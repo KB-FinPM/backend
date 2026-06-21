@@ -39,7 +39,8 @@ GENERIC_MIME_TYPES = {
 }
 
 SUPPORTED_FILE_TYPE_MESSAGE = (
-    "지원하지 않는 파일 형식입니다. PDF, DOCX, XLSX, XLS, TXT 파일을 업로드해주세요."
+    "unsupported file type. Supported extensions: "
+    "PDF, DOCX, XLSX, XLS, TXT, MD, CSV, JSON, LOG."
 )
 
 

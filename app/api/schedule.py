@@ -2,9 +2,11 @@
 
 from fastapi import APIRouter, Body, Depends, status
 
+from app.core.auth import CurrentUser, assert_project_access
 from app.core.exceptions import ApiError
 from app.core.logger import get_logger
 from app.dependencies import (
+    get_current_user,
     get_input_orchestrator,
     get_output_orchestrator,
     get_schedule_service,
@@ -58,9 +60,17 @@ async def extract_schedule_todos(
     schedule_service: ScheduleService = Depends(get_schedule_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ScheduleTodoResponse:
     """Extract action items from meeting notes."""
     logger.info(f"extract_schedule_todos | project_id={request.project_id}")
+    permissions = assert_project_access(
+        current_user,
+        request.project_id,
+        "schedule:write",
+    )
+    request.user_id = current_user.user_id
+    request.permission_scope = permissions.scopes
 
     input_response = await input_orchestrator.normalize(
         InputAgentRequest(
@@ -102,6 +112,7 @@ async def extract_action_items(
     schedule_service: ScheduleService = Depends(get_schedule_service),
     input_orchestrator: InputOrchestrator = Depends(get_input_orchestrator),
     output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ScheduleTodoResponse:
     """Extract action items from weekly meeting notes."""
     return await extract_schedule_todos(
@@ -109,6 +120,7 @@ async def extract_action_items(
         schedule_service=schedule_service,
         input_orchestrator=input_orchestrator,
         output_orchestrator=output_orchestrator,
+        current_user=current_user,
     )
 
 

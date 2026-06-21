@@ -53,6 +53,12 @@ class ScreenDesignAgent:
 
     AGENT_NAME = "ScreenDesignAgent"
 
+    def __init__(self, *, model_invoker=None) -> None:
+        self.model_invoker = model_invoker
+
+    def with_model_invoker(self, model_invoker) -> "ScreenDesignAgent":
+        return ScreenDesignAgent(model_invoker=model_invoker)
+
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(
             f"[{self.AGENT_NAME}] generate start | project_id={request.project_id}"
@@ -107,8 +113,8 @@ class ScreenDesignAgent:
         call_total: int = 1,
         call_label: str = "screen-plan",
     ) -> list[dict[str, Any]]:
-        orchestrator = (request.context or {}).get("generation_orchestrator")
-        if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
+        model_invoker = self.model_invoker
+        if model_invoker is None or not hasattr(model_invoker, "invoke_agent_llm"):
             return []
 
         prompt = f"""
@@ -118,7 +124,7 @@ Requirement summary:
 {json.dumps(self._build_requirement_digest(atoms), ensure_ascii=False, default=str)}
 """.strip()
 
-        llm_result = await orchestrator.invoke_agent_llm(
+        llm_result = await model_invoker.invoke_agent_llm(
             system_prompt=SCREEN_LLM_SYSTEM_PROMPT,
             user_prompt=prompt,
             call_index=call_index,
@@ -190,7 +196,11 @@ Requirement summary:
         for index, atom in enumerate(atoms, start=1):
             screen_id = f"SCR-{index:03d}"
             work_description = self._work_description(atom)
-            work_description = self._ensure_screen_description(work_description, self._screen_name(atom, index))
+            if not str(getattr(atom, "description", "") or "").strip():
+                work_description = self._ensure_screen_description(
+                    work_description,
+                    self._screen_name(atom, index),
+                )
             display_items = self._display_items(atom)
             screens.append(
                 {

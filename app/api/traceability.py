@@ -3,7 +3,8 @@
 
 from fastapi import APIRouter, Depends, status
 
-from app.dependencies import get_traceability_service
+from app.core.auth import CurrentUser, assert_project_access
+from app.dependencies import get_current_user, get_traceability_service
 from app.schemas.response import ErrorResponse
 from app.schemas.traceability import ArtifactLinkCreate, ArtifactLinkMetadata
 from app.services.traceability_service import TraceabilityService
@@ -11,6 +12,7 @@ from app.services.traceability_service import TraceabilityService
 router = APIRouter()
 
 TRACEABILITY_ERROR_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
     status.HTTP_409_CONFLICT: {"model": ErrorResponse},
     status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
     status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": ErrorResponse},
@@ -27,9 +29,11 @@ TRACEABILITY_ERROR_RESPONSES = {
 async def create_artifact_link(
     project_id: str,
     request: ArtifactLinkCreate,
+    current_user: CurrentUser = Depends(get_current_user),
     traceability_service: TraceabilityService = Depends(get_traceability_service),
 ) -> ArtifactLinkMetadata:
     """Create a traceability link between artifact items."""
+    assert_project_access(current_user, project_id, "artifact:generate")
     request.project_id = project_id
     return await traceability_service.create_link(request)
 
@@ -41,9 +45,11 @@ async def create_artifact_link(
 )
 async def list_project_artifact_links(
     project_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     traceability_service: TraceabilityService = Depends(get_traceability_service),
 ) -> list[ArtifactLinkMetadata]:
     """List all artifact links in a project."""
+    assert_project_access(current_user, project_id, "artifact:read")
     return await traceability_service.list_project_links(project_id=project_id)
 
 
@@ -55,9 +61,11 @@ async def list_project_artifact_links(
 async def list_artifact_links(
     project_id: str,
     artifact_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     traceability_service: TraceabilityService = Depends(get_traceability_service),
 ) -> list[ArtifactLinkMetadata]:
     """List links where the artifact is either the source or the target."""
+    assert_project_access(current_user, project_id, "artifact:read")
     return await traceability_service.list_artifact_links(
         project_id=project_id,
         artifact_id=artifact_id,

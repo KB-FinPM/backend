@@ -6,8 +6,14 @@ import json
 import pytest
 
 from app.agents.core_agents.requirement_agent.agent import RequirementAgent
+from app.agents.core_agents.validator_agent.agent import ValidatorAgent
 from app.schemas.agent import AgentRequest
-from util.agent_generation_utils import RequirementAtom
+from app.schemas.artifact import ArtifactType
+from util.agent_generation_utils import (
+    RequirementAtom,
+    assign_requirement_ids,
+    atoms_to_requirement_artifact,
+)
 
 
 class FakeRequirementOrchestrator:
@@ -153,11 +159,13 @@ async def test_requirement_agent_batches_table_candidates() -> None:
         for index in range(1, 6)
     ]
     orchestrator = FakeRequirementOrchestrator(atoms)
-    agent = RequirementAgent()
+    agent = RequirementAgent(
+        model_invoker=orchestrator,
+        requirement_atom_extractor=orchestrator.extract_requirement_atoms_from_pipe_tables,
+    )
     request = AgentRequest(
         project_id="PRJ-001",
         documents=[{"chunk_id": "CHUNK-001", "document_id": "DOC-001", "text": "dummy"}],
-        context={"generation_orchestrator": orchestrator},
     )
 
     response = await agent.generate(request)
@@ -171,7 +179,10 @@ async def test_requirement_agent_batches_table_candidates() -> None:
 @pytest.mark.anyio
 async def test_requirement_agent_includes_meeting_note_context() -> None:
     orchestrator = CapturingRequirementOrchestrator([])
-    agent = RequirementAgent()
+    agent = RequirementAgent(
+        model_invoker=orchestrator,
+        requirement_atom_extractor=orchestrator.extract_requirement_atoms_from_pipe_tables,
+    )
     request = AgentRequest(
         project_id="PRJ-001",
         documents=[
@@ -194,7 +205,6 @@ async def test_requirement_agent_includes_meeting_note_context() -> None:
                 },
             },
         ],
-        context={"generation_orchestrator": orchestrator},
     )
 
     response = await agent.generate(request)
@@ -205,3 +215,158 @@ async def test_requirement_agent_includes_meeting_note_context() -> None:
     assert source_context is not None
     assert source_context["meeting_note_titles"] == ["2026-06-01 주간회의록.docx"]
     assert source_context["meeting_notes"][0]["document_type"] == "MEETING_NOTES"
+
+
+def test_requirement_artifact_fills_empty_descriptions() -> None:
+    artifact = atoms_to_requirement_artifact(
+        [
+            RequirementAtom(
+                requirement_id="REQ-001",
+                title="회원 목록 조회",
+                requirement_name="회원 목록 조회",
+                description="",
+            )
+        ],
+        project_id="PRJ-001",
+        generated_by="RequirementAgent",
+    )
+
+    assert artifact["requirements"][0]["description"] == "회원 목록 조회"
+
+
+def test_requirement_artifact_prefers_title_for_empty_descriptions() -> None:
+    artifact = atoms_to_requirement_artifact(
+        [
+            RequirementAtom(
+                requirement_id="REQ-001",
+                title="타이틀 우선",
+                requirement_name="요구사항명 대체",
+                description="",
+                feature="기능 대체",
+            )
+        ],
+        project_id="PRJ-001",
+        generated_by="RequirementAgent",
+    )
+
+    assert artifact["requirements"][0]["description"] == "타이틀 우선"
+
+
+def test_requirement_agent_table_fallback_fills_empty_descriptions() -> None:
+    agent = RequirementAgent()
+    payload = agent._table_atom_fallback_payload(
+        RequirementAtom(
+            requirement_id="REQ-001",
+            title="",
+            requirement_name="회원 목록 조회",
+            description=" ",
+            feature="회원 관리",
+        )
+    )
+
+    assert payload["title"] == "회원 목록 조회"
+    assert payload["description"] == "회원 목록 조회"
+
+
+def test_requirement_agent_table_fallback_prefers_title_for_description() -> None:
+    agent = RequirementAgent()
+    payload = agent._table_atom_fallback_payload(
+        RequirementAtom(
+            requirement_id="REQ-001",
+            title="타이틀 우선",
+            requirement_name="요구사항명 대체",
+            description="",
+            feature="기능 대체",
+        )
+    )
+
+    assert payload["description"] == "타이틀 우선"
+
+
+def test_requirement_agent_table_fallback_does_not_promote_title_to_id() -> None:
+    agent = RequirementAgent()
+    payload = agent._table_atom_fallback_payload(
+        RequirementAtom(
+            requirement_id="KB통합품질관리시스템(IQMS)",
+            title="KB통합품질관리시스템(IQMS)",
+            requirement_name="KB통합품질관리시스템(IQMS)",
+            description="시스템 요구사항을 확인한다.",
+        )
+    )
+
+    assert payload["requirement_id"] == ""
+    assert payload["title"] == "KB통합품질관리시스템(IQMS)"
+    assert payload["source_requirement_id_raw"] == "KB통합품질관리시스템(IQMS)"
+
+
+def test_assign_requirement_ids_replaces_non_identifier_duplicates() -> None:
+    atoms = assign_requirement_ids(
+        [
+            RequirementAtom(
+                requirement_id="프론트엔드 구현",
+                title="프론트엔드 구현",
+                requirement_name="프론트엔드 구현",
+                description="프론트엔드 화면을 구현한다.",
+                metadata={
+                    "source": "구축요건정의서",
+                    "raw_table_category": "서비스",
+                },
+            ),
+            RequirementAtom(
+                requirement_id="프론트엔드 구현",
+                title="프론트엔드 구현",
+                requirement_name="프론트엔드 구현",
+                description="프론트엔드 상태 관리를 구현한다.",
+                metadata={
+                    "source": "구축요건정의서",
+                    "raw_table_category": "서비스",
+                },
+            ),
+        ]
+    )
+
+    requirement_ids = [atom.requirement_id for atom in atoms]
+    assert requirement_ids == ["BSR-00001", "BSR-00002"]
+    assert len(requirement_ids) == len(set(requirement_ids))
+    assert atoms[0].metadata["source_requirement_id_raw"] == "프론트엔드 구현"
+    assert atoms[1].metadata["source_requirement_id_raw"] == "프론트엔드 구현"
+
+
+@pytest.mark.anyio
+async def test_validator_accepts_fallback_artifact_after_id_assignment() -> None:
+    atoms = assign_requirement_ids(
+        [
+            RequirementAtom(
+                requirement_id="업무서비스 IQ+ CI/CD 배포 방식 변경",
+                title="업무서비스 IQ+ CI/CD 배포 방식 변경",
+                requirement_name="업무서비스 IQ+ CI/CD 배포 방식 변경",
+                description="CI/CD 배포 방식을 변경한다.",
+                metadata={
+                    "source": "구축요건정의서",
+                    "raw_table_category": "서비스",
+                },
+            ),
+            RequirementAtom(
+                requirement_id="업무서비스 IQ+ CI/CD 배포 방식 변경",
+                title="업무서비스 IQ+ CI/CD 배포 방식 변경",
+                requirement_name="업무서비스 IQ+ CI/CD 배포 방식 변경",
+                description="변경된 배포 절차를 검증한다.",
+                metadata={
+                    "source": "구축요건정의서",
+                    "raw_table_category": "서비스",
+                },
+            ),
+        ]
+    )
+    artifact = atoms_to_requirement_artifact(
+        atoms,
+        project_id="pmpm",
+        generated_by="RequirementAgent",
+    )
+
+    response = await ValidatorAgent().validate(
+        artifact,
+        expected_artifact_type=ArtifactType.REQUIREMENT_SPEC,
+    )
+
+    assert response.success is True

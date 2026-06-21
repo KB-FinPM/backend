@@ -1,0 +1,53 @@
+[
+  {
+    "name": "explicit_subject_with_month_day",
+    "meeting_notes": "김민수는 로그인 범위 검토를 6월 14일까지 진행한다.",
+    "current_date": "2026-06-10",
+    "expected_count": 1,
+    "expected_assignee": "김민수",
+    "expected_due_date": "2026-06-14",
+    "expected_title_contains": "로그인 범위 검토",
+    "expected_status": "TODO"
+  },
+  {
+    "name": "colon_assignee_this_week_friday",
+    "meeting_notes": "이영희: API 예외 정책 정리, 이번 주 금요일까지",
+    "current_date": "2026-06-10",
+    "expected_count": 1,
+    "expected_assignee": "이영희",
+    "expected_due_date": "2026-06-12",
+    "expected_title_contains": "API 예외 정책 정리",
+    "expected_status": "TODO"
+  },
+  {
+    "name": "unparsed_next_meeting_due",
+    "meeting_notes": "박PM이 다음 회의 전까지 화면설계서 초안 검토",
+    "current_date": "2026-06-10",
+    "expected_count": 1,
+    "expected_assignee": "박PM",
+    "expected_due_date": null,
+    "expected_title_contains": "화면설계서 초안 검토",
+    "expected_status": "NEEDS_CONFIRMATION",
+    "expected_unparsed_due": "다음 회의 전까지"
+  },
+  {
+    "name": "placeholder_assignee",
+    "meeting_notes": "담당자 미정: 권한 정책 확인 필요",
+    "current_date": "2026-06-10",
+    "expected_count": 1,
+    "expected_assignee": null,
+    "expected_due_date": null,
+    "expected_title_contains": "권한 정책 확인",
+    "expected_status": "NEEDS_CONFIRMATION"
+  },
+  {
+    "name": "duplicate_same_source",
+    "meeting_notes": "김민수는 로그인 범위 검토를 6월 14일까지 진행한다. 김민수는 로그인 범위 검토를 6월 14일까지 진행한다.",
+    "current_date": "2026-06-10",
+    "expected_count": 1,
+    "expected_assignee": "김민수",
+    "expected_due_date": "2026-06-14",
+    "expected_title_contains": "로그인 범위 검토",
+    "expected_status": "TODO"
+  }
+]

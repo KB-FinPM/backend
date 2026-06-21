@@ -765,6 +765,33 @@ class ArtifactExportService:
             "id": task.get("wbs_id") or metadata.get("wbs_id") or task.get("task_id", ""),
             "wbs_name": task.get("name", ""),
             "deliverable": metadata.get("deliverable", ""),
+            "worker": (
+                task.get("worker")
+                or metadata.get("worker")
+                or task.get("assignee")
+                or metadata.get("assignee")
+                or task.get("owner")
+                or metadata.get("owner")
+                or ""
+            ),
+            "work_status": (
+                task.get("work_status")
+                or metadata.get("work_status")
+                or task.get("status")
+                or metadata.get("status")
+                or task.get("raw_status")
+                or metadata.get("raw_status")
+                or ""
+            ),
+            "status": (
+                task.get("status")
+                or metadata.get("status")
+                or task.get("work_status")
+                or metadata.get("work_status")
+                or task.get("raw_status")
+                or metadata.get("raw_status")
+                or ""
+            ),
             "planned_start_date": (
                 task.get("planned_start_date")
                 or metadata.get("planned_start_date")
@@ -870,11 +897,13 @@ class ArtifactExportService:
             "시작예정일": 5,
             "종료예정일": 6,
             "작업자": 7,
+            "작업상태": 12,
         }
         forced_fields = [
             ("시작예정일", "start_date|planned_start_date"),
             ("종료예정일", "end_date|planned_end_date"),
             ("작업자", "worker|assignee|owner"),
+            ("작업상태", "work_status|status|raw_status"),
         ]
 
         for row_offset, task in enumerate(tasks or []):

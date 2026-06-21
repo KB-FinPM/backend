@@ -40,6 +40,31 @@ class ArtifactAgent:
         self.screen_design_generator = screen_design_generator
         self.unit_test_generator = unit_test_generator
 
+    def with_model_invoker(self, model_invoker) -> "ArtifactAgent":
+        return ArtifactAgent(
+            requirement_generator=self._bind_model_invoker(
+                self.requirement_generator,
+                model_invoker,
+            ),
+            wbs_generator=self._bind_model_invoker(
+                self.wbs_generator,
+                model_invoker,
+            ),
+            screen_design_generator=self._bind_model_invoker(
+                self.screen_design_generator,
+                model_invoker,
+            ),
+            unit_test_generator=self._bind_model_invoker(
+                self.unit_test_generator,
+                model_invoker,
+            ),
+        )
+
+    def _bind_model_invoker(self, generator, model_invoker):
+        if hasattr(generator, "with_model_invoker"):
+            return generator.with_model_invoker(model_invoker)
+        return generator
+
     async def generate(self, request: AgentRequest) -> AgentResponse:
         artifact_type = self._target_artifact_type(request)
         logger.info(

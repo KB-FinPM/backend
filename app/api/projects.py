@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Body, Depends, status
 
+from app.core.auth import CurrentUser, assert_project_access
 from app.core.exceptions import ApiError
-from app.dependencies import get_project_service
+from app.dependencies import get_current_user, get_project_service
 from app.schemas.project import ProjectCreate, ProjectMetadata, ProjectUpdate
 from app.schemas.response import ErrorResponse
 from app.services.project_service import ProjectService
@@ -24,8 +25,12 @@ PROJECT_ERROR_RESPONSES = {
 )
 async def create_project(
     request: ProjectCreate = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
     project_service: ProjectService = Depends(get_project_service),
 ) -> ProjectMetadata:
+    assert_project_access(current_user, request.project_id, "project:write")
+    if not request.created_by:
+        request.created_by = current_user.user_id
     return await project_service.create_project(request)
 
 
@@ -35,8 +40,10 @@ async def create_project(
     responses=PROJECT_ERROR_RESPONSES,
 )
 async def list_projects(
+    current_user: CurrentUser = Depends(get_current_user),
     project_service: ProjectService = Depends(get_project_service),
 ) -> list[ProjectMetadata]:
+    assert_project_access(current_user, "*", "project:read")
     return await project_service.list_projects()
 
 
@@ -47,8 +54,10 @@ async def list_projects(
 )
 async def get_project(
     project_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     project_service: ProjectService = Depends(get_project_service),
 ) -> ProjectMetadata:
+    assert_project_access(current_user, project_id, "project:read")
     project = await project_service.get_project(project_id)
     if project is None:
         raise ApiError(
@@ -68,8 +77,10 @@ async def get_project(
 async def update_project(
     project_id: str,
     request: ProjectUpdate = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
     project_service: ProjectService = Depends(get_project_service),
 ) -> ProjectMetadata:
+    assert_project_access(current_user, project_id, "project:write")
     project = await project_service.update_project(project_id, request)
     if project is None:
         raise ApiError(

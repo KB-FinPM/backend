@@ -2,9 +2,8 @@
 # KO: 구조화된 컨텍스트를 기반으로 요구사항 산출물을 생성하는 Core Agent입니다.
 
 import json
-import inspect
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -19,6 +18,8 @@ from util.agent_generation_utils import (
     normalize_requirement_atoms,
     parse_json_array,
     parse_json_object,
+    extract_requirement_atoms_from_pipe_tables,
+    looks_like_requirement_identifier,
 )
 from util.agent_template_utils import mapper_summary_for_prompt
 
@@ -148,12 +149,29 @@ class RequirementAgent:
 
     AGENT_NAME = "RequirementAgent"
 
+    def __init__(
+        self,
+        *,
+        model_invoker: Any = None,
+        requirement_atom_extractor: Callable[[list[dict]], list[Any]] = (
+            extract_requirement_atoms_from_pipe_tables
+        ),
+    ) -> None:
+        self.model_invoker = model_invoker
+        self.requirement_atom_extractor = requirement_atom_extractor
+
+    def with_model_invoker(self, model_invoker: Any) -> "RequirementAgent":
+        return RequirementAgent(
+            model_invoker=model_invoker,
+            requirement_atom_extractor=self.requirement_atom_extractor,
+        )
+
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(f"[{self.AGENT_NAME}] generate start | project_id={request.project_id}")
         started_at = perf_counter()
 
         try:
-            result = await self._generate_with_orchestrator(request)
+            result = await self._generate_with_model(request)
             if result is None:
                 documents = normalize_requirement_documents(request.documents)
                 atoms = normalize_requirement_atoms(None, documents=documents)
@@ -184,15 +202,15 @@ class RequirementAgent:
             logger.error(f"[{self.AGENT_NAME}] error: {exc}")
             return AgentResponse(success=False, agent_name=self.AGENT_NAME, error=str(exc))
 
-    async def _generate_with_orchestrator(
+    async def _generate_with_model(
         self,
         request: AgentRequest,
     ) -> dict[str, Any] | None:
         started_at = perf_counter()
-        orchestrator = (request.context or {}).get("generation_orchestrator")
-        if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
+        model_invoker = self.model_invoker
+        if model_invoker is None or not hasattr(model_invoker, "invoke_agent_llm"):
             logger.info(
-                f"[{self.AGENT_NAME}] orchestrator unavailable | "
+                f"[{self.AGENT_NAME}] model invoker unavailable | "
                 f"project_id={request.project_id}"
             )
             return None
@@ -230,7 +248,7 @@ class RequirementAgent:
         # requirement tables. Extract deterministic candidates first, then send
         # them through the orchestrator LLM boundary so the Bedrock path and
         # logging are exercised consistently.
-        table_atoms = orchestrator.extract_requirement_atoms_from_pipe_tables(documents)
+        table_atoms = self.requirement_atom_extractor(documents)
         logger.info(
             f"[{self.AGENT_NAME}] table extraction result | "
             f"project_id={request.project_id} | table_atom_count={len(table_atoms)}"
@@ -262,20 +280,19 @@ class RequirementAgent:
                     f"call={batch_index}/{total_calls} | "
                     f"batch_size={len(batch)} | prompt_chars={prompt_chars}"
                 )
-                llm_result = await orchestrator.invoke_agent_llm(
+                llm_result = await self._invoke_model_or_fallback(
+                    model_invoker,
                     system_prompt=TABLE_BATCH_REFINEMENT_SYSTEM_PROMPT,
                     user_prompt=prompt,
                     call_index=batch_index,
                     call_total=total_calls,
                     call_label="requirement-table-batch",
                 )
+                if llm_result is None:
+                    for atom in batch:
+                        chunk_items.append(self._table_atom_fallback_payload(atom))
+                    continue
                 llm_call_count += 1
-                await self._report_generation_progress(
-                    request,
-                    current=batch_index,
-                    total=total_calls,
-                    label="requirement-table-batch",
-                )
                 parsed_items = self._parse_table_batch_response(llm_result)
                 for atom, parsed_item in zip(batch, parsed_items):
                     chunk_items.append(self._merge_table_atom_with_result(atom, parsed_item))
@@ -342,20 +359,17 @@ class RequirementAgent:
                 f"chunk_count={len(batch)} | text_chars={text_chars} | "
                 f"prompt_chars={prompt_chars}"
             )
-            llm_result = await orchestrator.invoke_agent_llm(
+            llm_result = await self._invoke_model_or_fallback(
+                model_invoker,
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
                 user_prompt=prompt,
                 call_index=batch_index,
                 call_total=total_calls,
                 call_label="requirement-batch",
             )
+            if llm_result is None:
+                return None
             llm_call_count += 1
-            await self._report_generation_progress(
-                request,
-                current=batch_index,
-                total=total_calls,
-                label="requirement-batch",
-            )
             chunk_items = parse_json_array(llm_result)
             if not chunk_items:
                 parsed_obj = parse_json_object(llm_result)
@@ -404,17 +418,37 @@ class RequirementAgent:
         )
         return result
 
+    async def _invoke_model_or_fallback(
+        self,
+        model_invoker: Any,
+        **kwargs: Any,
+    ) -> str | None:
+        try:
+            return await model_invoker.invoke_agent_llm(**kwargs)
+        except RuntimeError as exc:
+            if not self._allows_local_llm_fallback():
+                raise
+            logger.warning(
+                f"[{self.AGENT_NAME}] LLM unavailable in non-production; "
+                f"using deterministic fallback | label={kwargs.get('call_label') or 'n/a'} | "
+                f"error_type={type(exc).__name__}"
+            )
+            return None
+
+    def _allows_local_llm_fallback(self) -> bool:
+        return str(settings.APP_ENV or "").strip().lower() not in {
+            "prod",
+            "production",
+            "release",
+        }
+
     def _build_table_prompt(
         self,
         request: AgentRequest,
         documents: list[dict[str, Any]],
         table_atoms: list[Any],
     ) -> str:
-        context = {
-            key: value
-            for key, value in (request.context or {}).items()
-            if key != "generation_orchestrator"
-        }
+        context = dict(request.context or {})
         candidates = [
             {
                 "requirement_id": atom.requirement_id,
@@ -463,11 +497,7 @@ Template mapper summary:
         index: int,
         total: int,
     ) -> str:
-        context = {
-            key: value
-            for key, value in (request.context or {}).items()
-            if key != "generation_orchestrator"
-        }
+        context = dict(request.context or {})
         candidates = [
             {
                 "requirement_id": atom.requirement_id,
@@ -506,11 +536,7 @@ Template mapper summary:
         index: int,
         total: int,
     ) -> str:
-        context = {
-            key: value
-            for key, value in (request.context or {}).items()
-            if key != "generation_orchestrator"
-        }
+        context = dict(request.context or {})
         candidate = {
             "requirement_id": atom.requirement_id,
             "category": atom.category,
@@ -573,11 +599,7 @@ Candidate:
         index: int,
         total: int,
     ) -> str:
-        context = {
-            key: value
-            for key, value in (request.context or {}).items()
-            if key != "generation_orchestrator"
-        }
+        context = dict(request.context or {})
         metadata = document.get("metadata") or {}
         project_type = (
             context.get("project_type")
@@ -607,11 +629,7 @@ Template mapper summary:
         index: int,
         total: int,
     ) -> str:
-        context = {
-            key: value
-            for key, value in (request.context or {}).items()
-            if key != "generation_orchestrator"
-        }
+        context = dict(request.context or {})
         source_chunks = []
         for document in documents:
             metadata = document.get("metadata") or {}
@@ -724,29 +742,6 @@ source_chunks:
                 return document
         return None
 
-    async def _report_generation_progress(
-        self,
-        request: AgentRequest,
-        *,
-        current: int,
-        total: int,
-        label: str,
-    ) -> None:
-        reporter = (request.context or {}).get("generation_progress_reporter")
-        if reporter is None or not callable(reporter):
-            return
-        progress = 0 if total <= 0 else int(round(current * 100 / total))
-        payload = {
-            "current": current,
-            "total": total,
-            "progress": progress,
-            "progress_text": f"{current}/{total}",
-            "label": label,
-        }
-        result = reporter(payload)
-        if inspect.isawaitable(result):
-            await result
-
     def _parse_table_batch_response(self, llm_result: str) -> list[dict[str, Any]]:
         parsed_items = parse_json_array(llm_result)
         if parsed_items:
@@ -777,7 +772,10 @@ source_chunks:
                 "title": parsed_item.get("requirement_name")
                 or parsed_item.get("title")
                 or payload["title"],
-                "description": parsed_item.get("description") or payload["description"],
+                "description": self._first_non_empty_text(
+                    parsed_item.get("description"),
+                    payload["description"],
+                ),
                 "requirement_type": parsed_item.get("requirement_type")
                 or payload["requirement_type"],
                 "domain": parsed_item.get("domain") or payload["domain"],
@@ -789,29 +787,67 @@ source_chunks:
         )
         return payload
 
+    def _first_non_empty_text(self, *values: Any) -> str:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _safe_description(self, atom: Any) -> str:
+        return self._first_non_empty_text(
+            getattr(atom, "description", ""),
+            getattr(atom, "title", ""),
+            getattr(atom, "requirement_name", ""),
+            getattr(atom, "feature", ""),
+            getattr(atom, "biz_requirement_name", ""),
+            getattr(atom, "requirement_id", ""),
+            "요구사항 상세 설명 확인 필요",
+        )
+
+    def _safe_requirement_id(self, atom: Any) -> str:
+        raw_id = self._first_non_empty_text(getattr(atom, "requirement_id", ""))
+        return raw_id if looks_like_requirement_identifier(raw_id) else ""
+
     def _table_atom_fallback_payload(self, atom: Any) -> dict[str, Any]:
+        metadata = getattr(atom, "metadata", {}) or {}
+        raw_requirement_id = self._first_non_empty_text(
+            getattr(atom, "requirement_id", ""),
+        )
+        requirement_id = self._safe_requirement_id(atom)
+        title = self._first_non_empty_text(
+            getattr(atom, "title", ""),
+            getattr(atom, "requirement_name", ""),
+            getattr(atom, "feature", ""),
+            raw_requirement_id,
+            "요구사항",
+        )
         return {
-            "requirement_id": atom.requirement_id,
-            "title": atom.title,
-            "description": atom.description,
-            "priority": atom.priority,
-            "source_document_id": atom.source_document_id,
-            "source_chunk_ids": atom.source_chunk_ids,
-            "source_doc": atom.metadata.get("source_doc")
-            or atom.metadata.get("source_file_name")
-            or atom.source_document_id,
-            "source_file_name": atom.metadata.get("source_file_name")
-            or atom.metadata.get("source_doc")
-            or atom.source_document_id,
-            "acceptance_criteria": atom.acceptance_criteria,
-            "rationale": atom.rationale,
-            "category": atom.category,
-            "requirement_type": atom.requirement_type,
-            "biz_requirement_id": atom.biz_requirement_id,
-            "biz_requirement_name": atom.biz_requirement_name,
-            "domain": atom.domain,
-            "feature": atom.feature,
-            "note": atom.rationale,
+            "requirement_id": requirement_id,
+            "title": title,
+            "description": self._safe_description(atom),
+            "priority": getattr(atom, "priority", "SHOULD"),
+            "source_document_id": getattr(atom, "source_document_id", ""),
+            "source_chunk_ids": getattr(atom, "source_chunk_ids", []),
+            "source_doc": metadata.get("source_doc")
+            or metadata.get("source_file_name")
+            or getattr(atom, "source_document_id", ""),
+            "source_file_name": metadata.get("source_file_name")
+            or metadata.get("source_doc")
+            or getattr(atom, "source_document_id", ""),
+            "acceptance_criteria": getattr(atom, "acceptance_criteria", []),
+            "rationale": getattr(atom, "rationale", ""),
+            "category": getattr(atom, "category", ""),
+            "requirement_type": getattr(atom, "requirement_type", ""),
+            "biz_requirement_id": getattr(atom, "biz_requirement_id", ""),
+            "biz_requirement_name": getattr(atom, "biz_requirement_name", ""),
+            "domain": getattr(atom, "domain", ""),
+            "feature": getattr(atom, "feature", ""),
+            "note": getattr(atom, "rationale", ""),
+            "source_requirement_id_raw": raw_requirement_id,
+            "raw_table_category": metadata.get("raw_table_category"),
+            "raw_table_title": metadata.get("raw_table_title"),
+            "source": metadata.get("source") or "구축요건정의서",
         }
 
 

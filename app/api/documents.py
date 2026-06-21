@@ -7,8 +7,9 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import Response
 
+from app.core.auth import CurrentUser, assert_project_access
 from app.core.exceptions import ApiError
-from app.dependencies import get_document_service
+from app.dependencies import get_current_user, get_document_service
 from app.schemas.artifact import DocumentMetadata
 from app.schemas.response import BaseResponse, ErrorResponse
 from app.services.document_service import DocumentService
@@ -31,9 +32,11 @@ DOCUMENT_ERROR_RESPONSES = {
 )
 async def list_documents(
     project_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> list[DocumentMetadata]:
     """List documents that belong to a project."""
+    assert_project_access(current_user, project_id, "document:read")
     return await document_service.list_documents(project_id=project_id)
 
 
@@ -44,9 +47,11 @@ async def list_documents(
 )
 async def list_project_files(
     project_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> list[DocumentMetadata]:
     """Compatibility alias for file-manager views; documents remain source of truth."""
+    assert_project_access(current_user, project_id, "document:read")
     return await document_service.list_documents(project_id=project_id)
 
 
@@ -58,9 +63,11 @@ async def list_project_files(
 async def get_document(
     project_id: str,
     document_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentMetadata:
     """Read one project-scoped document metadata record."""
+    assert_project_access(current_user, project_id, "document:read")
     document = await document_service.get_document(
         project_id=project_id,
         document_id=document_id,
@@ -83,8 +90,10 @@ async def get_document(
 async def download_project_file(
     project_id: str,
     file_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> Response:
+    assert_project_access(current_user, project_id, "document:read")
     document = await document_service.get_document(
         project_id=project_id,
         document_id=file_id,
@@ -128,8 +137,10 @@ async def download_project_file(
 async def delete_project_file(
     project_id: str,
     file_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> BaseResponse:
+    assert_project_access(current_user, project_id, "document:write")
     deleted = await document_service.delete_document(
         project_id=project_id,
         document_id=file_id,
