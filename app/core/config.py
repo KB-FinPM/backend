@@ -45,11 +45,31 @@ class Settings(BaseSettings):
 
     BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-4-5"
     BEDROCK_INFERENCE_PROFILE_ID: str = ""
+    BEDROCK_CONNECT_TIMEOUT_SECONDS: int = 10
+    BEDROCK_READ_TIMEOUT_SECONDS: int = 900
+    BEDROCK_MAX_ATTEMPTS: int = 3
+
+    GENERATION_RETRIEVAL_TOP_K: int = 80
+    GENERATION_MAX_SOURCE_CHUNKS: int = 80
+    GENERATION_REQUIREMENT_BATCH_SIZE: int = 8
+    GENERATION_REQUIREMENT_RETRIEVAL_TOP_K: int = 40
+    GENERATION_REQUIREMENT_TABLE_BATCH_SIZE: int = 4
+    GENERATION_REQUIREMENT_SOURCE_TEXT_LIMIT: int = 1800
+
+    EMBEDDING_MODEL_NAME: str = "intfloat/multilingual-e5-large"
+    EMBEDDING_DIMENSIONS: int = 1024
+    EMBEDDING_NORMALIZE: bool = True
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./finpm.db"
     DATABASE_SSL_VERIFY: bool = True
+    SQLALCHEMY_ECHO: bool = False
+    SQLALCHEMY_HIDE_PARAMETERS: bool = True
 
-    VECTOR_STORE_TYPE: str = "pgvector"
+    UPLOAD_MAX_BYTES: int = 25 * 1024 * 1024
+    UPLOAD_READ_CHUNK_BYTES: int = 1024 * 1024
+    UPLOAD_MAX_PDF_PAGES: int = 200
+    UPLOAD_MAX_SPREADSHEET_SHEETS: int = 20
+    UPLOAD_MAX_SPREADSHEET_ROWS: int = 10000
 
     @field_validator("DEBUG", mode="before")
     @classmethod

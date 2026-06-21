@@ -443,7 +443,6 @@
       "min_columns": 2,
       "start_row": 1,
       "target_column": 1,
-      "max_items": 10,
       "clear_rows_before_fill": true,
       "display_items_field": "display_items",
       "text_format": "{item_name}: {description}"

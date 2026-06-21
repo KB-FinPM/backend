@@ -133,6 +133,7 @@ class UploadDocumentService:
         storage_path: str,
         file_bytes: bytes,
         parsed_context: dict | None = None,
+        progress_reporter=None,
     ) -> DocumentMetadata:
         self.received_document_id = document_id
         self.received_parsed_context = parsed_context
@@ -279,6 +280,7 @@ async def test_user_flow_generates_wbs_from_requirement_spec(
             message="요구사항 정의서를 기준으로 WBS 만들어줘",
             context={
                 "project_name": PROJECT_NAME,
+                "start_date": "2025-01-20",
                 "selected_document_ids": ["DOC-REQ-001"],
                 "selected_documents": [
                     {
@@ -292,13 +294,42 @@ async def test_user_flow_generates_wbs_from_requirement_spec(
         )
     )
 
-    assert first_response.state == "WAITING_CONFIRMATION"
-    assert first_response.pending_action is not None
+    assert first_response.state == "WAITING_REQUIRED_INFO"
+    assert first_response.pending_action is None
+    assert first_response.result["wbs_precheck"]["source_file_name"] == (
+        "kb-requirement-spec.xlsx"
+    )
+
+    confirmed_response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id=PROJECT_ID,
+            conversation_id=first_response.conversation_id,
+            user_id="USER-001",
+            message="확정됨, WBS 생성",
+            context={
+                "project_name": PROJECT_NAME,
+                "start_date": "2025-01-20",
+                "requirements_confirmed": True,
+                "selected_document_ids": ["DOC-REQ-001"],
+                "selected_documents": [
+                    {
+                        "document_id": "DOC-REQ-001",
+                        "file_name": "kb-requirement-spec.xlsx",
+                        "display_label": "requirement spec",
+                    }
+                ],
+                "source_document_type": "REQUIREMENT_SPEC",
+            },
+        )
+    )
+
+    assert confirmed_response.state == "WAITING_CONFIRMATION"
+    assert confirmed_response.pending_action is not None
 
     completed_response = await orchestrator.handle_message(
         confirm_request(
-            first_response.conversation_id,
-            first_response.pending_action.action_id,
+            confirmed_response.conversation_id,
+            confirmed_response.pending_action.action_id,
         )
     )
 

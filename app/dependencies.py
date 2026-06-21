@@ -2,8 +2,9 @@
 # KO: Repository 및 공통 리소스를 제공하는 FastAPI 의존성 팩토리입니다.
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
+from fastapi import Depends, Header
 
+from app.core.auth import CurrentUser
 from app.db.session import get_session
 from app.orchestrator.input_orchestrator import InputOrchestrator, input_orchestrator
 from app.orchestrator.chat_orchestrator import ChatOrchestrator
@@ -16,23 +17,41 @@ from app.repositories.artifact_link_repository import ArtifactLinkRepository
 from app.repositories.action_item_repository import ActionItemRepository
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.project_repository import ProjectRepository
 from app.repositories.template_repository import TemplateRepository
 from app.orchestrator.generation_orchestrator import generation_orchestrator
+from app.rag.embedding import embedding_service
 from app.rag.retrieval import RetrievalService
 from app.services.artifact_service import ArtifactService
 from app.services.chat_service import ChatService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.project_service import ProjectService
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 from app.services.traceability_service import TraceabilityService
 from app.storage.s3 import s3_service
 
 
+def get_current_user(
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+) -> CurrentUser:
+    # MVP auth shim. Production should validate a JWT/session and derive this
+    # value from trusted claims, not from a user-editable frontend constant.
+    user_id = str(x_user_id or "local-dev-user").strip() or "local-dev-user"
+    return CurrentUser(user_id=user_id)
+
+
 def get_document_repository(
     session: AsyncSession = Depends(get_session),
 ) -> DocumentRepository:
     return DocumentRepository(session)
+
+
+def get_project_repository(
+    session: AsyncSession = Depends(get_session),
+) -> ProjectRepository:
+    return ProjectRepository(session)
 
 
 def get_artifact_repository(
@@ -71,6 +90,12 @@ def get_document_service(
     return DocumentService(document_repository, s3_service)
 
 
+def get_project_service(
+    project_repository: ProjectRepository = Depends(get_project_repository),
+) -> ProjectService:
+    return ProjectService(project_repository)
+
+
 def get_artifact_service(
     artifact_repository: ArtifactRepository = Depends(get_artifact_repository),
 ) -> ArtifactService:
@@ -96,7 +121,7 @@ def get_schedule_service(
 def get_retrieval_service(
     document_repository: DocumentRepository = Depends(get_document_repository),
 ) -> RetrievalService:
-    return RetrievalService(document_repository)
+    return RetrievalService(document_repository, embedding_service=embedding_service)
 
 
 def get_template_service(

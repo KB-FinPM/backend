@@ -113,6 +113,38 @@ async def test_document_repository_updates_status_and_lists_chunks(
 
 
 @pytest.mark.anyio
+async def test_document_repository_truncates_long_section_titles(session_factory) -> None:
+    long_title = "요구사항명세서-" + "A" * 300
+
+    async with session_factory() as session:
+        repository = DocumentRepository(session)
+        await repository.create_document(
+            document_id="DOC-001",
+            project_id="PRJ-001",
+            document_type=DocumentType.REQUIREMENT_SPEC,
+            file_name="requirement-spec.txt",
+            storage_path="s3://bucket/PRJ-001/raw/DOC-001/requirement-spec.txt",
+        )
+        await repository.create_chunk(
+            chunk_id="CHUNK-001",
+            project_id="PRJ-001",
+            document_id="DOC-001",
+            chunk_index=0,
+            text="First chunk",
+            section_title=long_title,
+        )
+        chunks = await repository.list_chunks_by_document(
+            project_id="PRJ-001",
+            document_id="DOC-001",
+        )
+
+    assert len(chunks) == 1
+    assert chunks[0].section_title is not None
+    assert len(chunks[0].section_title) <= 255
+    assert chunks[0].section_title == long_title[:255]
+
+
+@pytest.mark.anyio
 async def test_document_repository_searches_project_chunks(session_factory) -> None:
     async with session_factory() as session:
         repository = DocumentRepository(session)

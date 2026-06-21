@@ -225,10 +225,9 @@ def test_generate_wbs_sets_target_artifact_type(client: TestClient) -> None:
     assert stub_generation_service.received_request.start_date == "2024-01-10"
     assert stub_generation_service.received_request.project_period == "6개월"
     assert stub_input_orchestrator.received_project_id == "PRJ-001"
-    assert stub_input_orchestrator.received_permission_scope == [
-        "project:read",
-        "artifact:generate",
-    ]
+    assert stub_input_orchestrator.received_permission_scope is not None
+    assert "project:read" in stub_input_orchestrator.received_permission_scope
+    assert "artifact:generate" in stub_input_orchestrator.received_permission_scope
     assert stub_input_orchestrator.received_input_type == "ARTIFACT_REQUEST"
     assert stub_input_orchestrator.received_context is not None
     assert stub_input_orchestrator.received_context["project_id"] == "PRJ-001"

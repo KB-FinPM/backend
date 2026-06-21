@@ -28,9 +28,10 @@ if database_url.startswith("postgresql"):
 
 engine = create_async_engine(
     database_url,
-    echo=settings.DEBUG,
+    echo=settings.SQLALCHEMY_ECHO,
     pool_pre_ping=True,
     connect_args=connect_args,
+    hide_parameters=settings.SQLALCHEMY_HIDE_PARAMETERS,
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -50,6 +51,7 @@ async def init_db() -> None:
         if connection.dialect.name == "postgresql":
             await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await connection.run_sync(Base.metadata.create_all)
+        await _ensure_project_columns(connection)
         await _ensure_action_item_columns(connection)
 
 
@@ -84,6 +86,31 @@ async def _ensure_action_item_columns(connection) -> None:
             await connection.execute(
                 text(
                     f"ALTER TABLE action_items ADD COLUMN IF NOT EXISTS "
+                    f"{column_name} {column_sql}"
+                )
+            )
+
+
+async def _ensure_project_columns(connection) -> None:
+    columns = {
+        "start_date": "DATE",
+        "end_date": "DATE",
+    }
+    if connection.dialect.name == "sqlite":
+        result = await connection.execute(text("PRAGMA table_info(projects)"))
+        existing_columns = {row[1] for row in result.fetchall()}
+        for column_name, column_sql in columns.items():
+            if column_name not in existing_columns:
+                await connection.execute(
+                    text(f"ALTER TABLE projects ADD COLUMN {column_name} {column_sql}")
+                )
+        return
+
+    if connection.dialect.name == "postgresql":
+        for column_name, column_sql in columns.items():
+            await connection.execute(
+                text(
+                    f"ALTER TABLE projects ADD COLUMN IF NOT EXISTS "
                     f"{column_name} {column_sql}"
                 )
             )

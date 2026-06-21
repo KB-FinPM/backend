@@ -53,6 +53,12 @@ class ScreenDesignAgent:
 
     AGENT_NAME = "ScreenDesignAgent"
 
+    def __init__(self, *, model_invoker=None) -> None:
+        self.model_invoker = model_invoker
+
+    def with_model_invoker(self, model_invoker) -> "ScreenDesignAgent":
+        return ScreenDesignAgent(model_invoker=model_invoker)
+
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(
             f"[{self.AGENT_NAME}] generate start | project_id={request.project_id}"
@@ -72,9 +78,11 @@ class ScreenDesignAgent:
                     error="No requirement context available for screen design generation",
                 )
 
-            screens = await self._generate_with_llm(request, screen_atoms)
+            screens = await self._generate_in_batches(request, screen_atoms)
             if not screens:
                 screens = self._deterministic_screens(screen_atoms)
+            else:
+                screens = self._resequence_screens(screens)
 
             return AgentResponse(
                 agent_name=self.AGENT_NAME,
@@ -88,7 +96,7 @@ class ScreenDesignAgent:
                         "generated_by": self.AGENT_NAME,
                         "source_requirement_count": len(atoms),
                         "screen_requirement_count": len(screen_atoms),
-                        "process_rule": "Create one screen-design page per requirement ID and write only the requirement description into the template Description area",
+                        "process_rule": "Create one screen-design page per requirement ID and use the full requirement context when describing the screen",
                     },
                 },
             )
@@ -96,9 +104,17 @@ class ScreenDesignAgent:
             logger.error(f"[{self.AGENT_NAME}] error: {exc}")
             return AgentResponse(success=False, agent_name=self.AGENT_NAME, error=str(exc))
 
-    async def _generate_with_llm(self, request: AgentRequest, atoms: list[Any]) -> list[dict[str, Any]]:
-        orchestrator = (request.context or {}).get("generation_orchestrator")
-        if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
+    async def _generate_with_llm(
+        self,
+        request: AgentRequest,
+        atoms: list[Any],
+        *,
+        call_index: int = 1,
+        call_total: int = 1,
+        call_label: str = "screen-plan",
+    ) -> list[dict[str, Any]]:
+        model_invoker = self.model_invoker
+        if model_invoker is None or not hasattr(model_invoker, "invoke_agent_llm"):
             return []
 
         prompt = f"""
@@ -108,10 +124,12 @@ Requirement summary:
 {json.dumps(self._build_requirement_digest(atoms), ensure_ascii=False, default=str)}
 """.strip()
 
-        llm_result = await orchestrator.invoke_agent_llm(
+        llm_result = await model_invoker.invoke_agent_llm(
             system_prompt=SCREEN_LLM_SYSTEM_PROMPT,
             user_prompt=prompt,
-            max_tokens=5000,
+            call_index=call_index,
+            call_total=call_total,
+            call_label=call_label,
         )
         parsed = parse_json_object(llm_result)
         if not parsed:
@@ -159,12 +177,30 @@ Requirement summary:
             )
         return normalized
 
+    async def _generate_in_batches(
+        self,
+        request: AgentRequest,
+        atoms: list[Any],
+    ) -> list[dict[str, Any]]:
+        screens = await self._generate_with_llm(
+            request,
+            atoms,
+            call_index=1,
+            call_total=1,
+            call_label="screen-plan",
+        )
+        return screens
+
     def _deterministic_screens(self, atoms: list[Any]) -> list[dict[str, Any]]:
         screens = []
         for index, atom in enumerate(atoms, start=1):
             screen_id = f"SCR-{index:03d}"
             work_description = self._work_description(atom)
-            work_description = self._ensure_screen_description(work_description, self._screen_name(atom, index))
+            if not str(getattr(atom, "description", "") or "").strip():
+                work_description = self._ensure_screen_description(
+                    work_description,
+                    self._screen_name(atom, index),
+                )
             display_items = self._display_items(atom)
             screens.append(
                 {
@@ -186,6 +222,31 @@ Requirement summary:
                 }
             )
         return screens
+
+    def _resequence_screens(self, screens: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for index, screen in enumerate(screens, start=1):
+            if not isinstance(screen, dict):
+                continue
+            source_requirement_ids = screen.get("source_requirement_ids") or []
+            if isinstance(source_requirement_ids, str):
+                source_requirement_ids = [source_requirement_ids]
+            screen_id = f"SCR-{index:03d}"
+            metadata = dict(screen.get("metadata") or {})
+            metadata["screen_no"] = screen_id
+            metadata.setdefault("requirement_id", ", ".join([str(value) for value in source_requirement_ids if value]))
+            metadata.setdefault("requirement_name", str(screen.get("name") or ""))
+            metadata.setdefault("description", str(screen.get("description") or ""))
+            metadata.setdefault("display_items", metadata.get("display_items") or [])
+            normalized.append(
+                {
+                    **screen,
+                    "screen_id": screen_id,
+                    "source_requirement_ids": [str(value) for value in source_requirement_ids if value],
+                    "metadata": metadata,
+                }
+            )
+        return normalized
 
     def _context_requirement_artifact(self, request: AgentRequest):
         context = request.context or {}
@@ -276,7 +337,7 @@ Requirement summary:
             if line.strip()
         ]
         if len(lines) >= 2:
-            return truncate_text("\n".join(lines[:4]), 700)
+            return truncate_text("\n".join(lines), 700)
 
         title = name or "화면"
         fallback_lines = [
@@ -290,7 +351,7 @@ Requirement summary:
         display_items = metadata.get("display_items") or []
         normalized: list[dict[str, str]] = []
         if isinstance(display_items, list):
-            for item in display_items[:8]:
+            for item in display_items:
                 if isinstance(item, dict):
                     item_name = truncate_text(item.get("item_name") or item.get("name") or "", 80)
                     item_desc = truncate_text(item.get("description") or item.get("value") or "", 260)
@@ -306,7 +367,7 @@ Requirement summary:
                     normalized.append(
                         {"item_name": "검증 포인트", "description": "입력값 검증, 조회 결과 반영, 저장 후 상태 변화를 확인한다."}
                     )
-            return normalized[:8]
+            return normalized
         return [
             {"item_name": "Description", "description": truncate_text(description or name, 300)},
             {"item_name": "주요 항목", "description": truncate_text(name, 300)},
@@ -332,7 +393,7 @@ Requirement summary:
                 matches.append(atom.requirement_id)
             elif not matches and any(keyword in candidate_text for keyword in ("화면", "등록", "수정", "조회", "상세", "검색", "버튼", "팝업")):
                 matches.append(atom.requirement_id)
-        return matches[:3]
+        return matches
 
     def _guess_biz_name(self, atoms: list[Any], name: str, description: str) -> str:
         for atom in atoms:

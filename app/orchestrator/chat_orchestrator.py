@@ -1,8 +1,10 @@
 # EN: Orchestrates chat messages, pending actions, and delegated PM workflows.
 
+import asyncio
 from typing import Any
 from uuid import uuid4
 
+from app.core.auth import DEFAULT_MVP_SCOPES
 from app.orchestrator.input_orchestrator import InputOrchestrator, input_orchestrator
 from app.orchestrator.output_orchestrator import (
     OutputOrchestrator,
@@ -31,6 +33,10 @@ from app.schemas.response import GenerationResponse, ScheduleTodoResponse
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.services.generation_service import GenerationService
+from app.services.generation_job_service import (
+    is_generation_action,
+    run_generation_action_job,
+)
 from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 
@@ -195,6 +201,13 @@ class ChatOrchestrator:
                 or request.message,
             )
 
+        if intent == "DOWNLOAD_ARTIFACT":
+            return await self._artifact_download_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                structured_context=structured_context,
+            )
+
         return await self._render_and_save_response(
             conversation=conversation,
             project_id=request.project_id,
@@ -306,6 +319,48 @@ class ChatOrchestrator:
 
         return context
 
+    async def _artifact_download_response(
+        self,
+        *,
+        conversation: ConversationMetadata,
+        project_id: str,
+        structured_context: dict[str, Any],
+    ) -> ChatResponse:
+        artifact_ref = structured_context.get("artifact_ref") or {}
+        artifact_id = artifact_ref.get("artifact_id") or structured_context.get(
+            "artifact_id"
+        )
+        if not artifact_id:
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=project_id,
+                result_json={
+                    "event": "ARTIFACT_DOWNLOAD_REQUIRED_INFO",
+                    "missing_fields": structured_context.get("missing_slots")
+                    or ["artifact_id"],
+                    "available_artifacts": structured_context.get(
+                        "available_artifacts"
+                    )
+                    or [],
+                },
+            )
+
+        artifact = {
+            "artifact_id": artifact_id,
+            "artifact_type": artifact_ref.get("artifact_type")
+            or structured_context.get("artifact_type"),
+            "name": artifact_ref.get("name"),
+        }
+        return await self._render_and_save_response(
+            conversation=conversation,
+            project_id=project_id,
+            result_json={
+                "event": "ARTIFACT_DOWNLOAD_READY",
+                "artifact": artifact,
+                "file_name": artifact_ref.get("file_name"),
+            },
+        )
+
     async def _latest_assistant_message(
         self,
         *,
@@ -352,6 +407,21 @@ class ChatOrchestrator:
         request: ChatMessageRequest,
         structured_context: dict[str, Any],
     ) -> ChatResponse:
+        target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
+        project_start_date = self._project_context_value(request.context, "start_date")
+        if target_artifact_type == ArtifactType.WBS and not str(project_start_date or "").strip():
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                result_json={
+                    "event": "REQUIRED_INFO",
+                    "target_artifact_type": target_artifact_type.value,
+                    "query": request.message,
+                    "missing_fields": ["project_start_date"],
+                    "required_project_fields": ["project_start_date"],
+                },
+            )
+
         source_document_ids = structured_context.get("source_document_ids") or []
         if not source_document_ids:
             return await self._render_and_save_response(
@@ -370,7 +440,6 @@ class ChatOrchestrator:
                 },
             )
 
-        target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
         validation_request = GenerationRequest(
             project_id=request.project_id,
             project_name=request.context.get("project_name"),
@@ -395,15 +464,73 @@ class ChatOrchestrator:
                 },
             )
 
+        source_documents = request.context.get("selected_documents") or []
+        if source_document_ids and not source_documents:
+            source_documents = await self._source_documents_for_ids(
+                project_id=request.project_id,
+                document_ids=source_document_ids,
+            )
+
+        requirements_confirmed = bool(
+            (request.context or {}).get("requirements_confirmed")
+            or (request.context or {}).get("wbs_requirements_confirmed")
+        )
+        if target_artifact_type == ArtifactType.WBS and not requirements_confirmed:
+            first_source_document = source_documents[0] if source_documents else {}
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                result_json={
+                    "event": "REQUIRED_INFO",
+                    "target_artifact_type": target_artifact_type.value,
+                    "query": request.message,
+                    "wbs_precheck": {
+                        "source_document_id": (
+                            first_source_document.get("document_id")
+                            if isinstance(first_source_document, dict)
+                            else None
+                        ),
+                        "source_file_name": (
+                            first_source_document.get("file_name")
+                            if isinstance(first_source_document, dict)
+                            else None
+                        ),
+                        "source_document_type": (
+                            first_source_document.get("document_type")
+                            if isinstance(first_source_document, dict)
+                            else None
+                        ),
+                        "source_documents": source_documents,
+                        "project_start_date": project_start_date,
+                        "requirements_confirmed": False,
+                        "original_message": request.message,
+                    },
+                },
+            )
+
         payload = {
             "project_id": request.project_id,
             "target_artifact_type": target_artifact_type.value,
             "source_document_ids": source_document_ids,
-            "source_documents": request.context.get("selected_documents") or [],
+            "source_documents": source_documents,
+            "context": {
+                **(request.context or {}),
+                "source_document_ids": source_document_ids,
+                "source_documents": source_documents,
+                "requirements_confirmed": requirements_confirmed,
+            },
             "source_document_type": structured_context.get("source_document_type"),
             "project_name": request.context.get("project_name"),
+            "start_date": project_start_date,
+            "end_date": self._project_context_value(request.context, "end_date"),
+            "project_period": request.context.get("project_period"),
             "query": request.message,
             "permission_scope": request.permission_scope,
+            "server_permission_scope": list(
+                request.permission_scope or DEFAULT_MVP_SCOPES
+            ),
+            "large_document_hint": structured_context.get("large_document_hint")
+            or {},
             "template_id": request.context.get("template_id"),
             "template_version": request.context.get("template_version"),
         }
@@ -423,6 +550,46 @@ class ChatOrchestrator:
             },
             pending_action=pending_action,
         )
+
+    async def _source_documents_for_ids(
+        self,
+        *,
+        project_id: str,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        documents: list[dict[str, Any]] = []
+        for document_id in document_ids:
+            document = await self.document_service.get_document(
+                project_id=project_id,
+                document_id=document_id,
+            )
+            if document is None:
+                continue
+            document_type = (
+                document.document_type.value
+                if hasattr(document.document_type, "value")
+                else str(document.document_type)
+            )
+            documents.append(
+                {
+                    "document_id": document.document_id,
+                    "file_name": document.file_name,
+                    "document_type": document_type,
+                    "display_label": self._display_label_for_document_type(
+                        document_type
+                    ),
+                }
+            )
+        return documents
+
+    def _display_label_for_document_type(self, document_type: str | None) -> str:
+        labels = {
+            "CONSTRUCTION_REQUIREMENT_DEFINITION": "업로드한 구축요건 정의서",
+            "REQUIREMENT_SPEC": "업로드한 요구사항 명세서",
+            "MEETING_NOTES": "업로드한 회의록",
+            "WBS": "업로드한 WBS",
+        }
+        return labels.get(str(document_type or ""), "업로드한 문서")
 
     async def _prepare_schedule_action(
         self,
@@ -446,6 +613,9 @@ class ChatOrchestrator:
                 or [],
                 "user_id": request.user_id,
                 "permission_scope": request.permission_scope,
+                "server_permission_scope": list(
+                    request.permission_scope or DEFAULT_MVP_SCOPES
+                ),
             },
         )
         return await self._render_and_save_response(
@@ -484,7 +654,41 @@ class ChatOrchestrator:
             project_id=project_id,
             action_id=pending_action.action_id,
             status=ChatActionStatus.EXECUTING,
+            result_json={
+                "status": ChatActionStatus.EXECUTING.value,
+                "action_id": pending_action.action_id,
+                "job_id": pending_action.action_id,
+            },
         )
+        if (
+            is_generation_action(pending_action.action_type)
+            and self._runs_generation_in_background()
+        ):
+            started_action = await self.conversation_repository.get_action(
+                project_id=project_id,
+                action_id=pending_action.action_id,
+            )
+            asyncio.create_task(
+                run_generation_action_job(
+                    project_id=project_id,
+                    action_id=pending_action.action_id,
+                )
+            )
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=project_id,
+                result_json={
+                    "event": "ACTION_STARTED",
+                    "action_id": pending_action.action_id,
+                    "pending_action": (
+                        started_action.model_dump(mode="json")
+                        if started_action is not None
+                        else pending_action.model_dump(mode="json")
+                    ),
+                },
+                pending_action=started_action or pending_action,
+            )
+
         response = await self._execute_action(pending_action)
         response_payload = response.model_dump(mode="json")
         if not response.success:
@@ -520,6 +724,9 @@ class ChatOrchestrator:
             },
             pending_action=completed_action,
         )
+
+    def _runs_generation_in_background(self) -> bool:
+        return isinstance(self.generation_service, GenerationService)
 
     async def _cancel_pending_action(
         self,
@@ -568,7 +775,11 @@ class ChatOrchestrator:
                 project_id=project_id,
                 action_id=action_id,
             )
-            if action is None or action.status != ChatActionStatus.WAITING_CONFIRMATION:
+            if (
+                action is None
+                or action.conversation_id != conversation_id
+                or action.status != ChatActionStatus.WAITING_CONFIRMATION
+            ):
                 return None
             return action
 
@@ -598,6 +809,7 @@ class ChatOrchestrator:
         payload = action.payload
         generation_request = GenerationRequest(
             project_id=payload["project_id"],
+            context=payload.get("context") or {},
             project_name=payload.get("project_name"),
             source_document_ids=payload.get("source_document_ids") or [],
             source_document_type=payload.get("source_document_type"),
@@ -605,7 +817,8 @@ class ChatOrchestrator:
             template_id=payload.get("template_id"),
             template_version=payload.get("template_version"),
             query=payload.get("query"),
-            permission_scope=payload.get("permission_scope") or ["project:read"],
+            permission_scope=payload.get("server_permission_scope")
+            or list(DEFAULT_MVP_SCOPES),
         )
         try:
             return await self.generation_service.generate_artifact(
@@ -678,7 +891,8 @@ class ChatOrchestrator:
             meeting_notes=payload.get("meeting_notes") or "",
             source_document_ids=payload.get("source_document_ids") or [],
             user_id=payload.get("user_id"),
-            permission_scope=payload.get("permission_scope") or ["project:read"],
+            permission_scope=payload.get("server_permission_scope")
+            or list(DEFAULT_MVP_SCOPES),
         )
         return await self.schedule_service.extract_todos(
             schedule_request,
@@ -737,3 +951,16 @@ class ChatOrchestrator:
 
     def _new_id(self, prefix: str) -> str:
         return f"{prefix}-{uuid4().hex[:12].upper()}"
+
+    def _project_context_value(
+        self,
+        context: dict[str, Any],
+        field_name: str,
+    ) -> Any:
+        value = context.get(field_name)
+        if value:
+            return value
+        project = context.get("project")
+        if isinstance(project, dict):
+            return project.get(field_name)
+        return None

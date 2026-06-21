@@ -9,6 +9,7 @@ SUPPORTED_FILE_EXTENSIONS = frozenset(
         ".pdf",
         ".docx",
         ".xlsx",
+        ".xls",
         ".txt",
         ".md",
         ".markdown",
@@ -22,6 +23,7 @@ SUPPORTED_MIME_TYPES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-excel": ".xls",
     "text/plain": ".txt",
     "text/markdown": ".md",
     "text/csv": ".csv",
@@ -37,7 +39,8 @@ GENERIC_MIME_TYPES = {
 }
 
 SUPPORTED_FILE_TYPE_MESSAGE = (
-    "지원하지 않는 파일 형식입니다. PDF, DOCX, XLSX, TXT 파일을 업로드해주세요."
+    "unsupported file type. Supported extensions: "
+    "PDF, DOCX, XLSX, XLS, TXT, MD, CSV, JSON, LOG."
 )
 
 
@@ -89,7 +92,17 @@ def resolve_supported_file_type(
 
 
 def supported_extensions_for_display() -> list[str]:
-    preferred_order = [".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv", ".json", ".log"]
+    preferred_order = [
+        ".pdf",
+        ".docx",
+        ".xlsx",
+        ".xls",
+        ".txt",
+        ".md",
+        ".csv",
+        ".json",
+        ".log",
+    ]
     return [
         extension
         for extension in preferred_order

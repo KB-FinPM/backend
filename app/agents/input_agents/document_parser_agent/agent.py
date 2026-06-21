@@ -4,7 +4,9 @@
 from io import BytesIO
 from typing import Any
 import re
+from datetime import date, datetime
 
+from app.core.config import settings
 from app.core.supported_files import (
     SUPPORTED_FILE_EXTENSIONS,
     SUPPORTED_FILE_TYPE_MESSAGE,
@@ -60,7 +62,19 @@ class DocumentParserAgent:
         extension = file_type.extension
 
         try:
-            text = self._extract_text(file_payload.file_bytes, extension)
+            extraction_context: dict[str, Any] = {}
+            if extension in {".xlsx", ".xls"}:
+                text, extraction_context = self._extract_spreadsheet_text(
+                    file_payload.file_bytes,
+                    extension,
+                    file_payload.file_name,
+                )
+            else:
+                text = self._extract_text(
+                    file_payload.file_bytes,
+                    extension,
+                    document_type=str(request.context.get("document_type") or ""),
+                )
         except Exception as exc:
             error_message = self._parse_failure_message(extension, exc)
             return InputAgentResponse(
@@ -86,25 +100,36 @@ class DocumentParserAgent:
                 validation_errors=[error_message],
             )
 
+        metadata = {
+            "file_name": file_payload.file_name,
+            "extension": extension,
+            "byte_size": len(file_payload.file_bytes),
+            "content_type": file_payload.content_type,
+        }
+        if extraction_context.get("wbs_context"):
+            metadata["wbs_context"] = extraction_context["wbs_context"]
+
         return InputAgentResponse(
             agent_name=self.AGENT_NAME,
             normalized_request_type=NormalizedRequestType.DOCUMENT_INGESTION,
             structured_context={
                 "text": text,
-                "metadata": {
-                    "file_name": file_payload.file_name,
-                    "extension": extension,
-                    "byte_size": len(file_payload.file_bytes),
-                    "content_type": file_payload.content_type,
-                },
+                "metadata": metadata,
+                **extraction_context,
             },
         )
 
-    def _extract_text(self, file_bytes: bytes, extension: str) -> str:
+    def _extract_text(
+        self,
+        file_bytes: bytes,
+        extension: str,
+        *,
+        document_type: str | None = None,
+    ) -> str:
         if extension == ".pdf":
             return self._extract_pdf_text(file_bytes)
         if extension == ".docx":
-            return self._extract_docx_text(file_bytes)
+            return self._extract_docx_text(file_bytes, document_type=document_type)
         return self._decode_text(file_bytes)
 
     def _extract_pdf_text(self, file_bytes: bytes) -> str:
@@ -130,6 +155,7 @@ class DocumentParserAgent:
         if pdfplumber is not None:
             try:
                 with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+                    self._ensure_pdf_page_limit(len(pdf.pages))
                     return "\n".join(
                         page.extract_text() or "" for page in pdf.pages
                     )
@@ -143,6 +169,7 @@ class DocumentParserAgent:
         if fitz is not None:
             try:
                 with fitz.open(stream=file_bytes, filetype="pdf") as document:
+                    self._ensure_pdf_page_limit(getattr(document, "page_count", len(document)))
                     return "\n".join(page.get_text("text") or "" for page in document)
             except Exception as exc:
                 errors.append(exc)
@@ -165,7 +192,13 @@ class DocumentParserAgent:
                 raise ValueError("encrypted PDF")
 
         pages = getattr(reader, "pages", [])
+        self._ensure_pdf_page_limit(len(pages))
         return "\n".join(page.extract_text() or "" for page in pages)
+
+    def _ensure_pdf_page_limit(self, page_count: int) -> None:
+        max_pages = max(int(settings.UPLOAD_MAX_PDF_PAGES or 0), 1)
+        if page_count > max_pages:
+            raise ValueError(f"PDF page count exceeds limit: {page_count}/{max_pages}")
 
     def _parse_failure_message(self, extension: str, exc: Exception) -> str:
         if extension == ".pdf":
@@ -175,9 +208,23 @@ class DocumentParserAgent:
                     "관리자에게 pypdf 설치를 요청해주세요."
                 )
             return self.PDF_PARSE_ERROR_MESSAGE
+        if extension == ".xls" and "xlrd is required" in str(exc):
+            return (
+                "XLS 문서를 읽기 위한 파서가 설치되어 있지 않습니다. "
+                "관리자에게 xlrd 설치를 요청하거나 XLSX 형식으로 업로드해 주세요."
+            )
+        if extension in {".xlsx", ".xls"}:
+            return (
+                "엑셀 문서를 읽는 중 오류가 발생했습니다. 파일 형식과 시트 내용을 확인해주세요. "
+                f"({type(exc).__name__})"
+            )
         return f"문서를 읽는 중 오류가 발생했습니다. 파일 형식과 내용을 확인해주세요. ({type(exc).__name__})"
 
-    def _extract_docx_text(self, file_bytes: bytes) -> str:
+    def _extract_docx_text(
+        self,
+        file_bytes: bytes,
+        document_type: str | None = None,
+    ) -> str:
         try:
             from docx import Document
         except ImportError as exc:
@@ -194,18 +241,41 @@ class DocumentParserAgent:
                 lines.append(text)
 
         numbering_levels = self._docx_numbering_levels(document)
+        collapse_merged_cells = str(document_type or "").upper() == "MEETING_NOTES"
         for table in document.tables:
             for row in table.rows:
                 # sample_0605 preserved table column positions, including empty cells.
                 # Removing empty cells shifts columns such as Biz요건ID/요구사항ID and
                 # causes requirement extraction to map the wrong values.
-                cells = [self._extract_docx_cell_text(cell, numbering_levels) for cell in row.cells]
+                seen_cells: set[int] = set()
+                cells: list[str] = []
+                for cell in row.cells:
+                    if collapse_merged_cells:
+                        cell_key = id(cell._tc)
+                        if cell_key in seen_cells:
+                            continue
+                        seen_cells.add(cell_key)
+
+                    cell_text = self._extract_docx_cell_text(
+                        cell,
+                        numbering_levels,
+                        paragraph_separator="\n" if collapse_merged_cells else "\\n",
+                    )
+                    if cell_text or not collapse_merged_cells:
+                        cells.append(cell_text)
+
                 if any(cells):
-                    lines.append(" | ".join(cells))
+                    lines.append("\n".join(cells) if collapse_merged_cells else " | ".join(cells))
 
         return "\n".join(lines)
 
-    def _extract_docx_cell_text(self, cell, numbering_levels: dict[tuple[str, str], str]) -> str:
+    def _extract_docx_cell_text(
+        self,
+        cell,
+        numbering_levels: dict[tuple[str, str], str],
+        *,
+        paragraph_separator: str = "\\n",
+    ) -> str:
         paragraphs: list[str] = []
         for paragraph in cell.paragraphs:
             text = paragraph.text.strip()
@@ -214,7 +284,7 @@ class DocumentParserAgent:
             paragraphs.append(self._preserve_docx_list_marker(paragraph, text, numbering_levels))
         # Keep the table row as one physical line while preserving cell-internal
         # paragraph boundaries for downstream table extraction.
-        return "\\n".join(paragraphs).strip()
+        return paragraph_separator.join(paragraphs).strip()
 
     def _preserve_docx_list_marker(
         self,
@@ -332,6 +402,230 @@ class DocumentParserAgent:
                 continue
 
         return file_bytes.decode("utf-8", errors="ignore")
+
+    def _extract_spreadsheet_text(
+        self,
+        file_bytes: bytes,
+        extension: str,
+        file_name: str | None,
+    ) -> tuple[str, dict[str, Any]]:
+        workbook_rows = (
+            self._xlsx_rows(file_bytes)
+            if extension == ".xlsx"
+            else self._xls_rows(file_bytes)
+        )
+        lines: list[str] = []
+        for sheet_name, rows in workbook_rows:
+            for row_number, row in enumerate(rows, start=1):
+                values = [value for value in row if value]
+                if values:
+                    lines.append(f"[{sheet_name} #{row_number}] " + " | ".join(values))
+
+        wbs_context = self._extract_wbs_context_from_rows(
+            workbook_rows,
+            file_name=file_name,
+        )
+        context: dict[str, Any] = {}
+        if wbs_context.get("rows"):
+            context["wbs_context"] = wbs_context
+        return "\n".join(lines), context
+
+    def _xlsx_rows(self, file_bytes: bytes) -> list[tuple[str, list[list[str]]]]:
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:
+            raise RuntimeError(
+                "openpyxl is required for .xlsx uploads. Run `pip install openpyxl`."
+            ) from exc
+
+        workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+        workbook_rows: list[tuple[str, list[list[str]]]] = []
+        try:
+            self._ensure_spreadsheet_sheet_limit(len(workbook.worksheets))
+            for worksheet in workbook.worksheets:
+                rows = []
+                for row_number, row in enumerate(
+                    worksheet.iter_rows(values_only=True),
+                    start=1,
+                ):
+                    self._ensure_spreadsheet_row_limit(row_number)
+                    rows.append([self._cell_to_text(value) for value in row])
+                workbook_rows.append((worksheet.title, rows))
+        finally:
+            workbook.close()
+        return workbook_rows
+
+    def _xls_rows(self, file_bytes: bytes) -> list[tuple[str, list[list[str]]]]:
+        try:
+            import xlrd
+        except ImportError as exc:
+            raise RuntimeError(
+                "xlrd is required for .xls uploads. Run `pip install xlrd`."
+            ) from exc
+
+        workbook = xlrd.open_workbook(file_contents=file_bytes)
+        workbook_rows: list[tuple[str, list[list[str]]]] = []
+        self._ensure_spreadsheet_sheet_limit(workbook.nsheets)
+        for worksheet in workbook.sheets():
+            self._ensure_spreadsheet_row_limit(worksheet.nrows)
+            rows = [
+                [self._cell_to_text(worksheet.cell_value(row_index, column_index)) for column_index in range(worksheet.ncols)]
+                for row_index in range(worksheet.nrows)
+            ]
+            workbook_rows.append((worksheet.name, rows))
+        return workbook_rows
+
+    def _ensure_spreadsheet_sheet_limit(self, sheet_count: int) -> None:
+        max_sheets = max(int(settings.UPLOAD_MAX_SPREADSHEET_SHEETS or 0), 1)
+        if sheet_count > max_sheets:
+            raise ValueError(
+                f"spreadsheet sheet count exceeds limit: {sheet_count}/{max_sheets}"
+            )
+
+    def _ensure_spreadsheet_row_limit(self, row_count: int) -> None:
+        max_rows = max(int(settings.UPLOAD_MAX_SPREADSHEET_ROWS or 0), 1)
+        if row_count > max_rows:
+            raise ValueError(
+                f"spreadsheet row count exceeds limit: {row_count}/{max_rows}"
+            )
+
+    def _cell_to_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value).strip()
+
+    def _extract_wbs_context_from_rows(
+        self,
+        workbook_rows: list[tuple[str, list[list[str]]]],
+        *,
+        file_name: str | None,
+    ) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        for sheet_name, sheet_rows in workbook_rows:
+            header_index, header_map = self._find_wbs_header(sheet_rows)
+            if header_index is None:
+                continue
+            for row_offset, row in enumerate(sheet_rows[header_index + 1 :], start=header_index + 2):
+                item = self._wbs_row_from_values(
+                    row=row,
+                    header_map=header_map,
+                    row_number=row_offset,
+                    file_name=file_name,
+                    sheet_name=sheet_name,
+                )
+                if item:
+                    rows.append(item)
+
+        return {
+            "source_document_name": file_name,
+            "rows": rows,
+        }
+
+    def _find_wbs_header(
+        self,
+        rows: list[list[str]],
+    ) -> tuple[int | None, dict[str, int]]:
+        for index, row in enumerate(rows):
+            normalized_cells = [self._normalize_header(cell) for cell in row]
+            if not any(cell in {"wbs명", "작업명", "업무명", "taskname", "title"} for cell in normalized_cells):
+                continue
+            if not any(cell in {"시작예정일", "시작일", "plannedstartdate", "startdate"} for cell in normalized_cells):
+                continue
+            header_map = {
+                normalized_cell: column_index
+                for column_index, normalized_cell in enumerate(normalized_cells)
+                if normalized_cell
+            }
+            return index, header_map
+        return None, {}
+
+    def _wbs_row_from_values(
+        self,
+        *,
+        row: list[str],
+        header_map: dict[str, int],
+        row_number: int,
+        file_name: str | None,
+        sheet_name: str,
+    ) -> dict[str, Any] | None:
+        title = self._row_value(row, header_map, "wbs명", "작업명", "업무명", "taskname", "title", "name")
+        if not title:
+            return None
+
+        level = self._row_value(row, header_map, "레벨", "level")
+        wbs_id = self._row_value(row, header_map, "id", "wbsid", "wbs_id")
+        planned_start = self._row_value(
+            row,
+            header_map,
+            "시작예정일",
+            "시작일",
+            "plannedstartdate",
+            "startdate",
+        )
+        planned_end = self._row_value(
+            row,
+            header_map,
+            "종료예정일",
+            "종료일",
+            "plannedenddate",
+            "enddate",
+            "duedate",
+        )
+        assignee = self._row_value(row, header_map, "작업자", "담당자", "owner", "assignee")
+        artifact = self._row_value(row, header_map, "산출물", "deliverable", "artifact")
+        actual_start = self._row_value(row, header_map, "실제시작일", "actualstartdate")
+        actual_end = self._row_value(row, header_map, "실제종료일", "actualenddate")
+        status = self._row_value(row, header_map, "작업상태", "상태", "status")
+
+        return {
+            "row_number": row_number,
+            "sheet_name": sheet_name,
+            "level": level,
+            "wbs_id": wbs_id,
+            "title": title,
+            "planned_start_date": planned_start,
+            "planned_end_date": planned_end,
+            "raw_assignee": assignee,
+            "artifact": artifact,
+            "actual_start_date": actual_start,
+            "actual_end_date": actual_end,
+            "raw_status": status,
+            "source_document_name": file_name,
+            "레벨": level,
+            "ID": wbs_id,
+            "WBS명": title,
+            "시작예정일": planned_start,
+            "종료예정일": planned_end,
+            "작업자": assignee,
+            "산출물": artifact,
+            "실제시작일": actual_start,
+            "실제종료일": actual_end,
+            "작업상태": status,
+        }
+
+    def _row_value(
+        self,
+        row: list[str],
+        header_map: dict[str, int],
+        *aliases: str,
+    ) -> str | None:
+        for alias in aliases:
+            column_index = header_map.get(self._normalize_header(alias))
+            if column_index is None or column_index >= len(row):
+                continue
+            value = row[column_index].strip()
+            if value:
+                return value
+        return None
+
+    def _normalize_header(self, value: Any) -> str:
+        return re.sub(r"[\s._/-]+", "", str(value or "").strip().lower())
 
     def _remove_postgresql_unsafe_chars(self, text: str) -> str:
         # PostgreSQL text/json columns cannot store NUL bytes. Binary Office files

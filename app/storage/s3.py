@@ -25,13 +25,15 @@ class S3Service:
         self.backend = settings.S3_STORAGE_BACKEND.lower()
         self.client = None
         if self.backend == "s3":
-            self.client = boto3.client(
-                "s3",
-                region_name=settings.AWS_REGION,
-                aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
-                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
-                verify=self._ssl_verify_setting(),
-            )
+            client_kwargs = {
+                "region_name": settings.AWS_REGION,
+                "verify": self._ssl_verify_setting(),
+            }
+            if settings.AWS_ACCESS_KEY_ID:
+                client_kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
+            if settings.AWS_SECRET_ACCESS_KEY:
+                client_kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+            self.client = boto3.client("s3", **client_kwargs)
 
     def _ssl_verify_setting(self) -> bool | str:
         if settings.AWS_CA_BUNDLE:
@@ -92,6 +94,27 @@ class S3Service:
         except BotoCoreError as exc:
             logger.exception("S3 download failed")
             raise RuntimeError(f"S3 download failed: {type(exc).__name__}: {exc}") from exc
+
+    async def delete_by_storage_path(self, storage_path: str) -> None:
+        key = self._key_from_storage_path(storage_path)
+        logger.info(f"[S3] delete | backend={self.backend} | bucket={self.bucket} | key={key}")
+        if self.client is None:
+            _mock_storage.pop(key, None)
+            _mock_content_types.pop(key, None)
+            mock_path = self._mock_object_path(key)
+            if mock_path.exists():
+                await asyncio.to_thread(mock_path.unlink)
+            return
+
+        try:
+            await asyncio.to_thread(
+                self.client.delete_object,
+                Bucket=self.bucket,
+                Key=key,
+            )
+        except (BotoCoreError, ClientError) as exc:
+            logger.exception("S3 delete failed")
+            raise RuntimeError(f"S3 delete failed: {type(exc).__name__}: {exc}") from exc
 
     def _key_from_storage_path(self, storage_path: str) -> str:
         parsed = urlparse(storage_path)

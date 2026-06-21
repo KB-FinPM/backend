@@ -44,6 +44,7 @@ async def test_user_flow_wbs_request_without_document_gets_required_info(
             project_id=PROJECT_ID,
             user_id="USER-001",
             message="WBS 만들어줘",
+            context={"start_date": "2025-01-20"},
         )
     )
 
@@ -127,8 +128,8 @@ async def test_user_flow_invalid_wbs_schedule_input_does_not_crash() -> None:
         )
     )
 
-    assert response.success is True
-    assert all("planned_start_date" not in task for task in response.result["tasks"])
+    assert response.success is False
+    assert response.error == "project start_date is required for WBS generation"
 
 
 class MissingDocumentService:

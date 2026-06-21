@@ -1,5 +1,6 @@
 # EN: Business service for artifact generation use cases.
 
+from time import perf_counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +20,7 @@ class GenerationSourceValidationResult:
     project_id: str
     target_artifact_type: ArtifactType
     required_source_type: DocumentType | None = None
+    allowed_source_types: list[DocumentType] = field(default_factory=list)
     source_document_required: bool = False
     missing_document_ids: list[str] = field(default_factory=list)
     invalid_type_documents: list[dict[str, str]] = field(default_factory=list)
@@ -52,6 +54,9 @@ class GenerationSourceValidationResult:
                 f"{self.target_artifact_type.value} must be generated from "
                 f"{self.required_source_type.value}"
             )
+        if self.invalid_type_documents and self.allowed_source_types:
+            allowed = ", ".join(source_type.value for source_type in self.allowed_source_types)
+            return f"{self.target_artifact_type.value} must be generated from one of {allowed}"
         return "ok"
 
     @property
@@ -81,12 +86,30 @@ class GenerationService:
         self,
         target_artifact_type: ArtifactType,
     ) -> DocumentType | None:
+        if target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
+            return DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION
         if target_artifact_type in {
             ArtifactType.WBS,
-            ArtifactType.SCREEN_DESIGN,
+            ArtifactType.UNITTEST_SPEC,
         }:
             return DocumentType.REQUIREMENT_SPEC
         return None
+
+    def allowed_source_types_for(
+        self,
+        target_artifact_type: ArtifactType,
+    ) -> list[DocumentType]:
+        if target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
+            return [
+                DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION,
+                DocumentType.MEETING_NOTES,
+            ]
+        if target_artifact_type == ArtifactType.SCREEN_DESIGN:
+            return [
+                DocumentType.REQUIREMENT_SPEC,
+            ]
+        required_source_type = self.required_source_type_for(target_artifact_type)
+        return [required_source_type] if required_source_type is not None else []
 
     async def validate_source_documents(
         self,
@@ -98,17 +121,26 @@ class GenerationService:
         target_artifact_type = request.generation_flow().target_artifact_type
         if required_source_type is None:
             required_source_type = self.required_source_type_for(target_artifact_type)
+        allowed_source_types = self.allowed_source_types_for(target_artifact_type)
+        if (
+            required_source_type is not None
+            and required_source_type not in allowed_source_types
+        ):
+            allowed_source_types = [required_source_type, *allowed_source_types]
 
         if not request.source_document_ids:
             return GenerationSourceValidationResult(
                 project_id=request.project_id,
                 target_artifact_type=target_artifact_type,
                 required_source_type=required_source_type,
+                allowed_source_types=allowed_source_types,
                 source_document_required=True,
             )
 
         missing_document_ids: list[str] = []
         invalid_type_documents: list[dict[str, str]] = []
+        matched_required_type = False
+        first_document_detail: dict[str, str] | None = None
         for document_id in request.source_document_ids:
             document = await document_service.get_document(
                 project_id=request.project_id,
@@ -118,21 +150,48 @@ class GenerationService:
                 missing_document_ids.append(document_id)
                 continue
 
-            if required_source_type is not None and (
-                document.document_type != required_source_type
-            ):
+            if allowed_source_types and document.document_type not in allowed_source_types:
+                invalid_detail = {
+                    "document_id": document.document_id,
+                    "document_type": document.document_type.value,
+                }
+                if len(allowed_source_types) == 1:
+                    invalid_detail["required_document_type"] = allowed_source_types[0].value
+                else:
+                    invalid_detail["required_document_types"] = [
+                        source_type.value for source_type in allowed_source_types
+                    ]
                 invalid_type_documents.append(
-                    {
-                        "document_id": document.document_id,
-                        "document_type": document.document_type.value,
-                        "required_document_type": required_source_type.value,
-                    }
+                    invalid_detail
                 )
+                continue
+
+            if first_document_detail is None:
+                first_document_detail = {
+                    "document_id": document.document_id,
+                    "document_type": document.document_type.value,
+                }
+            if required_source_type is not None and document.document_type == required_source_type:
+                matched_required_type = True
+
+        if (
+            required_source_type is not None
+            and not matched_required_type
+            and not missing_document_ids
+            and not invalid_type_documents
+        ):
+            invalid_type_documents.append(
+                {
+                    **(first_document_detail or {}),
+                    "required_document_type": required_source_type.value,
+                }
+            )
 
         return GenerationSourceValidationResult(
             project_id=request.project_id,
             target_artifact_type=target_artifact_type,
             required_source_type=required_source_type,
+            allowed_source_types=allowed_source_types,
             missing_document_ids=missing_document_ids,
             invalid_type_documents=invalid_type_documents,
         )
@@ -145,6 +204,7 @@ class GenerationService:
         retrieval_service: Any = None,
         template_service: Any = None,
         document_service: Any = None,
+        progress_reporter: Any = None,
     ) -> GenerationResponse:
         logger.info(
             f"!!! GenerationService generate_requirement | project_id={request.project_id} | "
@@ -152,13 +212,23 @@ class GenerationService:
             f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
             f"source_document_ids={request.source_document_ids or []}"
         )
-        return await self.orchestrator.generate_requirement(
-            request,
-            artifact_service=artifact_service,
-            retrieval_service=retrieval_service,
-            template_service=template_service,
-            document_service=document_service,
-        )
+        started_at = perf_counter()
+        try:
+            kwargs = {
+                "artifact_service": artifact_service,
+                "retrieval_service": retrieval_service,
+                "template_service": template_service,
+                "document_service": document_service,
+            }
+            if progress_reporter is not None:
+                kwargs["progress_reporter"] = progress_reporter
+            return await self.orchestrator.generate_requirement(request, **kwargs)
+        finally:
+            elapsed_ms = int((perf_counter() - started_at) * 1000)
+            logger.info(
+                f"!!! GenerationService generate_requirement done | "
+                f"project_id={request.project_id} | duration_ms={elapsed_ms}"
+            )
 
     async def generate_artifact(
         self,
@@ -168,6 +238,7 @@ class GenerationService:
         retrieval_service: Any = None,
         template_service: Any = None,
         document_service: Any = None,
+        progress_reporter: Any = None,
     ) -> GenerationResponse:
         logger.info(
             f"!!! GenerationService generate_artifact | project_id={request.project_id} | "
@@ -175,10 +246,20 @@ class GenerationService:
             f"source_document_type={request.source_document_type or 'UNKNOWN'} | "
             f"source_document_ids={request.source_document_ids or []}"
         )
-        return await self.orchestrator.generate_artifact(
-            request,
-            artifact_service=artifact_service,
-            retrieval_service=retrieval_service,
-            template_service=template_service,
-            document_service=document_service,
-        )
+        started_at = perf_counter()
+        try:
+            kwargs = {
+                "artifact_service": artifact_service,
+                "retrieval_service": retrieval_service,
+                "template_service": template_service,
+                "document_service": document_service,
+            }
+            if progress_reporter is not None:
+                kwargs["progress_reporter"] = progress_reporter
+            return await self.orchestrator.generate_artifact(request, **kwargs)
+        finally:
+            elapsed_ms = int((perf_counter() - started_at) * 1000)
+            logger.info(
+                f"!!! GenerationService generate_artifact done | "
+                f"project_id={request.project_id} | duration_ms={elapsed_ms}"
+            )

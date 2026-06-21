@@ -1,6 +1,8 @@
 # EN: Orchestrates uploaded document ingestion flows.
 # KO: 업로드 문서 수집/처리 흐름을 제어하는 Orchestrator입니다.
 
+import inspect
+from typing import Any
 from uuid import uuid4
 
 from app.agents.input_agents.document_parser_agent.agent import (
@@ -8,9 +10,11 @@ from app.agents.input_agents.document_parser_agent.agent import (
     document_parser_agent,
 )
 from app.rag.chunking import split_text_into_chunks
+from app.rag.embedding import EmbeddingService, embedding_service
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.artifact import DocumentMetadata, DocumentStatus, DocumentType
 from app.schemas.io_agent import InputAgentRequest, InputFilePayload, InputType
+from app.schemas.progress import build_generation_progress, build_progress_segment
 
 
 class DocumentIngestionOrchestrator:
@@ -19,8 +23,10 @@ class DocumentIngestionOrchestrator:
     def __init__(
         self,
         parser: DocumentParserAgent = document_parser_agent,
+        embedding_service: EmbeddingService = embedding_service,
     ) -> None:
         self.parser = parser
+        self.embedding_service = embedding_service
 
     async def ingest_uploaded_document(
         self,
@@ -33,6 +39,7 @@ class DocumentIngestionOrchestrator:
         storage_path: str,
         file_bytes: bytes,
         parsed_context: dict | None = None,
+        progress_reporter: Any = None,
     ) -> DocumentMetadata:
         # TODO: Add PDF/DOCX parser agents and embedding/vector-store indexing after
         # text ingestion is stable.
@@ -64,7 +71,10 @@ class DocumentIngestionOrchestrator:
                 )
             )
             if not parsed_response.success:
-                return document
+                return await self._mark_failed(
+                    document_repository=document_repository,
+                    document=document,
+                )
             parsed_context = parsed_response.structured_context
 
         parsed_text = str(parsed_context.get("text", ""))
@@ -90,6 +100,7 @@ class DocumentIngestionOrchestrator:
                 for key, value in wbs_context.items()
                 if key != "rows"
             }
+            row_items: list[dict[str, object]] = []
             for index, row in enumerate(wbs_context.get("rows") or []):
                 if not isinstance(row, dict):
                     continue
@@ -108,26 +119,36 @@ class DocumentIngestionOrchestrator:
                     ]
                     if value not in (None, "")
                 )
-                await document_repository.create_chunk(
-                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                    project_id=project_id,
-                    document_id=document_id,
-                    chunk_index=index,
-                    text=text or str(row.get("title") or row.get("WBS명") or "WBS"),
-                    section_title=str(row.get("title") or row.get("WBS명") or "WBS"),
-                    chunk_metadata={
-                        **base_metadata,
-                        "parser_name": parser_name or "DocumentParserAgent",
-                        "source_file_name": file_name,
-                        "wbs_context": context_summary,
-                        "wbs_row": row,
-                    },
+                row_items.append(
+                    {
+                        "chunk_index": index,
+                        "text": text or str(row.get("title") or row.get("WBS명") or "WBS"),
+                        "section_title": str(row.get("title") or row.get("WBS명") or "WBS"),
+                        "chunk_metadata": {
+                            **base_metadata,
+                            "parser_name": parser_name or "DocumentParserAgent",
+                            "document_type": document_type.value,
+                            "source_document_type": document_type.value,
+                            "document_file_name": file_name,
+                            "source_file_name": file_name,
+                            "wbs_context": context_summary,
+                            "wbs_row": row,
+                        },
+                    }
                 )
+            await self._embed_and_store_items(
+                document_repository=document_repository,
+                project_id=project_id,
+                document_id=document_id,
+                items=row_items,
+                progress_reporter=progress_reporter,
+            )
         elif (
             parsed_metadata.get("artifact_type") == "REQUIREMENT_SPEC"
             and isinstance(generated_requirements, list)
             and generated_requirements
         ):
+            requirement_items: list[dict[str, object]] = []
             for index, requirement in enumerate(generated_requirements):
                 if not isinstance(requirement, dict):
                     continue
@@ -143,40 +164,61 @@ class DocumentIngestionOrchestrator:
                     ]
                     if value
                 )
-                await document_repository.create_chunk(
-                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                    project_id=project_id,
-                    document_id=document_id,
-                    chunk_index=index,
-                    text=text,
-                    section_title=str(metadata.get("biz_requirement_name") or "요구사항"),
-                    chunk_metadata={
-                        **parsed_metadata,
-                        "parser_name": parser_name or "ArtifactExportService",
-                        "source_file_name": file_name,
-                        "requirement": requirement,
-                    },
+                requirement_items.append(
+                    {
+                        "chunk_index": index,
+                        "text": text,
+                        "section_title": str(metadata.get("biz_requirement_name") or "요구사항"),
+                        "chunk_metadata": {
+                            **parsed_metadata,
+                            "parser_name": parser_name or "ArtifactExportService",
+                            "document_type": document_type.value,
+                            "source_document_type": document_type.value,
+                            "document_file_name": file_name,
+                            "source_file_name": file_name,
+                            "requirement": requirement,
+                        },
+                    }
                 )
+            await self._embed_and_store_items(
+                document_repository=document_repository,
+                project_id=project_id,
+                document_id=document_id,
+                items=requirement_items,
+                progress_reporter=progress_reporter,
+            )
         else:
             chunks = split_text_into_chunks(parsed_text)
             if not chunks:
-                return document
+                return await self._mark_failed(
+                    document_repository=document_repository,
+                    document=document,
+                )
 
-            for chunk in chunks:
-                await document_repository.create_chunk(
-                    chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
-                    project_id=project_id,
-                    document_id=document_id,
-                    chunk_index=chunk.chunk_index,
-                    text=chunk.text,
-                    section_title=chunk.section_title,
-                    chunk_metadata={
+            chunk_items = [
+                {
+                    "chunk_index": chunk.chunk_index,
+                    "text": chunk.text,
+                    "section_title": chunk.section_title,
+                    "chunk_metadata": {
                         **chunk.metadata,
                         **parsed_metadata,
                         "parser_name": parser_name or "InputOrchestrator",
+                        "document_type": document_type.value,
+                        "source_document_type": document_type.value,
+                        "document_file_name": file_name,
                         "source_file_name": file_name,
                     },
-                )
+                }
+                for chunk in chunks
+            ]
+            await self._embed_and_store_items(
+                document_repository=document_repository,
+                project_id=project_id,
+                document_id=document_id,
+                items=chunk_items,
+                progress_reporter=progress_reporter,
+            )
 
         indexed_document = await document_repository.update_document_status(
             project_id=project_id,
@@ -184,6 +226,123 @@ class DocumentIngestionOrchestrator:
             status=DocumentStatus.INDEXED,
         )
         return indexed_document or document
+
+    async def _embed_and_store_items(
+        self,
+        *,
+        document_repository: DocumentRepository,
+        project_id: str,
+        document_id: str,
+        items: list[dict[str, object]],
+        progress_reporter: Any = None,
+    ) -> None:
+        total = len(items)
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                stage_label="Input Agent 문서 분석 중",
+                progress=25,
+                progress_text="문서 chunk 준비 중",
+                sub_progress=build_progress_segment(
+                    progress_type="CHUNK_PROCESSING",
+                    label="원본 문서 chunk 처리",
+                    current=total,
+                    total=total,
+                    unit="chunks",
+                ),
+            ),
+        )
+        if total <= 0:
+            return
+
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                stage_label="Input Agent 문서 분석 중",
+                progress=30,
+                progress_text="임베딩 처리 중",
+                sub_progress=build_progress_segment(
+                    progress_type="EMBEDDING",
+                    label="임베딩 처리",
+                    current=0,
+                    total=total,
+                    unit="chunks",
+                ),
+            ),
+        )
+        embeddings = await self.embedding_service.embed_texts(
+            [str(item["text"]) for item in items]
+        )
+        await self._emit_progress(
+            progress_reporter,
+            build_generation_progress(
+                stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                stage_label="Input Agent 문서 분석 중",
+                progress=35,
+                progress_text="임베딩 처리 중",
+                sub_progress=build_progress_segment(
+                    progress_type="EMBEDDING",
+                    label="임베딩 처리",
+                    current=len(embeddings),
+                    total=total,
+                    unit="chunks",
+                ),
+            ),
+        )
+
+        for index, (item, embedding) in enumerate(zip(items, embeddings), start=1):
+            await document_repository.create_chunk(
+                chunk_id=f"CHUNK-{uuid4().hex[:12].upper()}",
+                project_id=project_id,
+                document_id=document_id,
+                chunk_index=int(item["chunk_index"]),
+                text=str(item["text"]),
+                section_title=str(item["section_title"]),
+                chunk_metadata=item["chunk_metadata"],
+                embedding=embedding,
+            )
+            await self._emit_progress(
+                progress_reporter,
+                build_generation_progress(
+                    stage="INPUT_AGENT_DOCUMENT_ANALYSIS",
+                    stage_label="Input Agent 문서 분석 중",
+                    progress=40,
+                    progress_text="인덱싱 처리 중",
+                    sub_progress=build_progress_segment(
+                        progress_type="INDEXING",
+                        label="인덱싱 처리",
+                        current=index,
+                        total=total,
+                        unit="chunks",
+                    ),
+                ),
+            )
+
+    async def _emit_progress(
+        self,
+        progress_reporter: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        if progress_reporter is None:
+            return
+        result = progress_reporter(payload)
+        if inspect.isawaitable(result):
+            await result
+
+    async def _mark_failed(
+        self,
+        *,
+        document_repository: DocumentRepository,
+        document: DocumentMetadata,
+    ) -> DocumentMetadata:
+        failed_document = await document_repository.update_document_status(
+            project_id=document.project_id,
+            document_id=document.document_id,
+            status=DocumentStatus.FAILED,
+        )
+        return failed_document or document
 
 
 document_ingestion_orchestrator = DocumentIngestionOrchestrator()

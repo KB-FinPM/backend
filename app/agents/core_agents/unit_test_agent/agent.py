@@ -41,7 +41,7 @@ UNIT_TEST_LLM_SYSTEM_PROMPT = """
 
 규칙:
 - 요구사항을 그대로 옮기지 말고 실제 테스트에서 필요한 정상/예외/경계/권한/데이터 검증 항목을 포함한다.
-- 요구사항 하나당 1~3개 정도의 테스트케이스를 제안한다.
+- 요구사항 하나당 필요한 만큼 테스트케이스를 제안하되, 정상/예외/경계/권한/데이터 등 가능한 시나리오를 모두 분리한다.
 - test_content는 실행 가능한 수준으로 구체적으로 작성한다.
 - 화면설계서가 있으면 입력/조회/저장/삭제/검색/팝업/권한 검증을 함께 고려한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
@@ -52,6 +52,12 @@ class UnitTestAgent:
     """Generates deterministic unit test cases from requirement-spec rows."""
 
     AGENT_NAME = "UnitTestAgent"
+
+    def __init__(self, *, model_invoker=None) -> None:
+        self.model_invoker = model_invoker
+
+    def with_model_invoker(self, model_invoker) -> "UnitTestAgent":
+        return UnitTestAgent(model_invoker=model_invoker)
 
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(
@@ -107,8 +113,8 @@ class UnitTestAgent:
         request: AgentRequest,
         requirements: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        orchestrator = (request.context or {}).get("generation_orchestrator")
-        if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
+        model_invoker = self.model_invoker
+        if model_invoker is None or not hasattr(model_invoker, "invoke_agent_llm"):
             return []
 
         prompt = f"""
@@ -118,10 +124,12 @@ Requirement summary:
 {json.dumps(self._build_requirement_digest(requirements), ensure_ascii=False, default=str)}
 """.strip()
 
-        llm_result = await orchestrator.invoke_agent_llm(
+        llm_result = await model_invoker.invoke_agent_llm(
             system_prompt=UNIT_TEST_LLM_SYSTEM_PROMPT,
             user_prompt=prompt,
-            max_tokens=5000,
+            call_index=1,
+            call_total=1,
+            call_label="unit-test-spec",
         )
         parsed = parse_json_object(llm_result)
         if not parsed:
@@ -300,36 +308,41 @@ Requirement summary:
             requirement_name = str(requirement.get("requirement_name") or requirement.get("title") or requirement_id).strip()
             biz_requirement_id = str(requirement.get("biz_requirement_id") or f"Biz-{index:04d}").strip()
             biz_number = self._biz_number(biz_requirement_id, fallback=index)
-            counters[biz_number] = counters.get(biz_number, 0) + 1
-            test_case_id = f"TEST-{biz_number}-{counters[biz_number]:03d}"
             screen_hint = self._match_screen_hint(screens or [], requirement_id, requirement_name)
-            test_content = self._build_test_content(
-                requirement_name=requirement_name,
-                requirement_description=requirement.get("description"),
-                screen_hint=screen_hint,
-            )
-            test_cases.append(
-                {
-                    "test_case_id": test_case_id,
-                    "test_case_name": f"{requirement_name} 화면",
-                    "requirement_id": requirement_id,
-                    "requirement_name": requirement_name,
-                    "scenario_id": biz_requirement_id,
-                    "test_content": test_content,
-                    "metadata": {
-                        "row_number": index,
-                        "author": author,
-                        "biz_requirement_id": biz_requirement_id,
-                        "biz_requirement_name": requirement.get("biz_requirement_name") or "",
+            scenario_specs = self._scenario_specs(requirement, screen_hint=screen_hint)
+            for scenario in scenario_specs:
+                counters[biz_number] = counters.get(biz_number, 0) + 1
+                test_case_id = f"TEST-{biz_number}-{counters[biz_number]:03d}"
+                test_case_name = f"{requirement_name} {scenario['label']}"
+                test_content = self._build_test_content(
+                    requirement_name=requirement_name,
+                    requirement_description=requirement.get("description"),
+                    screen_hint=screen_hint,
+                    scenario_label=scenario["label"],
+                    scenario_focus=scenario["focus"],
+                )
+                test_cases.append(
+                    {
+                        "test_case_id": test_case_id,
+                        "test_case_name": test_case_name,
                         "requirement_id": requirement_id,
                         "requirement_name": requirement_name,
-                        "scenario_id": biz_requirement_id,
-                        "test_case_id": test_case_id,
-                        "test_case_name": f"{requirement_name} 화면",
+                        "scenario_id": f"{biz_requirement_id}-{scenario['code']}",
                         "test_content": test_content,
-                    },
-                }
-        )
+                        "metadata": {
+                            "row_number": index,
+                            "author": author,
+                            "biz_requirement_id": biz_requirement_id,
+                            "biz_requirement_name": requirement.get("biz_requirement_name") or "",
+                            "requirement_id": requirement_id,
+                            "requirement_name": requirement_name,
+                            "scenario_id": f"{biz_requirement_id}-{scenario['code']}",
+                            "test_case_id": test_case_id,
+                            "test_case_name": test_case_name,
+                            "test_content": test_content,
+                        },
+                    }
+                )
         return test_cases
 
     def _build_test_content(
@@ -338,30 +351,97 @@ Requirement summary:
         requirement_name: str,
         requirement_description: Any,
         screen_hint: dict[str, Any] | None = None,
+        scenario_label: str | None = None,
+        scenario_focus: str | None = None,
     ) -> str:
         requirement_text = str(requirement_description or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
+        label_text = f"{scenario_label} " if scenario_label else ""
         if screen_hint:
             screen_name = str(screen_hint.get("screen_name") or requirement_name or "화면").strip()
             screen_description = str(screen_hint.get("description") or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
             lines = [
-                f"{screen_name} 화면에서 조회/입력/저장 흐름을 검증한다.",
+                f"{label_text}{screen_name} 화면에서 {scenario_focus or '주요 처리'}를 검증한다.",
                 f"{screen_name}의 필수 항목 검증, 권한 확인, 결과 반영을 점검한다.",
             ]
             if screen_description:
                 lines.append(truncate_text(screen_description, 260))
             elif requirement_text:
                 lines.append(truncate_text(requirement_text, 260))
-            return "\n".join(line for line in lines if line).strip()
+            return self._number_test_content_lines("\n".join(line for line in lines if line).strip())
+
+        if not requirement_text:
+            return " "
 
         if requirement_text:
             lines = [
-                f"{requirement_name}의 정상 처리 결과를 검증한다.",
+                f"{label_text}{requirement_name}의 {scenario_focus or '정상 처리'} 결과를 검증한다.",
                 f"{requirement_name}의 예외/경계 조건 및 입력값 검증을 확인한다.",
                 truncate_text(requirement_text, 260),
             ]
-            return "\n".join(line for line in lines if line).strip()
+            return self._number_test_content_lines("\n".join(line for line in lines if line).strip())
 
-        return f"{requirement_name}의 동작을 검증한다."
+        return self._number_test_content_lines(f"{label_text}{requirement_name}의 동작을 검증한다.")
+
+    def _number_test_content_lines(self, value: Any) -> str:
+        text = str(value or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not text or "\n" not in text:
+            return text
+
+        numbered_lines: list[str] = []
+        for line in text.split("\n"):
+            cleaned = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", line).strip()
+            if not cleaned:
+                continue
+            numbered_lines.append(cleaned)
+
+        if len(numbered_lines) <= 1:
+            return numbered_lines[0] if numbered_lines else text
+
+        return "\n".join(f"{index}. {line}" for index, line in enumerate(numbered_lines, start=1))
+
+    def _scenario_specs(
+        self,
+        requirement: dict[str, Any],
+        *,
+        screen_hint: dict[str, Any] | None,
+    ) -> list[dict[str, str]]:
+        requirement_text = str(requirement.get("description") or "").lower()
+        hint_text = " ".join(
+            str(value or "").lower()
+            for value in (
+                screen_hint.get("screen_name") if screen_hint else "",
+                screen_hint.get("description") if screen_hint else "",
+            )
+        )
+        corpus = f"{requirement_text} {hint_text}"
+
+        specs: list[dict[str, str]] = [
+            {"code": "01", "label": "정상", "focus": "정상 처리"},
+        ]
+        if any(keyword in corpus for keyword in ("조회", "검색", "list", "find", "목록")):
+            specs.append({"code": "02", "label": "조회", "focus": "조회 조건 입력 및 결과 확인"})
+        if any(keyword in corpus for keyword in ("등록", "저장", "추가", "create", "insert")):
+            specs.append({"code": "03", "label": "저장", "focus": "저장 및 반영 확인"})
+        if any(keyword in corpus for keyword in ("수정", "변경", "update", "edit")):
+            specs.append({"code": "04", "label": "수정", "focus": "수정 및 반영 확인"})
+        if any(keyword in corpus for keyword in ("삭제", "remove", "delete")):
+            specs.append({"code": "05", "label": "삭제", "focus": "삭제 및 반영 확인"})
+        if any(keyword in corpus for keyword in ("권한", "인증", "보안")):
+            specs.append({"code": "06", "label": "권한", "focus": "권한 및 접근 제어"})
+        if any(keyword in corpus for keyword in ("경계", "한도", "limit", "최대", "최소", "빈값", "필수")):
+            specs.append({"code": "07", "label": "경계", "focus": "경계값 및 필수값 검증"})
+        if any(keyword in corpus for keyword in ("오류", "예외", "실패", "invalid", "에러")):
+            specs.append({"code": "08", "label": "예외", "focus": "오류 및 예외 처리"})
+
+        deduped: list[dict[str, str]] = []
+        seen = set()
+        for spec in specs:
+            key = spec["code"]
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(spec)
+        return deduped
 
     def _biz_number(self, biz_requirement_id: str, *, fallback: int) -> str:
         match = re.search(r"(\d+)", biz_requirement_id or "")

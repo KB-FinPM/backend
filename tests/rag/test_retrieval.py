@@ -11,6 +11,14 @@ from app.repositories.document_repository import DocumentRepository
 from app.schemas.artifact import DocumentType
 
 
+class FakeEmbeddingService:
+    def __init__(self, vector: list[float]) -> None:
+        self.vector = vector
+
+    async def embed_text(self, text: str) -> list[float]:
+        return self.vector
+
+
 @pytest.fixture
 async def session_factory():
     engine = create_async_engine(
@@ -161,3 +169,70 @@ async def test_retrieval_service_falls_back_to_selected_document_chunks(
         )
 
     assert [result["chunk_id"] for result in results] == ["CHUNK-001"]
+
+
+@pytest.mark.anyio
+async def test_document_repository_stores_embedding_on_sqlite(session_factory) -> None:
+    async with session_factory() as session:
+        repository = DocumentRepository(session)
+        await repository.create_document(
+            document_id="DOC-010",
+            project_id="PRJ-010",
+            document_type=DocumentType.REQUIREMENT_SPEC,
+            file_name="embeddings.txt",
+            storage_path="s3://bucket/embeddings.txt",
+        )
+
+        chunk = await repository.create_chunk(
+            chunk_id="CHUNK-010",
+            project_id="PRJ-010",
+            document_id="DOC-010",
+            chunk_index=0,
+            text="Embedding storage test",
+            embedding=[0.1, 0.2, 0.3],
+        )
+
+    assert chunk.embedding == [0.1, 0.2, 0.3]
+
+
+@pytest.mark.anyio
+async def test_retrieval_service_uses_embedding_ranking_when_available(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository = DocumentRepository(session)
+        await repository.create_document(
+            document_id="DOC-011",
+            project_id="PRJ-011",
+            document_type=DocumentType.REQUIREMENT_SPEC,
+            file_name="rank.txt",
+            storage_path="s3://bucket/rank.txt",
+        )
+        await repository.create_chunk(
+            chunk_id="CHUNK-A",
+            project_id="PRJ-011",
+            document_id="DOC-011",
+            chunk_index=0,
+            text="Alpha login flow",
+            embedding=[0.9, 0.1, 0.0],
+        )
+        await repository.create_chunk(
+            chunk_id="CHUNK-B",
+            project_id="PRJ-011",
+            document_id="DOC-011",
+            chunk_index=1,
+            text="Beta report output",
+            embedding=[0.1, 0.9, 0.0],
+        )
+        service = RetrievalService(
+            repository,
+            embedding_service=FakeEmbeddingService([1.0, 0.0, 0.0]),
+        )
+
+        results = await service.search(
+            project_id="PRJ-011",
+            permission_scope=["project:read"],
+            query="login",
+        )
+
+    assert [result["chunk_id"] for result in results][:2] == ["CHUNK-A", "CHUNK-B"]

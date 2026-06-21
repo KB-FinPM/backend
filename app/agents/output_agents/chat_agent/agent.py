@@ -33,8 +33,14 @@ class ChatOutputAgent:
         event = result_json.get("event")
         if event == "CONFIRMATION_REQUIRED":
             return self._confirmation_payload(result_json)
+        if event == "ACTION_STARTED":
+            return self._started_payload(result_json)
         if event == "ACTION_COMPLETED":
             return self._completed_payload(result_json)
+        if event == "ARTIFACT_DOWNLOAD_READY":
+            return self._artifact_download_ready_payload(result_json)
+        if event == "ARTIFACT_DOWNLOAD_REQUIRED_INFO":
+            return self._artifact_download_required_info_payload(result_json)
         if event == "TODO_COMPLETED":
             return self._todo_completed_payload(result_json)
         if event == "SCHEDULE_RESULT":
@@ -84,7 +90,7 @@ class ChatOutputAgent:
 
         return {
             "state": ChatState.WAITING_CONFIRMATION.value,
-            "message": message,
+            "message": self._with_large_document_message(message, payload),
             "pending_action": action,
             "suggested_actions": [
                 {
@@ -99,6 +105,28 @@ class ChatOutputAgent:
                 },
             ],
         }
+
+    def _with_large_document_message(
+        self,
+        message: str,
+        payload: dict[str, Any],
+    ) -> str:
+        large_document_message = self._large_document_message(
+            payload.get("large_document_hint") or {}
+        )
+        if not large_document_message:
+            return message
+        return f"{message}\n{large_document_message}"
+
+    def _large_document_message(self, hint: dict[str, Any]) -> str:
+        if not isinstance(hint, dict) or not hint.get("is_large_document"):
+            return ""
+        chunk_count = hint.get("chunk_count")
+        chunk_text = f" 예상 chunk 수: {chunk_count}." if chunk_count else ""
+        return (
+            "문서가 큰 경우 chunk/batch 처리에 시간이 걸릴 수 있습니다."
+            f"{chunk_text}"
+        )
 
     def _completed_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         generation_result = result_json.get("result") or {}
@@ -124,12 +152,85 @@ class ChatOutputAgent:
             "recommended_prompts": self._default_recommended_prompts(),
         }
 
+    def _artifact_download_ready_payload(
+        self,
+        result_json: dict[str, Any],
+    ) -> dict[str, Any]:
+        artifact = result_json.get("artifact") or {}
+        exported_file = {
+            "file_name": result_json.get("file_name"),
+            "content_type": result_json.get("content_type"),
+            "download_url": result_json.get("download_url"),
+        }
+        artifact_type = artifact.get("artifact_type")
+        artifact_label = self._artifact_label(artifact_type)
+        return {
+            "state": ChatState.COMPLETED.value,
+            "message": f"{artifact_label} 다운로드를 준비했습니다.",
+            "result": {
+                "artifact_id": artifact.get("artifact_id"),
+                "artifact_type": artifact_type,
+                "filename": result_json.get("file_name"),
+            },
+            "artifact_refs": self._artifact_refs_payload(artifact),
+            "download_files": self._download_files_payload(
+                artifact=artifact,
+                exported_file=exported_file,
+            ),
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
+
+    def _artifact_download_required_info_payload(
+        self,
+        result_json: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "state": ChatState.WAITING_REQUIRED_INFO.value,
+            "message": "다운로드할 산출물을 선택해 주세요.",
+            "result": {
+                "missing_fields": result_json.get("missing_fields") or ["artifact_id"],
+                "available_artifacts": result_json.get("available_artifacts") or [],
+            },
+            "download_files": [],
+            "artifact_refs": result_json.get("available_artifacts") or [],
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
+
+    def _started_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
+        action = result_json.get("pending_action") or {}
+        action_id = action.get("action_id") or result_json.get("action_id")
+        return {
+            "state": ChatState.EXECUTING_ACTION.value,
+            "message": "Artifact generation has started. I will keep checking the job status.",
+            "pending_action": action,
+            "result": {
+                "action_id": action_id,
+                "job_id": action_id,
+                "status": "EXECUTING",
+                "generation_progress": self._safe_progress_payload(
+                    result_json.get("generation_progress")
+                ),
+            },
+            "suggested_actions": [],
+            "recommended_prompts": [],
+        }
+
     def _failed_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         error = result_json.get("error") or "request failed"
+        message = self._user_error_message(str(error))
+        if self._should_expose_failure_detail(str(error)):
+            message = f"{message}\n원인: {error}"
         return {
             "state": ChatState.FAILED.value,
-            "message": self._user_error_message(str(error)),
-            "result": {"error": error},
+            "message": message,
+            "result": {
+                "error": error,
+                "generation_progress": self._safe_progress_payload(
+                    result_json.get("generation_progress")
+                ),
+            },
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
@@ -189,29 +290,113 @@ class ChatOutputAgent:
         }
 
     def _clarification_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
+        corrections = self._safe_corrections(result_json.get("corrections"))
+        message = result_json.get("question") or "어떤 요청인지 조금만 더 알려주세요."
+        correction_notice = self._correction_notice(corrections)
+        if correction_notice:
+            message = f"{correction_notice}\n{message}"
+        candidates = result_json.get("candidates") or []
         return {
             "state": ChatState.WAITING_REQUIRED_INFO.value,
-            "message": result_json.get("question")
-            or "어떤 문서나 업무를 기준으로 처리할까요?",
+            "message": message,
             "result": {
                 "semantic_slots": result_json.get("semantic_slots") or {},
                 "clarification_required": True,
+                "candidates": candidates,
+                "command_actions": self._clarification_command_actions(candidates),
             },
+            "corrections": corrections,
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
 
+    def _safe_corrections(self, value: Any) -> list[dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+        corrections = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or "").strip()
+            target = str(item.get("target") or "").strip()
+            if source and target:
+                corrections.append({"source": source, "target": target})
+        return corrections
+
+    def _correction_notice(self, corrections: list[dict[str, str]]) -> str:
+        if not corrections:
+            return ""
+        messages = [
+            f"'{item['source']}'을 '{item['target']}'으로 이해했어요."
+            for item in corrections[:3]
+        ]
+        return " ".join(messages)
+
+    def _clarification_command_actions(
+        self,
+        candidates: list[Any],
+    ) -> list[dict[str, str]]:
+        labels = {
+            "REQUIREMENT_SPEC": "요구사항 명세서",
+            "WBS": "WBS",
+            "SCREEN_DESIGN": "화면설계서",
+            "UNITTEST_SPEC": "단위테스트케이스",
+        }
+        return [
+            {
+                "label": labels.get(str(candidate), str(candidate)),
+                "message": f"{labels.get(str(candidate), str(candidate))} 만들어줘",
+            }
+            for candidate in candidates
+            if str(candidate)
+        ]
+
     def _required_info_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         artifact_type = result_json.get("target_artifact_type")
+        missing_fields = result_json.get("missing_fields") or []
+        if artifact_type == "WBS" and "project_start_date" in missing_fields:
+            return {
+                "state": ChatState.WAITING_REQUIRED_INFO.value,
+                "message": "WBS 생성을 위해 프로젝트 시작일을 입력해주세요.",
+                "result": {
+                    "missing_fields": missing_fields,
+                    "start_date_request": {
+                        "label": "프로젝트 시작일",
+                        "originalMessage": result_json.get("query") or "WBS 만들어줘",
+                    },
+                },
+                "suggested_actions": [],
+                "recommended_prompts": self._default_recommended_prompts(),
+            }
+
+        wbs_precheck = result_json.get("wbs_precheck")
+        if artifact_type == "WBS" and isinstance(wbs_precheck, dict):
+            return {
+                "state": ChatState.WAITING_REQUIRED_INFO.value,
+                "message": "WBS 생성 전 요건을 확인해주세요.",
+                "result": {
+                    "wbs_precheck": wbs_precheck,
+                },
+                "suggested_actions": [],
+                "recommended_prompts": self._default_recommended_prompts(),
+            }
+
         messages = {
             "REQUIREMENT_SPEC": (
                 "요구사항 정의서를 생성하려면 구축요건정의서 또는 RFP가 필요합니다. "
                 "구축요건 정의서를 업로드해주세요."
             ),
-            "WBS": "WBS 생성을 위해 기준이 되는 요구사항 명세서 문서를 먼저 선택해 주세요.",
+            "WBS": (
+                "WBS 생성을 위해 기준 문서가 필요합니다. 요구사항 정의서를 업로드하거나 "
+                "먼저 생성해 주세요."
+            ),
             "SCREEN_DESIGN": (
-                "화면설계서 생성을 위해 요구사항 명세서 또는 관련 화면 기준 문서를 "
-                "먼저 선택해 주세요."
+                "화면설계서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서를 "
+                "업로드하거나 먼저 생성해 주세요."
+            ),
+            "UNITTEST_SPEC": (
+                "단위테스트계획서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서나 "
+                "화면설계서를 업로드하거나 선행 산출물을 먼저 생성해 주세요."
             ),
         }
         upload_request = self._upload_request_payload(
@@ -226,6 +411,9 @@ class ChatOutputAgent:
         }
         if upload_request:
             result["upload_request"] = upload_request
+        command_actions = self._missing_source_command_actions(artifact_type)
+        if command_actions:
+            result["command_actions"] = command_actions
 
         return {
             "state": ChatState.WAITING_REQUIRED_INFO.value,
@@ -245,47 +433,68 @@ class ChatOutputAgent:
         if result.get("assistant_message"):
             message = str(result.get("assistant_message"))
             upload_request = None
+            command_actions = []
         elif required_context == "WBS" or "wbs" in missing_fields:
-            message = (
-                "현재 프로젝트에서 참고할 WBS 문서를 찾지 못했습니다. "
-                "WBS를 업로드하거나, 요구사항 명세서를 기준으로 WBS를 먼저 생성해 주세요."
-            )
-            upload_request = {
-                "required": True,
-                "label": "WBS 업로드",
-                "acceptedTypes": [".xlsx"],
-                "documentType": "WBS",
-                "originalMessage": "WBS 기준으로 일정 알려줘",
-            }
+            if metadata.get("has_requirement_source"):
+                message = (
+                    "현재 프로젝트에서 WBS를 찾지 못했습니다. 기존 WBS를 업로드하거나, "
+                    "등록된 요구사항 정의서를 기준으로 WBS를 생성할 수 있습니다."
+                )
+                upload_request = {
+                    "required": True,
+                    "label": "WBS 업로드",
+                    "acceptedTypes": [".xlsx"],
+                    "documentType": "WBS",
+                    "originalMessage": "WBS 기준으로 일정 알려줘",
+                }
+                command_actions = [
+                    {
+                        "label": "WBS 생성",
+                        "message": "요구사항 정의서를 기준으로 WBS 생성해줘",
+                    }
+                ]
+            else:
+                message = (
+                    "현재 프로젝트에서 WBS를 찾지 못했습니다. WBS를 업로드하거나, "
+                    "요구사항 정의서를 먼저 생성한 뒤 WBS를 생성해 주세요."
+                )
+                upload_request = {
+                    "required": True,
+                    "label": "WBS 업로드",
+                    "acceptedTypes": [".xlsx"],
+                    "documentType": "WBS",
+                    "originalMessage": "WBS 기준으로 일정 알려줘",
+                }
+                command_actions = [
+                    {
+                        "label": "요구사항 정의서 생성",
+                        "message": "요구사항 정의서 생성해줘",
+                    }
+                ]
         elif required_context == "MEETING_NOTES" or "meeting_notes" in missing_fields:
             message = "회의록 내용을 붙여넣거나 주간회의 문서를 업로드해 주세요."
             upload_request = {
                 "required": True,
                 "label": "회의록 업로드",
-                "acceptedTypes": [
-                    ".pdf",
-                    "application/pdf",
-                    ".docx",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    ".md",
-                    ".txt",
-                    "text/plain",
-                    ".csv",
-                    ".log",
-                ],
+                "acceptedTypes": self._meeting_upload_accept_types(),
                 "documentType": "MEETING_NOTES",
                 "originalMessage": "회의록 보고 TODO 정리해줘",
             }
+            command_actions = []
         elif required_context == "ASSIGNEE" or "assignee" in missing_fields:
             message = "담당자 이름을 알려주시면 남은 업무를 확인해 드릴게요."
             upload_request = None
+            command_actions = []
         else:
             message = "일정 확인에 필요한 프로젝트 기준 정보가 부족합니다."
             upload_request = None
+            command_actions = []
 
         payload_result = dict(result)
         if upload_request:
             payload_result["upload_request"] = upload_request
+        if command_actions:
+            payload_result["command_actions"] = command_actions
         return {
             "state": ChatState.WAITING_REQUIRED_INFO.value,
             "message": message,
@@ -315,28 +524,81 @@ class ChatOutputAgent:
         original_message: Any,
     ) -> dict[str, Any] | None:
         if artifact_type != "REQUIREMENT_SPEC":
+            if artifact_type in {"WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"}:
+                return {
+                    "required": True,
+                    "label": "요구사항 정의서 업로드",
+                    "acceptedTypes": self._document_upload_accept_types(),
+                    "documentType": "REQUIREMENT_SPEC",
+                    "originalMessage": str(
+                        original_message or f"{self._artifact_label(artifact_type)} 생성해줘"
+                    ),
+                }
             return None
         return {
             "required": True,
             "label": "구축요건 정의서 업로드",
-            "acceptedTypes": [
-                ".pdf",
-                "application/pdf",
-                ".docx",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".md",
-                ".txt",
-                "text/plain",
-                ".csv",
-                ".json",
-                "application/json",
-                ".log",
-            ],
+            "acceptedTypes": self._document_upload_accept_types(),
             "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
             "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
         }
+
+    def _document_upload_accept_types(self) -> list[str]:
+        return [
+            ".pdf",
+            "application/pdf",
+            ".docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls",
+            "application/vnd.ms-excel",
+            ".md",
+            ".txt",
+            "text/plain",
+            ".csv",
+            ".json",
+            "application/json",
+            ".log",
+        ]
+
+    def _meeting_upload_accept_types(self) -> list[str]:
+        return [
+            ".pdf",
+            "application/pdf",
+            ".docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls",
+            "application/vnd.ms-excel",
+            ".txt",
+            "text/plain",
+        ]
+
+    def _missing_source_command_actions(
+        self,
+        artifact_type: str | None,
+    ) -> list[dict[str, str]]:
+        if artifact_type in {"WBS", "SCREEN_DESIGN"}:
+            return [
+                {
+                    "label": "요구사항 정의서 생성",
+                    "message": "요구사항 정의서 생성해줘",
+                }
+            ]
+        if artifact_type == "UNITTEST_SPEC":
+            return [
+                {
+                    "label": "화면설계서 생성",
+                    "message": "요구사항 정의서를 기준으로 화면설계서 생성해줘",
+                },
+                {
+                    "label": "요구사항 정의서 생성",
+                    "message": "요구사항 정의서 생성해줘",
+                },
+            ]
+        return []
 
     def _pm_concept_answer(self, *, topic: Any, query: Any) -> str:
         topic_value = str(topic or "")
@@ -527,7 +789,10 @@ class ChatOutputAgent:
             title = items[0]["title"] if items else "선택한 TODO"
             return {
                 "state": ChatState.COMPLETED.value,
-                "message": f'"{title}" 업무를 완료 처리했습니다.',
+                "message": (
+                    f'"{title}" 업무를 완료 처리했습니다. '
+                    f"남은 업무는 {len(result.get('remaining_todos') or [])}건입니다."
+                ),
                 "result": {
                     **result,
                     "items": items,
@@ -683,6 +948,20 @@ class ChatOutputAgent:
             return "완료 처리할 TODO를 찾지 못했습니다. TODO 제목을 조금 더 정확히 입력해 주세요."
         return "요청을 처리하지 못했습니다. 내용을 확인한 뒤 다시 시도해 주세요."
 
+    def _should_expose_failure_detail(self, error: str) -> bool:
+        normalized = error.lower()
+        return any(
+            marker in normalized
+            for marker in (
+                "artifactexportservice",
+                "artifact export",
+                "template file not found",
+                "s3 upload",
+                "upload failed",
+                "failed to upload",
+            )
+        )
+
     def _default_recommended_prompts(self) -> list[dict[str, str]]:
         return [
             {
@@ -720,7 +999,7 @@ class ChatOutputAgent:
             "REQUIREMENT_SPEC": "요구사항 정의서",
             "WBS": "WBS",
             "SCREEN_DESIGN": "화면설계서",
-            "UNITTEST_SPEC": "단위테스트케이스",
+            "UNITTEST_SPEC": "단위테스트계획서",
         }
         return labels.get(artifact_type or "", "산출물")
 
@@ -754,13 +1033,20 @@ class ChatOutputAgent:
             exported_file.get("content_type")
             or self._default_mime_type(artifact.get("artifact_type"))
         )
-        return [
-            {
-                "artifact_id": artifact_id,
-                "file_name": file_name,
-                "mime_type": mime_type,
-            }
-        ]
+        payload = {
+            "artifact_id": artifact_id,
+            "artifact_type": artifact.get("artifact_type"),
+            "file_name": file_name,
+            "mime_type": mime_type,
+            "content_type": mime_type,
+        }
+        download_url = exported_file.get("download_url")
+        if download_url:
+            payload["download_url"] = download_url
+        return [payload]
+
+    def _safe_progress_payload(self, progress: Any) -> dict[str, Any]:
+        return dict(progress) if isinstance(progress, dict) else {}
 
     def _default_file_name(self, artifact_type: str | None) -> str:
         if artifact_type == "REQUIREMENT_SPEC":
@@ -796,6 +1082,8 @@ class ChatOutputAgent:
             document_label = (
                 "업로드한 구축요건 정의서"
                 if source_document_type == "CONSTRUCTION_REQUIREMENT_DEFINITION"
+                else "업로드한 요구사항 명세서"
+                if source_document_type == "REQUIREMENT_SPEC"
                 else "선택한 문서"
             )
 
