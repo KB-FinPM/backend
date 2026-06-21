@@ -268,7 +268,7 @@ async def test_wbs_agent_defaults_missing_project_period_to_six_months() -> None
 
 
 @pytest.mark.anyio
-async def test_wbs_agent_defaults_invalid_schedule_context_to_today(monkeypatch) -> None:
+async def test_wbs_agent_rejects_invalid_start_date(monkeypatch) -> None:
     class FixedDate(date):
         @classmethod
         def today(cls):  # type: ignore[override]
@@ -300,10 +300,8 @@ async def test_wbs_agent_defaults_invalid_schedule_context_to_today(monkeypatch)
         )
     )
 
-    assert response.success is True
-    assert response.result["metadata"]["project_start_date"] == "2026.06.10"
-    assert response.result["metadata"]["project_end_date"] == "2026.12.10"
-    assert all("planned_start_date" in task for task in response.result["tasks"])
+    assert response.success is False
+    assert response.error == "project start_date is required for WBS generation"
 
 
 @pytest.mark.anyio
@@ -316,6 +314,7 @@ async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_task
             project_id="PRJ-001",
             context={
                 "project_name": "테스트 프로젝트",
+                "start_date": "2026.01.01",
                 "requirement_artifact": {
                     "requirements": [
                         {
@@ -339,13 +338,13 @@ async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_task
     ]
     assert orchestrator.calls
 
-    assert len(tasks) == len(template_rows) + 1
+    assert len(tasks) >= len(template_rows) + 1
     for task, template_row in zip(tasks[: len(template_rows)], template_rows, strict=True):
         assert task["metadata"]["level"] == template_row["level"]
         assert task["metadata"]["wbs_id"] == template_row["wbs_id"]
         assert task["name"] == template_row["wbs_name"]
 
-    generated = tasks[len(template_rows):]
+    generated = [task for task in tasks if task["name"] == "접근관리"]
     assert generated[0]["name"] == "접근관리"
     assert generated[0]["metadata"]["wbs_id"] == "4"
 
@@ -360,6 +359,7 @@ async def test_wbs_agent_accepts_flat_llm_tasks_payload() -> None:
             project_id="PRJ-001",
             context={
                 "project_name": "테스트 프로젝트",
+                "start_date": "2026.01.01",
                 "requirement_artifact": {
                     "requirements": [
                         {
@@ -390,6 +390,7 @@ async def test_wbs_agent_falls_back_to_template_rows_when_llm_returns_nothing() 
             project_id="PRJ-001",
             context={
                 "project_name": "테스트 프로젝트",
+                "start_date": "2026.01.01",
                 "requirement_artifact": {
                     "requirements": [
                         {

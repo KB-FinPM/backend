@@ -219,9 +219,12 @@ class ChatOutputAgent:
 
     def _failed_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         error = result_json.get("error") or "request failed"
+        message = self._user_error_message(str(error))
+        if self._should_expose_failure_detail(str(error)):
+            message = f"{message}\n원인: {error}"
         return {
             "state": ChatState.FAILED.value,
-            "message": self._user_error_message(str(error)),
+            "message": message,
             "result": {
                 "error": error,
                 "generation_progress": self._safe_progress_payload(
@@ -350,6 +353,34 @@ class ChatOutputAgent:
 
     def _required_info_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         artifact_type = result_json.get("target_artifact_type")
+        missing_fields = result_json.get("missing_fields") or []
+        if artifact_type == "WBS" and "project_start_date" in missing_fields:
+            return {
+                "state": ChatState.WAITING_REQUIRED_INFO.value,
+                "message": "WBS 생성을 위해 프로젝트 시작일을 입력해주세요.",
+                "result": {
+                    "missing_fields": missing_fields,
+                    "start_date_request": {
+                        "label": "프로젝트 시작일",
+                        "originalMessage": result_json.get("query") or "WBS 만들어줘",
+                    },
+                },
+                "suggested_actions": [],
+                "recommended_prompts": self._default_recommended_prompts(),
+            }
+
+        wbs_precheck = result_json.get("wbs_precheck")
+        if artifact_type == "WBS" and isinstance(wbs_precheck, dict):
+            return {
+                "state": ChatState.WAITING_REQUIRED_INFO.value,
+                "message": "WBS 생성 전 요건을 확인해주세요.",
+                "result": {
+                    "wbs_precheck": wbs_precheck,
+                },
+                "suggested_actions": [],
+                "recommended_prompts": self._default_recommended_prompts(),
+            }
+
         messages = {
             "REQUIREMENT_SPEC": (
                 "요구사항 정의서를 생성하려면 구축요건정의서 또는 RFP가 필요합니다. "
@@ -917,6 +948,20 @@ class ChatOutputAgent:
             return "완료 처리할 TODO를 찾지 못했습니다. TODO 제목을 조금 더 정확히 입력해 주세요."
         return "요청을 처리하지 못했습니다. 내용을 확인한 뒤 다시 시도해 주세요."
 
+    def _should_expose_failure_detail(self, error: str) -> bool:
+        normalized = error.lower()
+        return any(
+            marker in normalized
+            for marker in (
+                "artifactexportservice",
+                "artifact export",
+                "template file not found",
+                "s3 upload",
+                "upload failed",
+                "failed to upload",
+            )
+        )
+
     def _default_recommended_prompts(self) -> list[dict[str, str]]:
         return [
             {
@@ -1037,6 +1082,8 @@ class ChatOutputAgent:
             document_label = (
                 "업로드한 구축요건 정의서"
                 if source_document_type == "CONSTRUCTION_REQUIREMENT_DEFINITION"
+                else "업로드한 요구사항 명세서"
+                if source_document_type == "REQUIREMENT_SPEC"
                 else "선택한 문서"
             )
 

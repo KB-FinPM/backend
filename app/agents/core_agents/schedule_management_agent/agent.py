@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import calendar
+import html
 import re
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -195,6 +196,25 @@ class ScheduleManagementAgent:
         "일": 6,
     }
     KO_PLACEHOLDER_ASSIGNEES = {"담당자", "담당", "미정", "담당자 미정", "TBD", "tbd", "-"}
+    NON_TODO_SECTION_PATTERNS = (
+        r"^\s*(?:#{1,6}\s*)?(문제점|방안|장점|단점|결정\s*사항|미\s*결\s*사항)\s*$",
+        r"^\s*이번\s*회의에서\s*도출된\s*실행항목\s*$",
+        r"^\s*(No\.?|실행항목|담당자|기한)\s*(?:\||$)",
+        r"^\s*[0-9]+\s*$",
+        r"^\s*[가-하]\.?\s*$",
+    )
+    INVALID_ASSIGNEE_WORDS = {
+        "부재로",
+        "예정",
+        "필요",
+        "방안",
+        "문제점",
+        "장점",
+        "단점",
+        "데이터",
+        "검색어",
+        "시스템",
+    }
 
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(
@@ -262,7 +282,9 @@ class ScheduleManagementAgent:
         request: AgentRequest,
         context: dict[str, Any],
     ) -> AgentResponse:
-        meeting_notes = str(context.get("meeting_notes") or "").strip()
+        meeting_notes = self._normalize_meeting_notes_text(
+            str(context.get("meeting_notes") or "")
+        )
         if not meeting_notes:
             return AgentResponse(
                 success=False,
@@ -272,7 +294,10 @@ class ScheduleManagementAgent:
 
         source_document_id = self._extract_source_document_id(context, request.documents)
         source_chunk_ids = self._extract_source_chunk_ids(request.documents)
-        current_date = self._current_date(context)
+        current_date = (
+            self._meeting_notes_reference_date(meeting_notes)
+            or self._current_date(context)
+        )
         todos = self._extract_todos(
             meeting_notes=meeting_notes,
             source_document_id=source_document_id,
@@ -325,12 +350,18 @@ class ScheduleManagementAgent:
 
             assignee = self._extract_assignee(sentence)
             due_date, due_metadata = self._extract_due_date(sentence, current_date)
-            title = self._extract_title(sentence, assignee, due_metadata.get("raw_text"))
+            title = self._clean_todo_title(
+                self._extract_title(sentence, assignee, due_metadata.get("raw_text"))
+            )
             if not title:
                 continue
 
             related_artifact = self._extract_related_artifact(sentence)
-            status = "TODO" if assignee and due_date else "NEEDS_CONFIRMATION"
+            status = (
+                "NEEDS_CONFIRMATION"
+                if self._requires_todo_confirmation(sentence, assignee, due_date)
+                else "TODO"
+            )
             confidence = 0.86 if status == "TODO" else 0.62
             metadata: dict[str, Any] = {
                 "source_text": sentence,
@@ -382,8 +413,18 @@ class ScheduleManagementAgent:
             deduped.append(todo)
         return deduped
 
+    def _requires_todo_confirmation(
+        self,
+        sentence: str,
+        assignee: str | None,
+        due_date: str | None,
+    ) -> bool:
+        if not assignee or not due_date:
+            return True
+        return bool(re.search(r"(주간보고.*이슈|이슈\s*로?\s*제기)", sentence))
+
     def _split_candidate_sentences(self, meeting_notes: str) -> list[str]:
-        normalized = meeting_notes.replace("\r\n", "\n").replace("\r", "\n")
+        normalized = self._normalize_meeting_notes_text(meeting_notes)
         parts = re.split(r"(?:\n+|(?<=[.!?。])\s+|[;；])", normalized)
         return [
             sentence
@@ -392,6 +433,7 @@ class ScheduleManagementAgent:
         ]
 
     def _clean_sentence(self, sentence: str) -> str:
+        sentence = self._normalize_meeting_notes_text(sentence)
         sentence = sentence.strip(" \t-*•")
         sentence = re.sub(r"^\d+[\).]\s*", "", sentence)
         sentence = re.sub(
@@ -401,7 +443,73 @@ class ScheduleManagementAgent:
         )
         return sentence.strip()
 
+    def _normalize_meeting_notes_text(self, text: str) -> str:
+        value = str(text or "")
+        value = value.replace("\\r\\n", "\n")
+        value = value.replace("\\n", "\n")
+        value = value.replace("\\t", " ")
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
+        value = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
+        value = re.sub(r"</p\s*>", "\n", value, flags=re.IGNORECASE)
+        value = re.sub(r"<[^>]+>", " ", value)
+        value = html.unescape(value)
+        value = re.sub(r"^\s*#{1,6}\s*", "", value, flags=re.MULTILINE)
+        value = re.sub(r"^\s*>\s*", "", value, flags=re.MULTILINE)
+        value = re.sub(r"[ \t]+", " ", value)
+        value = re.sub(r"\n{3,}", "\n\n", value)
+        return value.strip()
+
+    def _meeting_notes_reference_date(self, meeting_notes: str) -> date | None:
+        match = re.search(
+            r"(20\d{2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})",
+            meeting_notes,
+        )
+        if not match:
+            return None
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    def _is_non_todo_noise(self, text: str) -> bool:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return True
+
+        for pattern in self.NON_TODO_SECTION_PATTERNS:
+            if re.search(pattern, normalized):
+                return True
+
+        if "|" in normalized:
+            cells = [cell.strip() for cell in normalized.split("|")]
+            non_empty = [cell for cell in cells if cell]
+            header_values = {"No.", "No", "실행항목", "담당자", "기한"}
+            if non_empty and set(non_empty).issubset(header_values):
+                return True
+
+        return False
+
+    def _has_strong_action_signal(self, text: str) -> bool:
+        normalized = str(text or "")
+        return bool(
+            re.search(
+                r"\d{1,2}[./]\d{1,2}|\d{4}[./-]\d{1,2}[./-]\d{1,2}",
+                normalized,
+            )
+            or re.search(
+                r"(까지|예정|요청|검토예정|정리\s*예정|배포\s*예정|확정\s*예정)",
+                normalized,
+            )
+            or self._extract_assignee(normalized)
+        )
+
     def _is_action_candidate(self, sentence: str, current_date: date) -> bool:
+        if self._is_non_todo_noise(sentence):
+            return False
+        if len(sentence) > 180 and not self._has_strong_action_signal(sentence):
+            return False
+
         normalized = sentence.lower()
         proper_action_keywords = (
             "검토",
@@ -419,6 +527,9 @@ class ScheduleManagementAgent:
             "추출",
             "개발",
             "테스트",
+            "배포",
+            "확정",
+            "제기",
         )
         proper_obligation_keywords = (
             "필요",
@@ -426,6 +537,8 @@ class ScheduleManagementAgent:
             "하기",
             "담당",
             "까지",
+            "예정",
+            "요청",
             "할 일",
             "액션아이템",
         )
@@ -455,6 +568,22 @@ class ScheduleManagementAgent:
         return has_action_keyword and (has_obligation or has_due_signal or assignee)
 
     def _extract_assignee(self, sentence: str) -> str | None:
+        paren_match = re.search(
+            r"\(([^()]{2,30}(?:PM|이사|감사역|팀장|개발팀|담당자|선임팀장))\)",
+            sentence,
+        )
+        if paren_match:
+            candidate = paren_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
+        role_match = re.search(
+            r"([가-힣]{2,6}\s*(?:PM|이사|감사역|팀장|선임팀장)|SI개발팀|영업감사부|시스템운영팀)",
+            sentence,
+        )
+        if role_match:
+            candidate = re.sub(r"\s+", " ", role_match.group(1)).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
+
         due_then_assignee_match = re.search(
             r"(?:내일까지|낼까지|오늘까지|오늘|이번\s*주\s*(?:월요일|화요일|수요일|목요일|금요일|토요일|일요일|월|화|수|목|금|토|일)?(?:까지)?|다음\s*주\s*(?:월요일|화요일|수요일|목요일|금요일|토요일|일요일|월|화|수|목|금|토|일)?(?:까지)?|\d{1,2}월\s*\d{1,2}일(?:까지)?)\s+([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})(?:님)?(?:은|는|이|가)\s+",
             sentence,
@@ -521,7 +650,8 @@ class ScheduleManagementAgent:
             re.IGNORECASE,
         )
         if explicit_match:
-            return explicit_match.group(1).strip()
+            candidate = explicit_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
 
         subject_match = re.match(
             r"^\s*([가-힣A-Za-z][가-힣A-Za-z0-9._-]{1,30})(?:님)?(?:은|는|이|가)\s+",
@@ -537,13 +667,16 @@ class ScheduleManagementAgent:
             sentence,
         )
         if english_subject_match:
-            return english_subject_match.group(1).strip()
+            candidate = english_subject_match.group(1).strip()
+            return None if self._is_invalid_assignee(candidate) else candidate
 
         return None
 
     def _is_invalid_assignee(self, candidate: str) -> bool:
         stripped = candidate.strip()
         normalized = re.sub(r"(?:에는|에|은|는|이|가)$", "", stripped)
+        if stripped in self.INVALID_ASSIGNEE_WORDS or normalized in self.INVALID_ASSIGNEE_WORDS:
+            return True
         if stripped in {
             "해야",
             "할일",
@@ -633,6 +766,17 @@ class ScheduleManagementAgent:
             return (
                 f"{current_date.year:04d}-{int(month):02d}-{int(day):02d}",
                 {"raw_text": slash_month_day_match.group(0)},
+            )
+
+        dot_month_day_match = re.search(
+            r"(?<!\d)(\d{1,2})\s*\.\s*(\d{1,2})(?!\d)",
+            sentence,
+        )
+        if dot_month_day_match:
+            month, day = dot_month_day_match.groups()
+            return (
+                f"{current_date.year:04d}-{int(month):02d}-{int(day):02d}",
+                {"raw_text": dot_month_day_match.group(0)},
             )
 
         month_day_match = re.search(r"(\d{1,2})월\s*(\d{1,2})일", sentence)
@@ -963,6 +1107,26 @@ class ScheduleManagementAgent:
         title = re.sub(r"\s*(?:을|를)\s*$", "", title)
         title = re.sub(r"\s+", " ", title)
         return title.strip(" .,:：-")
+
+    def _clean_todo_title(self, title: str) -> str:
+        value = self._normalize_meeting_notes_text(str(title or ""))
+        value = re.sub(r"^\s*[-*•]\s*", "", value)
+        value = re.sub(r"^\s*[가-하]\.\s*", "", value)
+        value = re.sub(r"^\s*\d+[.)]\s*", "", value)
+        value = re.sub(
+            r"\([^)]*(?:PM|이사|감사역|팀장|개발팀|담당자|선임팀장)[^)]*\)",
+            "",
+            value,
+        )
+        value = re.sub(r"\(\s*\)", "", value)
+        value = re.sub(r"\s*예정\s*$", "", value)
+        value = re.sub(r"\s+", " ", value).strip(" .,:：-|")
+
+        max_len = 90
+        if len(value) > max_len:
+            value = value[:max_len].rstrip() + "..."
+
+        return value
 
     def _current_week_result(self, context: dict[str, Any]) -> dict[str, Any]:
         week_context, missing_fields, status = self._project_week_context(context)

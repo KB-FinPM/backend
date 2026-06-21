@@ -278,6 +278,37 @@ def normalize_requirement_atoms(result: Any, documents: list[dict[str, Any]] | N
     return atoms
 
 
+def _requirement_description(atom: RequirementAtom) -> str:
+    return (
+        str(atom.description or "").strip()
+        or str(atom.title or "").strip()
+        or str(atom.requirement_name or "").strip()
+        or str(atom.feature or "").strip()
+        or str(atom.biz_requirement_name or "").strip()
+        or str(atom.requirement_id or "").strip()
+        or "요구사항 상세 설명 확인 필요"
+    )
+
+
+def looks_like_requirement_identifier(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if len(text) > 40:
+        return False
+    # Titles/business names are often repeated and must not become requirement IDs.
+    if re.search(r"[가-힣]{2,}", text):
+        return False
+    return bool(
+        re.fullmatch(
+            r"(?:BFE|BSR|REQ|RQ|FR|NFR|IF|UI|UT|WBS)[-_]?\d+(?:[-_]\d+)?",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.fullmatch(r"\d{1,8}", text)
+    )
+
+
 def atoms_to_requirement_artifact(atoms: list[RequirementAtom], project_id: str, generated_by: str) -> dict[str, Any]:
     return {
         "artifact_type": "REQUIREMENT_SPEC",
@@ -285,7 +316,7 @@ def atoms_to_requirement_artifact(atoms: list[RequirementAtom], project_id: str,
             {
                 "requirement_id": atom.requirement_id,
                 "title": atom.title,
-                "description": atom.description,
+                "description": _requirement_description(atom),
                 "priority": atom.priority,
                 "source_document_id": atom.source_document_id,
                 "source_chunk_ids": atom.source_chunk_ids,
@@ -784,7 +815,14 @@ def _make_atom_from_table_row(
     req_type = "비기능요구사항" if category in {"비기능", "인프라", "보안", "운영"} else "기능요구사항"
     clean_requirement_name = _clean_requirement_name_text(requirement_name)
     title = truncate_text(clean_requirement_name or description or biz_requirement_name or requirement_id, 120)
-    final_description = description or (" " if metadata.get("preserve_empty_description") else title)
+    final_description = (
+        str(description or "").strip()
+        or str(title or "").strip()
+        or str(clean_requirement_name or "").strip()
+        or str(biz_requirement_name or "").strip()
+        or str(requirement_id or "").strip()
+        or "요구사항 상세 설명 확인 필요"
+    )
     source_file_name = (document.get("metadata") or {}).get("source_file_name")
     work = metadata.get("work") or metadata.get("section_title") or metadata.get("domain") or ""
     section_category = metadata.get("section_category") or metadata.get("section_title") or metadata.get("domain") or ""
@@ -1312,9 +1350,17 @@ def deduplicate_requirement_atoms(atoms: Iterable[RequirementAtom]) -> list[Requ
 def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[RequirementAtom]:
     """Assign Biz/REQ IDs in reference-compatible Biz-0001 / REQ-00001 format."""
     biz_seq: dict[str, int] = {}
+    used_requirement_ids: set[str] = set()
     result: list[RequirementAtom] = []
+
     for idx, atom in enumerate(list(atoms or []), start=1):
-        biz_name = (atom.biz_requirement_name or atom.domain or atom.category or '공통').strip() or '공통'
+        metadata = dict(atom.metadata or {})
+        biz_name = (
+            atom.biz_requirement_name
+            or atom.domain
+            or atom.category
+            or "공통"
+        ).strip() or "공통"
         if biz_name not in biz_seq:
             biz_seq[biz_name] = len(biz_seq) + 1
         atom.biz_requirement_name = biz_name
@@ -1322,25 +1368,35 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             atom.domain = biz_name
         if not atom.biz_requirement_id:
             atom.biz_requirement_id = f"Biz-{biz_seq[biz_name]:04d}"
-        # Preserve source requirement IDs such as BFE-21000 from existing
-        # requirement tables. Only assign REQ-00001 style IDs when the source did
-        # not provide one or when it is a generated placeholder.
-        current_id = (atom.requirement_id or '').strip()
-        if (
+
+        raw_id = str(atom.requirement_id or "").strip()
+        current_id = raw_id
+        if current_id and not looks_like_requirement_identifier(current_id):
+            metadata["source_requirement_id_raw"] = current_id
+            current_id = ""
+
+        should_generate_id = (
             not current_id
-            or current_id.startswith(('RQ-', 'Requirement'))
-            or re.fullmatch(r'REQ-?\d+', current_id or '', flags=re.IGNORECASE)
-        ):
-            if (
-                not current_id
-                and atom.metadata.get("source") == "구축요건정의서"
-                and atom.metadata.get("raw_table_category")
-            ):
-                atom.requirement_id = f"BSR-{idx:05d}"
-            else:
-                atom.requirement_id = f"REQ-{idx:05d}"
-        else:
-            atom.requirement_id = current_id
+            or current_id.startswith(("RQ-", "Requirement"))
+            or re.fullmatch(r"REQ-?\d+", current_id or "", flags=re.IGNORECASE)
+        )
+        if should_generate_id:
+            prefix = (
+                "BSR"
+                if metadata.get("source") == "구축요건정의서"
+                and metadata.get("raw_table_category")
+                else "REQ"
+            )
+            current_id = f"{prefix}-{idx:05d}"
+
+        base_id = current_id
+        suffix = 2
+        while current_id in used_requirement_ids:
+            current_id = f"{base_id}-{suffix:02d}"
+            suffix += 1
+        atom.requirement_id = current_id
+        used_requirement_ids.add(current_id)
+
         if not atom.requirement_name:
             atom.requirement_name = atom.title or atom.feature or atom.description[:80]
         atom.requirement_name = _clean_requirement_name_text(atom.requirement_name)
@@ -1350,20 +1406,20 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             atom.title = _clean_requirement_name_text(atom.title)
         atom.acceptance_criteria = _build_requirement_acceptance_criteria(atom)
         atom.metadata = {
-            **(atom.metadata or {}),
-            'category': atom.category,
-            'biz_requirement_id': atom.biz_requirement_id,
-            'biz_requirement_name': atom.biz_requirement_name,
-            'requirement_name': atom.requirement_name,
-            'requirement_type': atom.requirement_type,
-            'domain': atom.domain,
-            'feature': atom.feature,
-            'work': atom.metadata.get('work') or atom.domain,
-            'section_category': atom.metadata.get('section_category') or atom.domain,
-            'creation_stage': atom.metadata.get('creation_stage') or '요구사항정의',
-            'status': atom.metadata.get('status') or '신규',
-            'source': atom.metadata.get('source') or '구축요건정의서',
-            'note': atom.metadata.get('note') if atom.metadata.get('note') not in (None, '') else '',
+            **metadata,
+            "category": atom.category,
+            "biz_requirement_id": atom.biz_requirement_id,
+            "biz_requirement_name": atom.biz_requirement_name,
+            "requirement_name": atom.requirement_name,
+            "requirement_type": atom.requirement_type,
+            "domain": atom.domain,
+            "feature": atom.feature,
+            "work": metadata.get("work") or atom.domain,
+            "section_category": metadata.get("section_category") or atom.domain,
+            "creation_stage": metadata.get("creation_stage") or "요구사항정의",
+            "status": metadata.get("status") or "신규",
+            "source": metadata.get("source") or "구축요건정의서",
+            "note": metadata.get("note") if metadata.get("note") not in (None, "") else "",
         }
         result.append(atom)
     return result

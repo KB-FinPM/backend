@@ -232,12 +232,19 @@ def _chat_request(
     conversation_id: str | None = None,
     action: ChatActionCommand | None = None,
 ) -> ChatMessageRequest:
+    context = {}
+    if action is None:
+        context = {
+            "start_date": "2026-01-01",
+            "requirements_confirmed": True,
+        }
     return ChatMessageRequest(
         project_id=PROJECT_ID,
         conversation_id=conversation_id,
         user_id="USER-001",
         message=message,
         action=action,
+        context=context,
         permission_scope=list(DEFAULT_MVP_SCOPES),
     )
 

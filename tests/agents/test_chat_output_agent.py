@@ -334,6 +334,30 @@ async def test_chat_output_agent_masks_internal_errors() -> None:
 
 
 @pytest.mark.anyio
+async def test_chat_output_agent_exposes_artifact_export_failure_detail() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "ACTION_FAILED",
+                "error": (
+                    "ArtifactExportService failed: template file not found: "
+                    "template/탬플릿_요구사항명세서.xlsx"
+                ),
+            },
+        )
+    )
+
+    assert response.success is True
+    assert "원인:" in response.message
+    assert "template file not found" in response.message
+    assert "template/탬플릿_요구사항명세서.xlsx" in response.message
+
+
+@pytest.mark.anyio
 async def test_chat_output_agent_rejects_unsupported_response_type() -> None:
     agent = ChatOutputAgent()
 

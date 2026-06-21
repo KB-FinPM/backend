@@ -70,7 +70,11 @@ class DocumentParserAgent:
                     file_payload.file_name,
                 )
             else:
-                text = self._extract_text(file_payload.file_bytes, extension)
+                text = self._extract_text(
+                    file_payload.file_bytes,
+                    extension,
+                    document_type=str(request.context.get("document_type") or ""),
+                )
         except Exception as exc:
             error_message = self._parse_failure_message(extension, exc)
             return InputAgentResponse(
@@ -115,11 +119,17 @@ class DocumentParserAgent:
             },
         )
 
-    def _extract_text(self, file_bytes: bytes, extension: str) -> str:
+    def _extract_text(
+        self,
+        file_bytes: bytes,
+        extension: str,
+        *,
+        document_type: str | None = None,
+    ) -> str:
         if extension == ".pdf":
             return self._extract_pdf_text(file_bytes)
         if extension == ".docx":
-            return self._extract_docx_text(file_bytes)
+            return self._extract_docx_text(file_bytes, document_type=document_type)
         return self._decode_text(file_bytes)
 
     def _extract_pdf_text(self, file_bytes: bytes) -> str:
@@ -210,7 +220,11 @@ class DocumentParserAgent:
             )
         return f"문서를 읽는 중 오류가 발생했습니다. 파일 형식과 내용을 확인해주세요. ({type(exc).__name__})"
 
-    def _extract_docx_text(self, file_bytes: bytes) -> str:
+    def _extract_docx_text(
+        self,
+        file_bytes: bytes,
+        document_type: str | None = None,
+    ) -> str:
         try:
             from docx import Document
         except ImportError as exc:
@@ -227,18 +241,41 @@ class DocumentParserAgent:
                 lines.append(text)
 
         numbering_levels = self._docx_numbering_levels(document)
+        collapse_merged_cells = str(document_type or "").upper() == "MEETING_NOTES"
         for table in document.tables:
             for row in table.rows:
                 # sample_0605 preserved table column positions, including empty cells.
                 # Removing empty cells shifts columns such as Biz요건ID/요구사항ID and
                 # causes requirement extraction to map the wrong values.
-                cells = [self._extract_docx_cell_text(cell, numbering_levels) for cell in row.cells]
+                seen_cells: set[int] = set()
+                cells: list[str] = []
+                for cell in row.cells:
+                    if collapse_merged_cells:
+                        cell_key = id(cell._tc)
+                        if cell_key in seen_cells:
+                            continue
+                        seen_cells.add(cell_key)
+
+                    cell_text = self._extract_docx_cell_text(
+                        cell,
+                        numbering_levels,
+                        paragraph_separator="\n" if collapse_merged_cells else "\\n",
+                    )
+                    if cell_text or not collapse_merged_cells:
+                        cells.append(cell_text)
+
                 if any(cells):
-                    lines.append(" | ".join(cells))
+                    lines.append("\n".join(cells) if collapse_merged_cells else " | ".join(cells))
 
         return "\n".join(lines)
 
-    def _extract_docx_cell_text(self, cell, numbering_levels: dict[tuple[str, str], str]) -> str:
+    def _extract_docx_cell_text(
+        self,
+        cell,
+        numbering_levels: dict[tuple[str, str], str],
+        *,
+        paragraph_separator: str = "\\n",
+    ) -> str:
         paragraphs: list[str] = []
         for paragraph in cell.paragraphs:
             text = paragraph.text.strip()
@@ -247,7 +284,7 @@ class DocumentParserAgent:
             paragraphs.append(self._preserve_docx_list_marker(paragraph, text, numbering_levels))
         # Keep the table row as one physical line while preserving cell-internal
         # paragraph boundaries for downstream table extraction.
-        return "\\n".join(paragraphs).strip()
+        return paragraph_separator.join(paragraphs).strip()
 
     def _preserve_docx_list_marker(
         self,

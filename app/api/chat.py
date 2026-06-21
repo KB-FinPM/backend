@@ -120,10 +120,14 @@ async def _build_action_status_response(
 
     if action.status == ChatActionStatus.FAILED:
         generation_result = action.result_json or {}
+        generation_progress = generation_result.get("generation_progress")
         error = generation_result.get("message") or generation_result.get("error")
         result = generation_result.get("result")
         if isinstance(result, dict):
             error = error or result.get("error")
+            generation_progress = generation_progress or result.get(
+                "generation_progress"
+            )
         output_response = await output_orchestrator.format(
             OutputAgentRequest(
                 project_id=action.project_id,
@@ -131,6 +135,7 @@ async def _build_action_status_response(
                 result_json={
                     "event": "ACTION_FAILED",
                     "error": error or "generation failed",
+                    "generation_progress": generation_progress,
                     "result": generation_result,
                 },
                 message="generation failed",

@@ -233,7 +233,11 @@ async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> No
             project_id="PRJ-001",
             user_id="USER-001",
             message="이 요구사항으로 WBS 만들어줘",
-            context={"selected_document_ids": ["DOC-REQ-001"]},
+            context={
+                "selected_document_ids": ["DOC-REQ-001"],
+                "start_date": "2025-01-20",
+                "requirements_confirmed": True,
+            },
         )
     )
     second_response = await orchestrator.handle_message(

@@ -417,12 +417,13 @@ class GenerationOrchestrator:
                     ),
                 )
             except (RuntimeError, ValueError, OSError) as exc:
+                error_message = f"ArtifactExportService failed: {exc}"
                 return self._failed_response(
                     request,
                     AgentResponse(
                         success=False,
                         agent_name="ArtifactExportService",
-                        error=str(exc) or "artifact export failed",
+                        error=error_message,
                     ),
                 )
             storage_path = export_result.storage_path if export_result else None

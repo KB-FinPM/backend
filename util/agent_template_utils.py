@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import unicodedata
 from copy import deepcopy
@@ -27,6 +28,14 @@ def _norm(value: str) -> str:
     return unicodedata.normalize("NFC", value)
 
 
+def _decode_hash_unicode(value: str) -> str:
+    return re.sub(
+        r"#U([0-9A-Fa-f]{4})",
+        lambda match: chr(int(match.group(1), 16)),
+        value,
+    )
+
+
 def _relative_template_path(path_or_name: str) -> str:
     raw = str(path_or_name or "").replace("\\", "/").lstrip("/")
     if raw.startswith("template/"):
@@ -39,10 +48,24 @@ def _resolve_local_template_file(path_or_name: str) -> Path:
     candidate = TEMPLATE_DIR / relative
     if candidate.exists():
         return candidate
-    target = _norm(Path(relative).name)
+
+    decoded_candidate = TEMPLATE_DIR / _decode_hash_unicode(relative)
+    if decoded_candidate.exists():
+        return decoded_candidate
+
+    target_names = {
+        _norm(Path(relative).name),
+        _norm(_decode_hash_unicode(Path(relative).name)),
+    }
     if TEMPLATE_DIR.exists():
         for item in TEMPLATE_DIR.rglob("*"):
-            if item.is_file() and _norm(item.name) == target:
+            if not item.is_file():
+                continue
+            item_names = {
+                _norm(item.name),
+                _norm(_decode_hash_unicode(item.name)),
+            }
+            if target_names & item_names:
                 return item
     raise FileNotFoundError(f"template file not found: {path_or_name}")
 

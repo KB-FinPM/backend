@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.core.auth import DEFAULT_MVP_SCOPES
 from app.core.logger import get_logger
 from app.db.session import AsyncSessionLocal
@@ -62,13 +64,20 @@ async def run_generation_action_job(*, project_id: str, action_id: str) -> None:
                 action,
                 conversation_repository=conversation_repository,
             )
+            current_action = await conversation_repository.get_action(
+                project_id=project_id,
+                action_id=action_id,
+            )
             await conversation_repository.update_action_status(
                 project_id=project_id,
                 action_id=action_id,
                 status=ChatActionStatus.EXECUTED
                 if response.success
                 else ChatActionStatus.FAILED,
-                result_json=response.model_dump(mode="json"),
+                result_json=_response_payload_with_preserved_progress(
+                    response,
+                    (current_action or action).result_json,
+                ),
             )
             logger.info(
                 "generation job done | "
@@ -86,11 +95,18 @@ async def run_generation_action_job(*, project_id: str, action_id: str) -> None:
                 project_id=project_id,
                 result={"error": str(exc), "action_id": action_id},
             )
+            current_action = await conversation_repository.get_action(
+                project_id=project_id,
+                action_id=action_id,
+            )
             await conversation_repository.update_action_status(
                 project_id=project_id,
                 action_id=action_id,
                 status=ChatActionStatus.FAILED,
-                result_json=response.model_dump(mode="json"),
+                result_json=_response_payload_with_preserved_progress(
+                    response,
+                    (current_action or action).result_json,
+                ),
             )
 
 
@@ -113,6 +129,7 @@ async def _execute_generation_action(
         payload = action.payload
         generation_request = GenerationRequest(
             project_id=payload["project_id"],
+            context=payload.get("context") or {},
             project_name=payload.get("project_name"),
             start_date=payload.get("start_date"),
             project_period=payload.get("project_period"),
@@ -127,7 +144,11 @@ async def _execute_generation_action(
         )
 
         async def _report_progress(progress: dict[str, object]) -> None:
-            current_result = dict(action.result_json or {})
+            current_action = await conversation_repository.get_action(
+                project_id=action.project_id,
+                action_id=action.action_id,
+            )
+            current_result = dict((current_action or action).result_json or {})
             current_result["generation_progress"] = normalize_generation_progress(
                 progress,
             )
@@ -138,7 +159,10 @@ async def _execute_generation_action(
                 result_json=current_result,
             )
 
-        generation_request.context = {"action_id": action.action_id}
+        generation_request.context = {
+            **(generation_request.context or {}),
+            "action_id": action.action_id,
+        }
 
         await conversation_repository.update_action_status(
             project_id=action.project_id,
@@ -163,3 +187,41 @@ async def _execute_generation_action(
             document_service=document_service,
             progress_reporter=_report_progress,
         )
+
+
+def _extract_generation_progress(
+    result_json: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(result_json, dict):
+        return None
+
+    progress = result_json.get("generation_progress")
+    if isinstance(progress, dict):
+        return progress
+
+    nested_result = result_json.get("result")
+    if isinstance(nested_result, dict):
+        progress = nested_result.get("generation_progress")
+        if isinstance(progress, dict):
+            return progress
+
+    return None
+
+
+def _response_payload_with_preserved_progress(
+    response: GenerationResponse,
+    previous_result_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    final_result = response.model_dump(mode="json")
+    previous_progress = _extract_generation_progress(previous_result_json)
+    if (
+        previous_progress is None
+        or _extract_generation_progress(final_result) is not None
+    ):
+        return final_result
+
+    final_result["generation_progress"] = previous_progress
+    nested_result = final_result.get("result")
+    if isinstance(nested_result, dict):
+        nested_result.setdefault("generation_progress", previous_progress)
+    return final_result

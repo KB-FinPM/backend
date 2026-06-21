@@ -19,6 +19,7 @@ from util.agent_generation_utils import (
     parse_json_array,
     parse_json_object,
     extract_requirement_atoms_from_pipe_tables,
+    looks_like_requirement_identifier,
 )
 from util.agent_template_utils import mapper_summary_for_prompt
 
@@ -771,7 +772,10 @@ source_chunks:
                 "title": parsed_item.get("requirement_name")
                 or parsed_item.get("title")
                 or payload["title"],
-                "description": parsed_item.get("description") or payload["description"],
+                "description": self._first_non_empty_text(
+                    parsed_item.get("description"),
+                    payload["description"],
+                ),
                 "requirement_type": parsed_item.get("requirement_type")
                 or payload["requirement_type"],
                 "domain": parsed_item.get("domain") or payload["domain"],
@@ -783,29 +787,67 @@ source_chunks:
         )
         return payload
 
+    def _first_non_empty_text(self, *values: Any) -> str:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _safe_description(self, atom: Any) -> str:
+        return self._first_non_empty_text(
+            getattr(atom, "description", ""),
+            getattr(atom, "title", ""),
+            getattr(atom, "requirement_name", ""),
+            getattr(atom, "feature", ""),
+            getattr(atom, "biz_requirement_name", ""),
+            getattr(atom, "requirement_id", ""),
+            "요구사항 상세 설명 확인 필요",
+        )
+
+    def _safe_requirement_id(self, atom: Any) -> str:
+        raw_id = self._first_non_empty_text(getattr(atom, "requirement_id", ""))
+        return raw_id if looks_like_requirement_identifier(raw_id) else ""
+
     def _table_atom_fallback_payload(self, atom: Any) -> dict[str, Any]:
+        metadata = getattr(atom, "metadata", {}) or {}
+        raw_requirement_id = self._first_non_empty_text(
+            getattr(atom, "requirement_id", ""),
+        )
+        requirement_id = self._safe_requirement_id(atom)
+        title = self._first_non_empty_text(
+            getattr(atom, "title", ""),
+            getattr(atom, "requirement_name", ""),
+            getattr(atom, "feature", ""),
+            raw_requirement_id,
+            "요구사항",
+        )
         return {
-            "requirement_id": atom.requirement_id,
-            "title": atom.title,
-            "description": atom.description,
-            "priority": atom.priority,
-            "source_document_id": atom.source_document_id,
-            "source_chunk_ids": atom.source_chunk_ids,
-            "source_doc": atom.metadata.get("source_doc")
-            or atom.metadata.get("source_file_name")
-            or atom.source_document_id,
-            "source_file_name": atom.metadata.get("source_file_name")
-            or atom.metadata.get("source_doc")
-            or atom.source_document_id,
-            "acceptance_criteria": atom.acceptance_criteria,
-            "rationale": atom.rationale,
-            "category": atom.category,
-            "requirement_type": atom.requirement_type,
-            "biz_requirement_id": atom.biz_requirement_id,
-            "biz_requirement_name": atom.biz_requirement_name,
-            "domain": atom.domain,
-            "feature": atom.feature,
-            "note": atom.rationale,
+            "requirement_id": requirement_id,
+            "title": title,
+            "description": self._safe_description(atom),
+            "priority": getattr(atom, "priority", "SHOULD"),
+            "source_document_id": getattr(atom, "source_document_id", ""),
+            "source_chunk_ids": getattr(atom, "source_chunk_ids", []),
+            "source_doc": metadata.get("source_doc")
+            or metadata.get("source_file_name")
+            or getattr(atom, "source_document_id", ""),
+            "source_file_name": metadata.get("source_file_name")
+            or metadata.get("source_doc")
+            or getattr(atom, "source_document_id", ""),
+            "acceptance_criteria": getattr(atom, "acceptance_criteria", []),
+            "rationale": getattr(atom, "rationale", ""),
+            "category": getattr(atom, "category", ""),
+            "requirement_type": getattr(atom, "requirement_type", ""),
+            "biz_requirement_id": getattr(atom, "biz_requirement_id", ""),
+            "biz_requirement_name": getattr(atom, "biz_requirement_name", ""),
+            "domain": getattr(atom, "domain", ""),
+            "feature": getattr(atom, "feature", ""),
+            "note": getattr(atom, "rationale", ""),
+            "source_requirement_id_raw": raw_requirement_id,
+            "raw_table_category": metadata.get("raw_table_category"),
+            "raw_table_title": metadata.get("raw_table_title"),
+            "source": metadata.get("source") or "구축요건정의서",
         }
 
 

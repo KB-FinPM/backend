@@ -163,7 +163,7 @@ class WbsAgent:
         )
         start_date = self._normalize_date(start_date_value)
         if start_date is None:
-            start_date = date.today()
+            raise ValueError("project start_date is required for WBS generation")
 
         project_period = self._extract_project_period(request.documents, context)
         if project_period is None:
@@ -611,9 +611,10 @@ class WbsAgent:
         project_period: str | None,
     ) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
-        today_text = date.today().strftime("%Y.%m.%d")
-        start_date_text = self._format_date(start_date) or today_text
-        end_date_text = self._format_date(end_date) or today_text
+        if start_date is None:
+            raise ValueError("project start_date is required for WBS generation")
+        start_date_text = self._format_date(start_date) or ""
+        end_date_text = self._format_date(end_date) or ""
         template_rows = load_wbs_common_rows()
         request_context = request.context or {}
         project_name = str(
@@ -1271,8 +1272,8 @@ Project period: {project_period or ""}
                         "generated_by": self.AGENT_NAME,
                         "project_type": project_type,
                         "source_requirement_count": len(atoms),
-                        "project_start_date": self._format_date(start_date) or date.today().strftime("%Y.%m.%d"),
-                        "project_end_date": self._format_date(end_date) or date.today().strftime("%Y.%m.%d"),
+                        "project_start_date": self._format_date(start_date) or "",
+                        "project_end_date": self._format_date(end_date) or "",
                         "project_period": project_period,
                         "process_rule": "Common WBS template rows plus LLM-generated development tasks",
                     },
@@ -1292,9 +1293,10 @@ Project period: {project_period or ""}
 
     def _build_tasks(self, atoms, request, start_date: date | None, end_date: date | None, project_period: str | None):
         tasks = []
-        today_text = date.today().strftime("%Y.%m.%d")
-        start_date_text = self._format_date(start_date) or today_text
-        end_date_text = self._format_date(end_date) or today_text
+        if start_date is None:
+            raise ValueError("project start_date is required for WBS generation")
+        start_date_text = self._format_date(start_date) or ""
+        end_date_text = self._format_date(end_date) or ""
 
         # The workbook template is the source of truth for the common prefix rows.
         template_rows = load_wbs_common_rows()

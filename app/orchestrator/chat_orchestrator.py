@@ -407,6 +407,21 @@ class ChatOrchestrator:
         request: ChatMessageRequest,
         structured_context: dict[str, Any],
     ) -> ChatResponse:
+        target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
+        project_start_date = self._project_context_value(request.context, "start_date")
+        if target_artifact_type == ArtifactType.WBS and not str(project_start_date or "").strip():
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                result_json={
+                    "event": "REQUIRED_INFO",
+                    "target_artifact_type": target_artifact_type.value,
+                    "query": request.message,
+                    "missing_fields": ["project_start_date"],
+                    "required_project_fields": ["project_start_date"],
+                },
+            )
+
         source_document_ids = structured_context.get("source_document_ids") or []
         if not source_document_ids:
             return await self._render_and_save_response(
@@ -425,7 +440,6 @@ class ChatOrchestrator:
                 },
             )
 
-        target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
         validation_request = GenerationRequest(
             project_id=request.project_id,
             project_name=request.context.get("project_name"),
@@ -450,14 +464,64 @@ class ChatOrchestrator:
                 },
             )
 
+        source_documents = request.context.get("selected_documents") or []
+        if source_document_ids and not source_documents:
+            source_documents = await self._source_documents_for_ids(
+                project_id=request.project_id,
+                document_ids=source_document_ids,
+            )
+
+        requirements_confirmed = bool(
+            (request.context or {}).get("requirements_confirmed")
+            or (request.context or {}).get("wbs_requirements_confirmed")
+        )
+        if target_artifact_type == ArtifactType.WBS and not requirements_confirmed:
+            first_source_document = source_documents[0] if source_documents else {}
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                result_json={
+                    "event": "REQUIRED_INFO",
+                    "target_artifact_type": target_artifact_type.value,
+                    "query": request.message,
+                    "wbs_precheck": {
+                        "source_document_id": (
+                            first_source_document.get("document_id")
+                            if isinstance(first_source_document, dict)
+                            else None
+                        ),
+                        "source_file_name": (
+                            first_source_document.get("file_name")
+                            if isinstance(first_source_document, dict)
+                            else None
+                        ),
+                        "source_document_type": (
+                            first_source_document.get("document_type")
+                            if isinstance(first_source_document, dict)
+                            else None
+                        ),
+                        "source_documents": source_documents,
+                        "project_start_date": project_start_date,
+                        "requirements_confirmed": False,
+                        "original_message": request.message,
+                    },
+                },
+            )
+
         payload = {
             "project_id": request.project_id,
             "target_artifact_type": target_artifact_type.value,
             "source_document_ids": source_document_ids,
-            "source_documents": request.context.get("selected_documents") or [],
+            "source_documents": source_documents,
+            "context": {
+                **(request.context or {}),
+                "source_document_ids": source_document_ids,
+                "source_documents": source_documents,
+                "requirements_confirmed": requirements_confirmed,
+            },
             "source_document_type": structured_context.get("source_document_type"),
             "project_name": request.context.get("project_name"),
-            "start_date": self._project_context_value(request.context, "start_date"),
+            "start_date": project_start_date,
             "end_date": self._project_context_value(request.context, "end_date"),
             "project_period": request.context.get("project_period"),
             "query": request.message,
@@ -486,6 +550,46 @@ class ChatOrchestrator:
             },
             pending_action=pending_action,
         )
+
+    async def _source_documents_for_ids(
+        self,
+        *,
+        project_id: str,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        documents: list[dict[str, Any]] = []
+        for document_id in document_ids:
+            document = await self.document_service.get_document(
+                project_id=project_id,
+                document_id=document_id,
+            )
+            if document is None:
+                continue
+            document_type = (
+                document.document_type.value
+                if hasattr(document.document_type, "value")
+                else str(document.document_type)
+            )
+            documents.append(
+                {
+                    "document_id": document.document_id,
+                    "file_name": document.file_name,
+                    "document_type": document_type,
+                    "display_label": self._display_label_for_document_type(
+                        document_type
+                    ),
+                }
+            )
+        return documents
+
+    def _display_label_for_document_type(self, document_type: str | None) -> str:
+        labels = {
+            "CONSTRUCTION_REQUIREMENT_DEFINITION": "업로드한 구축요건 정의서",
+            "REQUIREMENT_SPEC": "업로드한 요구사항 명세서",
+            "MEETING_NOTES": "업로드한 회의록",
+            "WBS": "업로드한 WBS",
+        }
+        return labels.get(str(document_type or ""), "업로드한 문서")
 
     async def _prepare_schedule_action(
         self,
@@ -705,6 +809,7 @@ class ChatOrchestrator:
         payload = action.payload
         generation_request = GenerationRequest(
             project_id=payload["project_id"],
+            context=payload.get("context") or {},
             project_name=payload.get("project_name"),
             source_document_ids=payload.get("source_document_ids") or [],
             source_document_type=payload.get("source_document_type"),
