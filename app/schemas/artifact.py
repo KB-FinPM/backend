@@ -95,6 +95,10 @@ class ArtifactMetadata(BaseModel):
     template_version: Optional[str] = Field(None, description="Template version")
     result_json: dict = Field(default_factory=dict, description="Artifact result JSON")
     storage_path: Optional[str] = Field(None, description="Exported artifact path")
+    generated_document_id: Optional[str] = Field(
+        None,
+        description="Generated document ID registered for downstream source use",
+    )
     status: ArtifactStatus = Field(
         ArtifactStatus.CREATED,
         description="Current artifact status",

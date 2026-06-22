@@ -2,7 +2,7 @@
 # KO: 프로젝트 범위 원천 문서 조회 API 라우트입니다.
 
 from pathlib import PurePath
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import Response
@@ -56,16 +56,46 @@ async def list_project_files(
     """List uploaded source files separately from generated artifact files."""
     assert_project_access(current_user, project_id, "document:read")
     documents = await document_service.list_documents(project_id=project_id)
-    generated_prefix = f"{settings.S3_GENERATED_PREFIX}/"
+    generated_documents_by_key = {
+        _storage_key(document.storage_path): document
+        for document in documents
+        if _is_generated_storage_path(document.storage_path)
+    }
     uploaded_files = [
         document
         for document in documents
-        if not str(document.storage_path or "").startswith(generated_prefix)
+        if not _is_generated_storage_path(document.storage_path)
+    ]
+    generated_files = [
+        artifact.model_copy(
+            update={
+                "generated_document_id": generated_documents_by_key.get(
+                    _storage_key(artifact.storage_path),
+                ).document_id
+                if generated_documents_by_key.get(_storage_key(artifact.storage_path))
+                else None,
+            }
+        )
+        for artifact in await artifact_service.list_artifacts(project_id=project_id)
     ]
     return ProjectFilesResponse(
         uploaded_files=uploaded_files,
-        generated_files=await artifact_service.list_artifacts(project_id=project_id),
+        generated_files=generated_files,
     )
+
+
+def _storage_key(storage_path: str | None) -> str:
+    value = str(storage_path or "")
+    parsed = urlparse(value)
+    if parsed.scheme == "s3":
+        return parsed.path.lstrip("/")
+    return value.lstrip("/")
+
+
+def _is_generated_storage_path(storage_path: str | None) -> bool:
+    key = _storage_key(storage_path)
+    generated_prefix = settings.S3_GENERATED_PREFIX.strip("/").rstrip("/")
+    return key.startswith(f"{generated_prefix}/")
 
 
 @router.get(
