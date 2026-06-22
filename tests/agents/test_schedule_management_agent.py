@@ -90,6 +90,65 @@ async def test_schedule_management_agent_extracts_todos_from_meeting_notes() -> 
 
 
 @pytest.mark.anyio
+async def test_schedule_management_agent_uses_input_agent_meeting_todo_extraction_first() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[{"chunk_id": "CHUNK-001", "document_id": "DOC-MEETING-001"}],
+            context={
+                "action": "EXTRACT_TODOS_FROM_MEETING",
+                "meeting_notes": "비즈플랫폼에서 대응 개발이 필요",
+                "source_document_ids": ["DOC-MEETING-001"],
+                "normalized_input": {
+                    "meeting_todo_extraction": {
+                        "todo_items": [
+                            {
+                                "title": "법제처 자료 RPA 축적 가능 여부 검토",
+                                "description": "근거: 법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)",
+                                "assignee": "임태운 감사역",
+                                "due_date": None,
+                                "due_date_text": "미정",
+                                "status": "NEEDS_CONFIRMATION",
+                                "related_document": "회의록 기반 신규 TODO",
+                                "source_type": "MEETING_NOTE",
+                                "source_section": "외규관련",
+                                "source_sentence": "법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)",
+                                "confidence": 0.86,
+                                "needs_confirmation": ["기한"],
+                                "classification": "todo",
+                            }
+                        ],
+                        "candidate_items": [
+                            {
+                                "title": "비즈플랫폼 대응 개발 필요",
+                                "classification": "issue_or_requirement",
+                                "reason": "TODO로 확정하지 않음",
+                                "source_sentence": "비즈플랫폼에서 대응 개발이 필요",
+                            }
+                        ],
+                        "metadata": {
+                            "extraction_strategy": "hybrid_rule_llm_rag",
+                            "fallback_used": True,
+                            "llm_used": False,
+                        },
+                    }
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    todo_list = ScheduleTodoList.model_validate(response.result)
+    assert len(todo_list.todos) == 1
+    assert todo_list.todos[0].title == "법제처 자료 RPA 축적 가능 여부 검토"
+    assert todo_list.todos[0].metadata["source_section"] == "외규관련"
+    assert response.result["candidates"][0]["classification"] == "issue_or_requirement"
+    assert response.result["metadata"]["extraction_strategy"] == "hybrid_rule_llm_rag"
+
+
+@pytest.mark.anyio
 async def test_schedule_management_agent_rejects_missing_meeting_notes() -> None:
     agent = ScheduleManagementAgent()
 
