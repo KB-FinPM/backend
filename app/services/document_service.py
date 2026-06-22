@@ -105,6 +105,30 @@ class DocumentService:
             project_id=project_id,
         )
 
+    async def rename_document_file(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        file_name: str,
+    ) -> DocumentMetadata | None:
+        document = await self.document_repository.get_document(
+            project_id=project_id,
+            document_id=document_id,
+        )
+        if document is None:
+            return None
+
+        safe_file_name = self._normalize_uploaded_file_name(
+            file_name,
+            existing_file_name=document.file_name,
+        )
+        return await self.document_repository.update_document_file_name(
+            project_id=project_id,
+            document_id=document_id,
+            file_name=safe_file_name,
+        )
+
     async def delete_document(
         self,
         *,
@@ -123,3 +147,31 @@ class DocumentService:
             project_id=project_id,
             document_id=document_id,
         )
+
+    def _normalize_uploaded_file_name(
+        self,
+        value: str,
+        *,
+        existing_file_name: str,
+    ) -> str:
+        candidate = str(value or "").strip()
+        if not candidate:
+            raise ValueError("파일명을 입력해주세요.")
+        if len(candidate) > 255:
+            raise ValueError("파일명은 255자 이하로 입력해주세요.")
+        if (
+            "/" in candidate
+            or "\\" in candidate
+            or ".." in candidate
+            or any(ord(character) < 32 for character in candidate)
+        ):
+            raise ValueError("파일명에 사용할 수 없는 문자가 포함되어 있습니다.")
+        if PurePath(candidate).name != candidate:
+            raise ValueError("파일명에 경로를 포함할 수 없습니다.")
+
+        existing_extension = PurePath(existing_file_name or "").suffix
+        candidate_extension = PurePath(candidate).suffix
+        if not candidate_extension and existing_extension:
+            candidate = f"{candidate}{existing_extension}"
+
+        return candidate

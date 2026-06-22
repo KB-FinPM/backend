@@ -99,7 +99,7 @@ def get_project_service(
 def get_artifact_service(
     artifact_repository: ArtifactRepository = Depends(get_artifact_repository),
 ) -> ArtifactService:
-    return ArtifactService(artifact_repository)
+    return ArtifactService(artifact_repository, s3_service)
 
 
 def get_generation_service() -> GenerationService:

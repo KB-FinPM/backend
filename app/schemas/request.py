@@ -126,6 +126,10 @@ class ArtifactRenameRequest(BaseModel):
     file_name: str = Field(..., min_length=1, description="New generated file name")
 
 
+class DocumentRenameRequest(BaseModel):
+    file_name: str = Field(..., min_length=1, description="New uploaded file name")
+
+
 class ScheduleTodoRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
     meeting_notes: str = Field(

@@ -12,7 +12,7 @@ from app.core.exceptions import ApiError
 from app.dependencies import get_artifact_service, get_current_user
 from app.schemas.artifact import ArtifactMetadata, ArtifactType
 from app.schemas.request import ArtifactRenameRequest
-from app.schemas.response import ErrorResponse
+from app.schemas.response import BaseResponse, ErrorResponse
 from app.services.artifact_service import ArtifactService
 from app.storage.s3 import s3_service
 
@@ -38,7 +38,10 @@ async def list_artifacts(
 ) -> list[ArtifactMetadata]:
     """List generated artifacts that belong to a project."""
     assert_project_access(current_user, project_id, "artifact:read")
-    return await artifact_service.list_artifacts(project_id=project_id)
+    return [
+        await _with_file_size(artifact)
+        for artifact in await artifact_service.list_artifacts(project_id=project_id)
+    ]
 
 
 @router.get(
@@ -66,7 +69,7 @@ async def get_artifact(
             detail={"project_id": project_id, "artifact_id": artifact_id},
         )
 
-    return artifact
+    return await _with_file_size(artifact)
 
 
 @router.patch(
@@ -103,7 +106,7 @@ async def update_artifact(
             message="artifact not found",
             detail={"project_id": project_id, "artifact_id": artifact_id},
         )
-    return artifact
+    return await _with_file_size(artifact)
 
 
 @router.get(
@@ -164,6 +167,42 @@ async def download_artifact(
         content=file_bytes,
         media_type=content_type,
         headers=headers,
+    )
+
+
+@router.delete(
+    "/projects/{project_id}/artifacts/{artifact_id}",
+    response_model=BaseResponse,
+    responses=ARTIFACT_ERROR_RESPONSES,
+)
+async def delete_artifact(
+    project_id: str,
+    artifact_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> BaseResponse:
+    assert_project_access(current_user, project_id, "artifact:write")
+    deleted = await artifact_service.delete_artifact(
+        project_id=project_id,
+        artifact_id=artifact_id,
+    )
+    if not deleted:
+        raise ApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_code="ARTIFACT_NOT_FOUND",
+            message="artifact not found",
+            detail={"project_id": project_id, "artifact_id": artifact_id},
+        )
+    return BaseResponse(message="artifact deleted")
+
+
+async def _with_file_size(artifact: ArtifactMetadata) -> ArtifactMetadata:
+    return artifact.model_copy(
+        update={
+            "file_size": await s3_service.get_size_by_storage_path(
+                artifact.storage_path,
+            )
+        }
     )
 
 

@@ -4,7 +4,7 @@
 from typing import Any, Optional
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifact import ArtifactDocumentModel, ArtifactModel, ArtifactVersionModel
@@ -137,6 +137,35 @@ class ArtifactRepository:
         for artifact in artifacts:
             await self._attach_latest_payload(artifact)
         return artifacts
+
+    async def delete_artifact(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+    ) -> bool:
+        statement = select(ArtifactModel).where(
+            ArtifactModel.project_id == project_id,
+            ArtifactModel.artifact_id == artifact_id,
+        )
+        result = await self.session.execute(statement)
+        artifact = result.scalar_one_or_none()
+        if artifact is None:
+            return False
+
+        await self.session.execute(
+            delete(ArtifactDocumentModel).where(
+                ArtifactDocumentModel.artifact_id == artifact_id,
+            )
+        )
+        await self.session.execute(
+            delete(ArtifactVersionModel).where(
+                ArtifactVersionModel.artifact_id == artifact_id,
+            )
+        )
+        await self.session.delete(artifact)
+        await self.session.commit()
+        return True
 
     async def _attach_latest_payload(self, artifact: ArtifactModel) -> None:
         version_statement = select(ArtifactVersionModel).where(

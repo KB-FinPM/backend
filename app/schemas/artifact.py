@@ -71,6 +71,7 @@ class DocumentMetadata(BaseModel):
     project_id: str = Field(..., description="Project ID")
     document_type: DocumentType = Field(..., description="Uploaded document type")
     file_name: str = Field(..., description="Original uploaded file name")
+    file_size: Optional[int] = Field(None, description="Stored file size in bytes")
     storage_path: str = Field(..., description="Object storage path")
     status: DocumentStatus = Field(
         DocumentStatus.UPLOADED,
@@ -86,6 +87,7 @@ class ArtifactMetadata(BaseModel):
     artifact_type: ArtifactType = Field(..., description="Generated artifact type")
     name: str = Field(..., description="Artifact display name")
     file_name: Optional[str] = Field(None, description="Generated file name")
+    file_size: Optional[int] = Field(None, description="Stored file size in bytes")
     version: int = Field(1, description="Artifact version")
     source_document_ids: list[str] = Field(
         default_factory=list,

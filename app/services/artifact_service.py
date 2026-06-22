@@ -7,6 +7,7 @@ from typing import Any
 from app.models.artifact import ArtifactModel
 from app.repositories.artifact_repository import ArtifactRepository
 from app.schemas.artifact import ArtifactMetadata, ArtifactStatus, ArtifactType
+from app.storage.s3 import S3Service
 
 ARTIFACT_FILE_EXTENSIONS = {
     ArtifactType.REQUIREMENT_SPEC: ".xlsx",
@@ -19,8 +20,13 @@ ARTIFACT_FILE_EXTENSIONS = {
 class ArtifactService:
     """Coordinates artifact use cases without exposing repositories to routers."""
 
-    def __init__(self, artifact_repository: ArtifactRepository) -> None:
+    def __init__(
+        self,
+        artifact_repository: ArtifactRepository,
+        storage_service: S3Service | None = None,
+    ) -> None:
         self.artifact_repository = artifact_repository
+        self.storage_service = storage_service
 
     async def create_artifact(
         self,
@@ -108,6 +114,27 @@ class ArtifactService:
         if updated_artifact is None:
             return None
         return self._to_metadata(updated_artifact)
+
+    async def delete_artifact(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+    ) -> bool:
+        artifact = await self.artifact_repository.get_artifact(
+            project_id=project_id,
+            artifact_id=artifact_id,
+        )
+        if artifact is None:
+            return False
+
+        if self.storage_service is not None and artifact.storage_path:
+            await self.storage_service.delete_by_storage_path(artifact.storage_path)
+
+        return await self.artifact_repository.delete_artifact(
+            project_id=project_id,
+            artifact_id=artifact_id,
+        )
 
     def _to_metadata(self, artifact: ArtifactModel) -> ArtifactMetadata:
         return ArtifactMetadata(
