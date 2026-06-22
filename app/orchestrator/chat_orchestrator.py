@@ -751,6 +751,28 @@ class ChatOrchestrator:
                 action_id=pending_action.action_id,
                 status=ChatActionStatus.CANCELLED,
             )
+            if (
+                pending_action.action_type == ChatActionType.EXTRACT_ACTION_ITEMS
+                and str(
+                    pending_action.payload.get("schedule_action")
+                    or "EXTRACT_TODOS_FROM_MEETING"
+                )
+                == "EXTRACT_TODOS_FROM_MEETING"
+            ):
+                return await self._render_and_save_response(
+                    conversation=conversation,
+                    project_id=project_id,
+                    result_json={
+                        "event": "SCHEDULE_RESULT",
+                        "result": {
+                            "artifact_type": "SCHEDULE_TODO_LIST",
+                            "action": "EXTRACT_TODOS_FROM_MEETING",
+                            "status": "REQUIRED_INFO",
+                            "missing_fields": ["meeting_notes"],
+                            "metadata": {"required_context": "MEETING_NOTES"},
+                        },
+                    },
+                )
         else:
             return await self._render_and_save_response(
                 conversation=conversation,

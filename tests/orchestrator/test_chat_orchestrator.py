@@ -12,6 +12,7 @@ from app.schemas.artifact import (
 from app.schemas.chat import (
     ChatActionStatus,
     ChatActionType,
+    ChatCommandType,
     ChatMessageRequest,
     ChatRole,
 )
@@ -373,3 +374,54 @@ async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
     assert context["pending_action"]["action_id"] == pending_action.action_id
     assert context["last_agent_response_summary"]["action"] == "SHOW_THIS_WEEK_TODOS"
     assert context["last_agent_response_summary"]["todo_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_chat_orchestrator_cancel_meeting_todo_action_requests_upload() -> None:
+    repository = StubConversationRepository()
+    conversation = await repository.create_conversation(
+        conversation_id="CONV-MEETING-001",
+        project_id="PRJ-001",
+        user_id="USER-001",
+    )
+    pending_action = await repository.create_action(
+        action_id="ACT-MEETING-001",
+        conversation_id=conversation.conversation_id,
+        project_id=conversation.project_id,
+        action_type=ChatActionType.EXTRACT_ACTION_ITEMS,
+        status=ChatActionStatus.WAITING_CONFIRMATION,
+        payload={
+            "project_id": "PRJ-001",
+            "schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+            "source_document_ids": ["DOC-MEETING-001"],
+        },
+    )
+    orchestrator = ChatOrchestrator(
+        conversation_repository=repository,
+        generation_service=StubGenerationService(),
+        schedule_service=StubScheduleService(),
+        document_service=StubDocumentService(),
+        artifact_service=StubArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+    )
+
+    response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            conversation_id=conversation.conversation_id,
+            user_id="USER-001",
+            message="다른 회의록 업로드",
+            action={
+                "type": ChatCommandType.CANCEL_PENDING_ACTION,
+                "action_id": pending_action.action_id,
+                "payload": {"action_id": pending_action.action_id},
+            },
+        )
+    )
+
+    assert response.state == "WAITING_REQUIRED_INFO"
+    assert repository.actions[pending_action.action_id].status == ChatActionStatus.CANCELLED
+    assert "회의록" in response.message
+    assert response.result["upload_request"]["documentType"] == "MEETING_NOTES"
+    assert response.result["upload_request"]["resumeAfterUpload"] is True

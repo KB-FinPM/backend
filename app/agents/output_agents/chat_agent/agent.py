@@ -76,6 +76,7 @@ class ChatOutputAgent:
         if action_type == ChatActionType.EXTRACT_ACTION_ITEMS.value:
             message = "회의록을 기준으로 TODO 목록을 추출할까요?"
             confirm_label = "TODO 추출하기"
+            cancel_label = "다른 회의록 업로드"
         else:
             artifact_label = self._artifact_label(payload.get("target_artifact_type"))
             source_ids = payload.get("source_document_ids") or []
@@ -87,6 +88,7 @@ class ChatOutputAgent:
             )
             message = f"{source_text}를 기준으로 {artifact_label}를 생성할까요?"
             confirm_label = "생성하기"
+            cancel_label = "취소"
 
         return {
             "state": ChatState.WAITING_CONFIRMATION.value,
@@ -100,7 +102,7 @@ class ChatOutputAgent:
                 },
                 {
                     "type": ChatCommandType.CANCEL_PENDING_ACTION.value,
-                    "label": "취소",
+                    "label": cancel_label,
                     "payload": {"action_id": action.get("action_id")},
                 },
             ],
@@ -467,6 +469,10 @@ class ChatOutputAgent:
                 "acceptedTypes": self._meeting_upload_accept_types(),
                 "documentType": "MEETING_NOTES",
                 "originalMessage": "회의록 보고 TODO 정리해줘",
+                "requestType": "MEETING_TODO_EXTRACTION",
+                "resumeAfterUpload": True,
+                "hideOutputFormat": True,
+                "startMessage": "회의록에서 TODO를 추출하고 있습니다.",
             }
             command_actions = []
         elif required_context == "ASSIGNEE" or "assignee" in missing_fields:
