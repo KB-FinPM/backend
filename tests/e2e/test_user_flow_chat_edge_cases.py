@@ -257,6 +257,34 @@ def _command(command_type: ChatCommandType, action_id: str) -> ChatActionCommand
     )
 
 
+async def _create_waiting_generation_action(
+    repository: InMemoryConversationRepository,
+    *,
+    conversation_id: str = "CONV-PENDING-001",
+    action_id: str = "ACT-PENDING-001",
+) -> ChatActionMetadata:
+    await repository.create_conversation(
+        conversation_id=conversation_id,
+        project_id=PROJECT_ID,
+        user_id="USER-001",
+    )
+    return await repository.create_action(
+        action_id=action_id,
+        conversation_id=conversation_id,
+        project_id=PROJECT_ID,
+        action_type=ChatActionType.GENERATE_WBS,
+        payload={
+            "project_id": PROJECT_ID,
+            "target_artifact_type": ArtifactType.WBS.value,
+            "source_document_ids": ["DOC-REQ-CHAT"],
+            "source_document_type": DocumentType.REQUIREMENT_SPEC.value,
+            "query": "Create WBS",
+            "permission_scope": DEFAULT_MVP_SCOPES,
+            "server_permission_scope": DEFAULT_MVP_SCOPES,
+        },
+    )
+
+
 @pytest.mark.anyio
 async def test_chat_question_variant_does_not_prepare_generation_action() -> None:
     orchestrator, repository, generation_service = _make_orchestrator(
@@ -276,19 +304,17 @@ async def test_chat_question_variant_does_not_prepare_generation_action() -> Non
 async def test_chat_wrong_action_id_confirm_does_not_execute_pending_action() -> None:
     orchestrator, repository, generation_service = _make_orchestrator()
 
-    first = await orchestrator.handle_message(_chat_request("Create WBS"))
+    action = await _create_waiting_generation_action(repository)
     response = await orchestrator.handle_message(
         _chat_request(
             "Confirm another action",
-            conversation_id=first.conversation_id,
+            conversation_id=action.conversation_id,
             action=_command(ChatCommandType.CONFIRM_PENDING_ACTION, "ACT-NOT-FOUND"),
         )
     )
 
     assert response.state == ChatState.IDLE
-    assert repository.actions[first.pending_action.action_id].status == (
-        ChatActionStatus.WAITING_CONFIRMATION
-    )
+    assert repository.actions[action.action_id].status == ChatActionStatus.WAITING_CONFIRMATION
     assert generation_service.requests == []
 
 
@@ -296,12 +322,12 @@ async def test_chat_wrong_action_id_confirm_does_not_execute_pending_action() ->
 async def test_chat_cancel_pending_action_prevents_generation() -> None:
     orchestrator, repository, generation_service = _make_orchestrator()
 
-    first = await orchestrator.handle_message(_chat_request("Create WBS"))
-    action_id = first.pending_action.action_id
+    action = await _create_waiting_generation_action(repository)
+    action_id = action.action_id
     response = await orchestrator.handle_message(
         _chat_request(
             "Cancel",
-            conversation_id=first.conversation_id,
+            conversation_id=action.conversation_id,
             action=_command(ChatCommandType.CANCEL_PENDING_ACTION, action_id),
         )
     )
@@ -315,19 +341,19 @@ async def test_chat_cancel_pending_action_prevents_generation() -> None:
 async def test_chat_duplicate_confirm_executes_generation_only_once() -> None:
     orchestrator, repository, generation_service = _make_orchestrator()
 
-    first = await orchestrator.handle_message(_chat_request("Create WBS"))
-    action_id = first.pending_action.action_id
+    action = await _create_waiting_generation_action(repository)
+    action_id = action.action_id
     first_confirm = await orchestrator.handle_message(
         _chat_request(
             "Confirm",
-            conversation_id=first.conversation_id,
+            conversation_id=action.conversation_id,
             action=_command(ChatCommandType.CONFIRM_PENDING_ACTION, action_id),
         )
     )
     duplicate_confirm = await orchestrator.handle_message(
         _chat_request(
             "Confirm again",
-            conversation_id=first.conversation_id,
+            conversation_id=action.conversation_id,
             action=_command(ChatCommandType.CONFIRM_PENDING_ACTION, action_id),
         )
     )
@@ -342,26 +368,30 @@ async def test_chat_duplicate_confirm_executes_generation_only_once() -> None:
 async def test_chat_confirm_rejects_action_from_another_conversation() -> None:
     orchestrator, repository, generation_service = _make_orchestrator()
 
-    first = await orchestrator.handle_message(_chat_request("Create WBS in first chat"))
-    second = await orchestrator.handle_message(_chat_request("Create WBS in second chat"))
+    first = await _create_waiting_generation_action(
+        repository,
+        conversation_id="CONV-PENDING-FIRST",
+        action_id="ACT-PENDING-FIRST",
+    )
+    second = await _create_waiting_generation_action(
+        repository,
+        conversation_id="CONV-PENDING-SECOND",
+        action_id="ACT-PENDING-SECOND",
+    )
     response = await orchestrator.handle_message(
         _chat_request(
             "Confirm mismatched action",
             conversation_id=first.conversation_id,
             action=_command(
                 ChatCommandType.CONFIRM_PENDING_ACTION,
-                second.pending_action.action_id,
+                second.action_id,
             ),
         )
     )
 
     assert response.state == ChatState.IDLE
-    assert repository.actions[first.pending_action.action_id].status == (
-        ChatActionStatus.WAITING_CONFIRMATION
-    )
-    assert repository.actions[second.pending_action.action_id].status == (
-        ChatActionStatus.WAITING_CONFIRMATION
-    )
+    assert repository.actions[first.action_id].status == ChatActionStatus.WAITING_CONFIRMATION
+    assert repository.actions[second.action_id].status == ChatActionStatus.WAITING_CONFIRMATION
     assert generation_service.requests == []
 
 
@@ -369,8 +399,8 @@ async def test_chat_confirm_rejects_action_from_another_conversation() -> None:
 async def test_chat_confirm_ignores_tampered_payload_permission_scope() -> None:
     orchestrator, repository, generation_service = _make_orchestrator()
 
-    first = await orchestrator.handle_message(_chat_request("Create WBS"))
-    action_id = first.pending_action.action_id
+    action = await _create_waiting_generation_action(repository)
+    action_id = action.action_id
     action = repository.actions[action_id]
     repository.actions[action_id] = action.model_copy(
         update={
@@ -384,7 +414,7 @@ async def test_chat_confirm_ignores_tampered_payload_permission_scope() -> None:
     response = await orchestrator.handle_message(
         _chat_request(
             "Confirm",
-            conversation_id=first.conversation_id,
+            conversation_id=action.conversation_id,
             action=_command(ChatCommandType.CONFIRM_PENDING_ACTION, action_id),
         )
     )

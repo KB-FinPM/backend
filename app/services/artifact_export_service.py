@@ -6,11 +6,12 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import PurePath
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -23,12 +24,23 @@ from util.agent_template_utils import (
     get_nested,
     get_value,
     load_output_mapper,
-    output_file_name,
     resolve_template_path,
 )
 
 logger = get_logger(__name__)
 INVALID_FILE_NAME_CHARS = set('<>:"/\\|?*')
+ARTIFACT_EXPORT_FORMATS = {
+    ArtifactType.REQUIREMENT_SPEC: "xlsx",
+    ArtifactType.WBS: "xlsx",
+    ArtifactType.SCREEN_DESIGN: "pptx",
+    ArtifactType.UNITTEST_SPEC: "xlsx",
+}
+ARTIFACT_FILE_LABELS = {
+    ArtifactType.REQUIREMENT_SPEC: "요구사항명세서",
+    ArtifactType.WBS: "WBS",
+    ArtifactType.SCREEN_DESIGN: "화면설계서",
+    ArtifactType.UNITTEST_SPEC: "단위테스트케이스",
+}
 
 
 @dataclass(frozen=True)
@@ -55,23 +67,31 @@ class ArtifactExportService:
         artifact_type: ArtifactType,
         result_json: dict[str, Any],
         project_name: str | None = None,
+        output_format: str | None = None,
+        version: int = 1,
         document_service: DocumentService | None = None,
         storage_service: S3Service | None = None,
     ) -> ArtifactExportResult | None:
+        normalized_format = self._normalize_output_format(
+            artifact_type,
+            output_format,
+        )
+        file_name = self._generated_file_name(
+            artifact_type,
+            project_name=project_name,
+            output_format=normalized_format,
+            version=version,
+        )
         if artifact_type == ArtifactType.REQUIREMENT_SPEC:
-            file_name = self._requirement_file_name(project_name)
             file_bytes = self._build_requirement_xlsx(result_json)
             content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif artifact_type == ArtifactType.UNITTEST_SPEC:
-            file_name = output_file_name("unit_test", "단위테스트케이스.xlsx")
             file_bytes = self._build_unit_test_xlsx(result_json)
             content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif artifact_type == ArtifactType.WBS:
-            file_name = output_file_name("wbs", "WBS.xlsx")
             file_bytes = self._build_wbs_xlsx(result_json)
             content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif artifact_type == ArtifactType.SCREEN_DESIGN:
-            file_name = output_file_name("screen_plan", "화면기획서.pptx")
             file_bytes = self._build_screen_design_pptx(result_json)
             content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         else:
@@ -98,7 +118,8 @@ class ArtifactExportService:
         logger.info(
             "[ArtifactExport] exported | "
             f"project_id={project_id} | artifact_id={artifact_id} | "
-            f"file_name={safe_file_name} | path={storage_path}"
+            f"file_name={safe_file_name} | version={version} | "
+            f"format={normalized_format} | path={storage_path}"
         )
 
         generated_document = None
@@ -146,6 +167,27 @@ class ArtifactExportService:
                     "parser_name": "ArtifactExportService",
                 },
             )
+        elif artifact_type == ArtifactType.SCREEN_DESIGN and document_service is not None:
+            document_id = f"DOC-{uuid4().hex[:12].upper()}"
+            generated_document = await document_service.ingest_uploaded_document(
+                document_id=document_id,
+                project_id=project_id,
+                document_type=DocumentType.SCREEN_DESIGN,
+                file_name=safe_file_name,
+                storage_path=storage_path,
+                file_bytes=file_bytes,
+                parsed_context={
+                    "text": self._screen_design_text(result_json),
+                    "screens": result_json.get("screens", []),
+                    "metadata": {
+                        "generated_from_artifact_id": artifact_id,
+                        "artifact_type": artifact_type.value,
+                        "source_file_name": safe_file_name,
+                        "content_type": content_type,
+                    },
+                    "parser_name": "ArtifactExportService",
+                },
+            )
 
         return ArtifactExportResult(
             storage_path=storage_path,
@@ -154,11 +196,36 @@ class ArtifactExportService:
             document=generated_document,
         )
 
-    def _requirement_file_name(self, project_name: str | None) -> str:
+    def _generated_file_name(
+        self,
+        artifact_type: ArtifactType,
+        *,
+        project_name: str | None,
+        output_format: str,
+        version: int,
+    ) -> str:
+        artifact_label = ARTIFACT_FILE_LABELS.get(artifact_type, artifact_type.value)
+        generated_date = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
         safe_project_name = self._safe_file_name_part(project_name or "")
-        if not safe_project_name:
-            return "요구사항명세서.xlsx"
-        return f"[{safe_project_name}] 요구사항명세서.xlsx"
+        base_name = f"{artifact_label}_{generated_date}_v{max(int(version or 1), 1)}"
+        if safe_project_name:
+            base_name = f"[{safe_project_name}] {base_name}"
+        return f"{base_name}.{output_format}"
+
+    def _normalize_output_format(
+        self,
+        artifact_type: ArtifactType,
+        output_format: str | None,
+    ) -> str:
+        supported_format = ARTIFACT_EXPORT_FORMATS.get(artifact_type)
+        if not supported_format:
+            raise ValueError(f"{artifact_type.value} export is not supported")
+        normalized = str(output_format or supported_format).strip().lower().lstrip(".")
+        if normalized != supported_format:
+            raise ValueError(
+                f"{artifact_type.value} export supports only .{supported_format}"
+            )
+        return normalized
 
     def _safe_file_name_part(self, value: str) -> str:
         cleaned = "".join(
@@ -203,6 +270,31 @@ class ArtifactExportService:
                         source.get("end_date"),
                         source.get("worker"),
                         source.get("work_status") or source.get("status"),
+                    ]
+                )
+            )
+        return "\n".join(lines)
+
+    def _screen_design_text(self, result_json: dict[str, Any]) -> str:
+        lines = ["# SCREEN_DESIGN"]
+        for screen in result_json.get("screens", []):
+            if not isinstance(screen, dict):
+                continue
+            metadata = screen.get("metadata") or {}
+            display_items = metadata.get("display_items") or screen.get("display_items")
+            if isinstance(display_items, list):
+                display_items_text = ", ".join(str(item) for item in display_items)
+            else:
+                display_items_text = str(display_items or "")
+            lines.append(
+                " | ".join(
+                    str(value or "")
+                    for value in [
+                        screen.get("screen_id"),
+                        screen.get("name"),
+                        screen.get("description"),
+                        display_items_text,
+                        ", ".join(screen.get("source_requirement_ids") or []),
                     ]
                 )
             )

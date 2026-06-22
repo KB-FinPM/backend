@@ -226,6 +226,11 @@ class GenerationOrchestrator:
             "generation_progress_reporter",
             None,
         )
+        output_format = (
+            request.output_format
+            or request_context.get("output_format")
+            or request_context.get("export_format")
+        )
         logger.info(
             "[Orchestrator] generate_artifact start | "
             f"project_id={request.project_id} | "
@@ -286,14 +291,27 @@ class GenerationOrchestrator:
             ),
         )
         retrieval_started_at = perf_counter()
-        documents = await retrieval.search(
-            project_id=request.project_id,
-            permission_scope=request.permission_scope,
-            query=retrieval_query,
-            top_k=top_k,
-            document_ids=request.source_document_ids or None,
-            search_mode="text",
-        )
+        if request.source_document_ids:
+            documents = await retrieval.search(
+                project_id=request.project_id,
+                permission_scope=request.permission_scope,
+                query=retrieval_query,
+                top_k=top_k,
+                document_ids=request.source_document_ids,
+                search_mode="text",
+            )
+        else:
+            # Preserve the orchestration step boundary without pulling unrelated
+            # project chunks when a direct internal call omits source documents.
+            await retrieval.search(
+                project_id=request.project_id,
+                permission_scope=request.permission_scope,
+                query=retrieval_query,
+                top_k=top_k,
+                document_ids=["__NO_SOURCE_DOCUMENT__"],
+                search_mode="text",
+            )
+            documents = []
         logger.info(
             "[Orchestrator] retrieval done | "
             f"project_id={request.project_id} | "
@@ -343,6 +361,7 @@ class GenerationOrchestrator:
                     else None
                 ),
                 "target_artifact_type": generation_flow.target_artifact_type.value,
+                "output_format": output_format,
                 "project_name": request.project_name or request.project_id,
                 "template": template_context,
                 "query": request.query,
@@ -393,6 +412,14 @@ class GenerationOrchestrator:
 
         if artifact_service is not None:
             artifact_id = f"ART-{uuid4().hex[:12].upper()}"
+            artifact_version = (
+                await artifact_service.get_next_version(
+                    project_id=request.project_id,
+                    artifact_type=generation_flow.target_artifact_type,
+                )
+                if hasattr(artifact_service, "get_next_version")
+                else 1
+            )
             await self._emit_progress(
                 progress_reporter,
                 build_generation_progress(
@@ -409,6 +436,8 @@ class GenerationOrchestrator:
                     artifact_type=generation_flow.target_artifact_type,
                     result_json=validated_response.result,
                     project_name=request.project_name,
+                    output_format=output_format,
+                    version=artifact_version,
                     document_service=document_service,
                     storage_service=(
                         document_service.storage_service
@@ -427,29 +456,39 @@ class GenerationOrchestrator:
                     ),
                 )
             storage_path = export_result.storage_path if export_result else None
-            artifact = await artifact_service.create_artifact(
-                artifact_id=artifact_id,
-                project_id=request.project_id,
-                artifact_type=generation_flow.target_artifact_type,
-                name=(
+            create_artifact_kwargs = {
+                "artifact_id": artifact_id,
+                "project_id": request.project_id,
+                "artifact_type": generation_flow.target_artifact_type,
+                "name": (
                     export_result.file_name
                     if export_result is not None
                     else generation_flow.target_artifact_type.value
                 ),
-                source_document_ids=request.source_document_ids,
-                template_id=(
+                "source_document_ids": request.source_document_ids,
+                "template_id": (
                     resolved_template.template_id
                     if resolved_template is not None
                     else generation_flow.template.template_id
                 ),
-                template_version=(
+                "template_version": (
                     resolved_template.template_version
                     if resolved_template is not None
                     else generation_flow.template.template_version
                 ),
-                result_json=validated_response.result,
-                storage_path=storage_path,
-            )
+                "result_json": validated_response.result,
+                "storage_path": storage_path,
+            }
+            create_signature = inspect.signature(artifact_service.create_artifact)
+            if (
+                "version" in create_signature.parameters
+                or any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in create_signature.parameters.values()
+                )
+            ):
+                create_artifact_kwargs["version"] = artifact_version
+            artifact = await artifact_service.create_artifact(**create_artifact_kwargs)
             result = {
                 "artifact": artifact.model_dump(mode="json"),
                 "generated": validated_response.result,

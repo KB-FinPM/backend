@@ -7,6 +7,7 @@ from typing import Any
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
 from util.agent_generation_utils import (
+    RequirementAtom,
     normalize_requirement_atoms,
     parse_json_array,
     parse_json_object,
@@ -71,12 +72,10 @@ class ScreenDesignAgent:
             )
             screen_atoms = self._deduplicate_by_requirement_id(atoms)
 
+            used_default_draft = False
             if not screen_atoms:
-                return AgentResponse(
-                    success=False,
-                    agent_name=self.AGENT_NAME,
-                    error="No requirement context available for screen design generation",
-                )
+                screen_atoms = self._fallback_atoms_from_request(request)
+                used_default_draft = True
 
             screens = await self._generate_in_batches(request, screen_atoms)
             if not screens:
@@ -97,12 +96,76 @@ class ScreenDesignAgent:
                         "source_requirement_count": len(atoms),
                         "screen_requirement_count": len(screen_atoms),
                         "process_rule": "Create one screen-design page per requirement ID and use the full requirement context when describing the screen",
+                        **(self._default_draft_metadata() if used_default_draft else {}),
                     },
                 },
             )
         except Exception as exc:
             logger.error(f"[{self.AGENT_NAME}] error: {exc}")
             return AgentResponse(success=False, agent_name=self.AGENT_NAME, error=str(exc))
+
+    def _fallback_atoms_from_request(self, request: AgentRequest) -> list[RequirementAtom]:
+        context = request.context or {}
+        query = str(context.get("query") or "").strip()
+        project_name = str(
+            context.get("project_name")
+            or context.get("project_nm")
+            or request.project_id
+            or "프로젝트"
+        ).strip()
+        subject = truncate_text(query or f"{project_name} 화면설계서 생성", 100)
+        common_metadata = {
+            "generation_source": "default_draft",
+            "assumptions": [
+                "참고 문서가 없어 일반적인 업무 화면 구조를 기준으로 초안을 작성했습니다.",
+            ],
+            "additional_check_required": [
+                "실제 메뉴 구조, 권한, 입력/출력 항목, 화면 흐름은 확인이 필요합니다.",
+            ],
+        }
+        return [
+            RequirementAtom(
+                requirement_id="REQ-00001",
+                title=subject,
+                requirement_name=subject,
+                description=f"{project_name} 요청을 기준으로 대표 업무 화면을 구성한다.",
+                biz_requirement_name="공통",
+                domain="공통",
+                feature="대표 화면",
+                metadata=common_metadata,
+            ),
+            RequirementAtom(
+                requirement_id="REQ-00002",
+                title="목록 및 검색 화면",
+                requirement_name="목록 및 검색 화면",
+                description="주요 데이터 목록 조회, 검색 조건 입력, 결과 확인 흐름을 제공한다.",
+                biz_requirement_name="조회",
+                domain="조회",
+                feature="목록/검색",
+                metadata=common_metadata,
+            ),
+            RequirementAtom(
+                requirement_id="REQ-00003",
+                title="등록 및 상세 화면",
+                requirement_name="등록 및 상세 화면",
+                description="데이터 등록, 상세 조회, 수정, 저장 결과 확인 흐름을 제공한다.",
+                biz_requirement_name="처리",
+                domain="처리",
+                feature="등록/상세",
+                metadata=common_metadata,
+            ),
+        ]
+
+    def _default_draft_metadata(self) -> dict[str, object]:
+        return {
+            "generation_source": "default_draft",
+            "가정사항": [
+                "참고 문서가 없어 일반적인 업무 화면 구조를 기준으로 초안을 작성했습니다.",
+            ],
+            "추가 확인 필요 항목": [
+                "실제 메뉴 구조, 권한, 입력/출력 항목, 화면 흐름은 확인이 필요합니다.",
+            ],
+        }
 
     async def _generate_with_llm(
         self,

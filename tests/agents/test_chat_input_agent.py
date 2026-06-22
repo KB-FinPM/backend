@@ -298,7 +298,7 @@ async def test_chat_input_agent_requirement_generation_variants(
     assert response.structured_context["intent"] == "GENERATE_ARTIFACT"
     assert response.structured_context["action"] == "CREATE"
     assert response.structured_context["artifact_type"] == "REQUIREMENT_SPEC"
-    assert response.structured_context["missing_slots"] == ["source_document_ids"]
+    assert response.structured_context["missing_slots"] == []
     assert "normalized_query" in response.structured_context
 
 

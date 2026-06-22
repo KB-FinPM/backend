@@ -3,43 +3,43 @@
     "message": "요구사항 뽑아줘",
     "expected_intent": "GENERATE_ARTIFACT",
     "expected_artifact_type": "REQUIREMENT_SPEC",
-    "expected_missing_slots": ["source_document_ids"]
+    "expected_missing_slots": []
   },
   {
     "message": "요구사항저의서 만들어줘",
     "expected_intent": "GENERATE_ARTIFACT",
     "expected_artifact_type": "REQUIREMENT_SPEC",
-    "expected_missing_slots": ["source_document_ids"]
+    "expected_missing_slots": []
   },
   {
     "message": "WBS 짜줘",
     "expected_intent": "GENERATE_ARTIFACT",
     "expected_artifact_type": "WBS",
-    "expected_missing_slots": ["source_document_ids"]
+    "expected_missing_slots": []
   },
   {
     "message": "일정표 만들어줘",
     "expected_intent": "GENERATE_ARTIFACT",
     "expected_artifact_type": "WBS",
-    "expected_missing_slots": ["source_document_ids"]
+    "expected_missing_slots": []
   },
   {
     "message": "화면설계서 만들어줘",
     "expected_intent": "GENERATE_ARTIFACT",
     "expected_artifact_type": "SCREEN_DESIGN",
-    "expected_missing_slots": ["source_document_ids"]
+    "expected_missing_slots": []
   },
   {
     "message": "UI 설계서 만들어줘",
     "expected_intent": "GENERATE_ARTIFACT",
     "expected_artifact_type": "SCREEN_DESIGN",
-    "expected_missing_slots": ["source_document_ids"]
+    "expected_missing_slots": []
   },
   {
     "message": "테스트케이스 만들어줘",
     "expected_intent": "GENERATE_ARTIFACT",
     "expected_artifact_type": "UNITTEST_SPEC",
-    "expected_missing_slots": ["source_document_ids"]
+    "expected_missing_slots": []
   },
   {
     "message": "방금 회의록에서 액션아이템 뽑아줘",

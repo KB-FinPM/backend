@@ -136,6 +136,7 @@ async def _execute_generation_action(
             source_document_ids=payload.get("source_document_ids") or [],
             source_document_type=payload.get("source_document_type"),
             target_artifact_type=payload["target_artifact_type"],
+            output_format=payload.get("output_format"),
             template_id=payload.get("template_id"),
             template_version=payload.get("template_version"),
             query=payload.get("query"),
