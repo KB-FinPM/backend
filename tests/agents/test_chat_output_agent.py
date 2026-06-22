@@ -205,7 +205,8 @@ async def test_chat_output_agent_renders_required_info_message() -> None:
     )
 
     assert response.success is True
-    assert "구축요건정의서 또는 RFP" in response.message
+    assert "구축요건 정의서" in response.message
+    assert "요구사항 정의서" in response.message
     assert response.display_payload["state"] == "WAITING_REQUIRED_INFO"
     assert not any(name in response.message for name in INTERNAL_NAMES)
 
@@ -541,6 +542,37 @@ async def test_chat_output_agent_requests_meeting_notes_for_schedule_required_in
     assert "회의록 내용을 붙여넣거나" in response.message
     assert upload_request["label"] == "회의록 업로드"
     assert upload_request["documentType"] == "MEETING_NOTES"
+    assert upload_request["requestType"] == "MEETING_TODO_EXTRACTION"
+    assert upload_request["resumeAfterUpload"] is True
+    assert upload_request["hideOutputFormat"] is True
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_schedule_confirmation_offers_meeting_upload() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "CONFIRMATION_REQUIRED",
+                "pending_action": {
+                    "action_id": "ACT-001",
+                    "action_type": "EXTRACT_ACTION_ITEMS",
+                    "payload": {
+                        "schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+                        "source_document_ids": ["DOC-MEETING-001"],
+                    },
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    actions = response.display_payload["suggested_actions"]
+    assert actions[0]["label"] == "TODO 추출하기"
+    assert actions[1]["label"] == "다른 회의록 업로드"
 
 
 @pytest.mark.anyio

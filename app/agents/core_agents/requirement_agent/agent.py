@@ -12,12 +12,14 @@ from app.agents.core_agents.requirement_agent.document_preprocessor import (
 )
 from app.schemas.agent import AgentRequest, AgentResponse
 from util.agent_generation_utils import (
+    RequirementAtom,
     assign_requirement_ids,
     atoms_to_requirement_artifact,
     deduplicate_requirement_atoms,
     normalize_requirement_atoms,
     parse_json_array,
     parse_json_object,
+    truncate_text,
     extract_requirement_atoms_from_pipe_tables,
     looks_like_requirement_identifier,
 )
@@ -176,17 +178,19 @@ class RequirementAgent:
                 documents = normalize_requirement_documents(request.documents)
                 atoms = normalize_requirement_atoms(None, documents=documents)
                 atoms = assign_requirement_ids(deduplicate_requirement_atoms(atoms))
+                used_default_draft = False
                 if not atoms:
-                    return AgentResponse(
-                        success=False,
-                        agent_name=self.AGENT_NAME,
-                        error="No source document chunks available for requirement generation",
-                    )
+                    atoms = self._fallback_atoms_from_request(request)
+                    used_default_draft = True
                 result = atoms_to_requirement_artifact(
                     atoms,
                     project_id=request.project_id,
                     generated_by=self.AGENT_NAME,
                 )
+                if used_default_draft:
+                    result.setdefault("metadata", {}).update(
+                        self._default_draft_metadata()
+                    )
                 self._apply_request_metadata(result, request)
 
             requirement_count = len(result.get("requirements", [])) if isinstance(result, dict) else 0
@@ -201,6 +205,91 @@ class RequirementAgent:
         except Exception as exc:
             logger.error(f"[{self.AGENT_NAME}] error: {exc}")
             return AgentResponse(success=False, agent_name=self.AGENT_NAME, error=str(exc))
+
+    def _fallback_atoms_from_request(self, request: AgentRequest) -> list[RequirementAtom]:
+        context = request.context or {}
+        query = str(context.get("query") or "").strip()
+        project_name = str(
+            context.get("project_name")
+            or context.get("project_nm")
+            or request.project_id
+            or "프로젝트"
+        ).strip()
+        subject = truncate_text(query or f"{project_name} 문서 생성 요청", 120)
+        common_metadata = {
+            "generation_source": "default_draft",
+            "assumptions": [
+                "참고 문서가 없어 일반적인 PM 산출물 구조를 기준으로 초안을 작성했습니다.",
+                "사용자가 최초 요청에 제공한 정보만 우선 반영했습니다.",
+            ],
+            "additional_check_required": [
+                "업무 범위, 인터페이스, 일정, 승인 기준은 실제 프로젝트 상황에 맞게 확인이 필요합니다.",
+            ],
+        }
+        return assign_requirement_ids(
+            [
+                RequirementAtom(
+                    title=subject,
+                    requirement_name=subject,
+                    description=(
+                        f"{project_name} 요청을 기준으로 핵심 업무 범위와 산출물 작성 방향을 정리한다."
+                    ),
+                    biz_requirement_name="공통",
+                    domain="공통",
+                    feature=subject,
+                    acceptance_criteria=[
+                        "최초 요청에 포함된 조건이 산출물 초안에 반영된다.",
+                        "미확정 정보는 추가 확인 필요 항목으로 분리된다.",
+                    ],
+                    rationale="Drafted from user request without source documents.",
+                    metadata=common_metadata,
+                ),
+                RequirementAtom(
+                    title="기본 업무 흐름 정리",
+                    requirement_name="기본 업무 흐름 정리",
+                    description=(
+                        "일반적인 PM 산출물 흐름에 따라 현황, 목표, 주요 작업, 검토 항목을 정리한다."
+                    ),
+                    biz_requirement_name="업무관리",
+                    domain="업무관리",
+                    feature="업무 흐름",
+                    acceptance_criteria=[
+                        "주요 업무 단계가 누락 없이 초안에 포함된다.",
+                        "세부 정보가 부족한 항목은 가정사항으로 표시된다.",
+                    ],
+                    rationale="Default PM artifact structure used when source material is absent.",
+                    metadata=common_metadata,
+                ),
+                RequirementAtom(
+                    title="검토 및 보완 항목 관리",
+                    requirement_name="검토 및 보완 항목 관리",
+                    description=(
+                        "생성된 초안에서 확인이 필요한 항목을 별도 섹션으로 구분해 후속 보완이 가능하게 한다."
+                    ),
+                    biz_requirement_name="품질관리",
+                    domain="품질관리",
+                    feature="추가 확인 필요 항목",
+                    acceptance_criteria=[
+                        "가정사항과 추가 확인 필요 항목이 산출물에 명시된다.",
+                        "사용자는 초안을 기반으로 후속 보완을 진행할 수 있다.",
+                    ],
+                    rationale="Uncertain information must be captured in the generated result.",
+                    metadata=common_metadata,
+                ),
+            ]
+        )
+
+    def _default_draft_metadata(self) -> dict[str, Any]:
+        return {
+            "generation_source": "default_draft",
+            "가정사항": [
+                "참고 문서가 없어 일반적인 PM 산출물 구조를 기준으로 초안을 작성했습니다.",
+                "사용자가 최초 요청에 제공한 정보만 우선 반영했습니다.",
+            ],
+            "추가 확인 필요 항목": [
+                "업무 범위, 인터페이스, 일정, 승인 기준은 실제 프로젝트 상황에 맞게 확인이 필요합니다.",
+            ],
+        }
 
     async def _generate_with_model(
         self,

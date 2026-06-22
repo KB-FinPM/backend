@@ -91,6 +91,28 @@ class DocumentRepository:
 
         return self._to_metadata(document)
 
+    async def update_document_file_name(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        file_name: str,
+    ) -> Optional[DocumentMetadata]:
+        statement = select(DocumentModel).where(
+            DocumentModel.project_id == project_id,
+            DocumentModel.document_id == document_id,
+        )
+        result = await self.session.execute(statement)
+        document = result.scalar_one_or_none()
+        if document is None:
+            return None
+
+        document.file_name = file_name
+        await self.session.commit()
+        await self.session.refresh(document)
+
+        return self._to_metadata(document)
+
     async def delete_document(
         self,
         *,

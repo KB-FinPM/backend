@@ -87,7 +87,9 @@ async def test_input_orchestrator_normalizes_meeting_notes() -> None:
             project_id="PRJ-001",
             permission_scope=["project:read"],
             input_type=InputType.MEETING_NOTES,
-            raw_payload={"meeting_notes": "Discussed login scope."},
+            raw_payload={
+                "meeting_notes": "회의일시: 2025. 1.16(목)\n법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)"
+            },
             context={"source_document_ids": ["DOC-001"]},
         )
     )
@@ -96,7 +98,10 @@ async def test_input_orchestrator_normalizes_meeting_notes() -> None:
     assert response.normalized_request_type == (
         NormalizedRequestType.SCHEDULE_TODO_EXTRACTION
     )
-    assert response.structured_context["meeting_notes"] == "Discussed login scope."
+    assert "법제처 자료" in response.structured_context["meeting_notes"]
     assert response.structured_context["context"] == {
         "source_document_ids": ["DOC-001"]
     }
+    extraction = response.structured_context["meeting_todo_extraction"]
+    assert extraction["todo_items"][0]["assignee"] == "임태운 감사역"
+    assert extraction["todo_items"][0]["source_sentence"]

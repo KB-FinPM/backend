@@ -1642,8 +1642,8 @@ class ChatInputAgent:
         confidence: float,
         export_format: str | None = None,
     ) -> dict[str, Any]:
-        required_slots = ["source_document_ids"]
-        missing_slots = [] if source_document_ids else ["source_document_ids"]
+        required_slots: list[str] = []
+        missing_slots: list[str] = []
         result = {
             "intent": "GENERATE_ARTIFACT",
             "action": "CREATE",

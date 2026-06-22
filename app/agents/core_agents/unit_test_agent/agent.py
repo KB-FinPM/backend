@@ -66,12 +66,10 @@ class UnitTestAgent:
 
         try:
             requirements = self._requirement_items(request)
+            used_default_draft = False
             if not requirements:
-                return AgentResponse(
-                    success=False,
-                    agent_name=self.AGENT_NAME,
-                    error="No requirement context available for unit test generation",
-                )
+                requirements = self._fallback_requirements_from_request(request)
+                used_default_draft = True
 
             screens = self._screen_items(request)
             test_cases = await self._generate_with_llm(request, requirements)
@@ -101,12 +99,62 @@ class UnitTestAgent:
                         "generated_by": self.AGENT_NAME,
                         "source_requirement_count": len(requirements),
                         "process_rule": "Create one unit test case per requirement row",
+                        **(self._default_draft_metadata() if used_default_draft else {}),
                     },
                 },
             )
         except Exception as exc:
             logger.error(f"[{self.AGENT_NAME}] error: {exc}")
             return AgentResponse(success=False, agent_name=self.AGENT_NAME, error=str(exc))
+
+    def _fallback_requirements_from_request(self, request: AgentRequest) -> list[dict[str, Any]]:
+        context = request.context or {}
+        query = str(context.get("query") or "").strip()
+        project_name = str(
+            context.get("project_name")
+            or context.get("project_nm")
+            or request.project_id
+            or "프로젝트"
+        ).strip()
+        subject = truncate_text(query or f"{project_name} 단위테스트케이스 생성", 100)
+        common_metadata = {
+            "generation_source": "default_draft",
+            "assumptions": [
+                "참고 문서가 없어 일반적인 기능 검증 관점으로 초안을 작성했습니다.",
+            ],
+            "additional_check_required": [
+                "실제 기능 목록, 화면 흐름, 데이터 조건, 예외 정책은 확인이 필요합니다.",
+            ],
+        }
+        return [
+            {
+                "requirement_id": "REQ-00001",
+                "requirement_name": subject,
+                "description": f"{project_name} 요청의 주요 기능이 정상 처리되는지 검증한다.",
+                "biz_requirement_id": "Biz-0001",
+                "biz_requirement_name": "공통",
+                **common_metadata,
+            },
+            {
+                "requirement_id": "REQ-00002",
+                "requirement_name": "입력값 및 예외 검증",
+                "description": "필수 입력값, 경계값, 권한, 오류 메시지 처리를 확인한다.",
+                "biz_requirement_id": "Biz-0002",
+                "biz_requirement_name": "품질관리",
+                **common_metadata,
+            },
+        ]
+
+    def _default_draft_metadata(self) -> dict[str, object]:
+        return {
+            "generation_source": "default_draft",
+            "가정사항": [
+                "참고 문서가 없어 일반적인 기능 검증 관점으로 초안을 작성했습니다.",
+            ],
+            "추가 확인 필요 항목": [
+                "실제 기능 목록, 화면 흐름, 데이터 조건, 예외 정책은 확인이 필요합니다.",
+            ],
+        }
 
     async def _generate_with_llm(
         self,

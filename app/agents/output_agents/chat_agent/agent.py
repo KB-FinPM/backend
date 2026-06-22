@@ -76,6 +76,7 @@ class ChatOutputAgent:
         if action_type == ChatActionType.EXTRACT_ACTION_ITEMS.value:
             message = "회의록을 기준으로 TODO 목록을 추출할까요?"
             confirm_label = "TODO 추출하기"
+            cancel_label = "다른 회의록 업로드"
         else:
             artifact_label = self._artifact_label(payload.get("target_artifact_type"))
             source_ids = payload.get("source_document_ids") or []
@@ -87,6 +88,7 @@ class ChatOutputAgent:
             )
             message = f"{source_text}를 기준으로 {artifact_label}를 생성할까요?"
             confirm_label = "생성하기"
+            cancel_label = "취소"
 
         return {
             "state": ChatState.WAITING_CONFIRMATION.value,
@@ -100,7 +102,7 @@ class ChatOutputAgent:
                 },
                 {
                     "type": ChatCommandType.CANCEL_PENDING_ACTION.value,
-                    "label": "취소",
+                    "label": cancel_label,
                     "payload": {"action_id": action.get("action_id")},
                 },
             ],
@@ -203,7 +205,7 @@ class ChatOutputAgent:
         action_id = action.get("action_id") or result_json.get("action_id")
         return {
             "state": ChatState.EXECUTING_ACTION.value,
-            "message": "Artifact generation has started. I will keep checking the job status.",
+            "message": "문서 생성을 시작하겠습니다.",
             "pending_action": action,
             "result": {
                 "action_id": action_id,
@@ -369,34 +371,22 @@ class ChatOutputAgent:
                 "recommended_prompts": self._default_recommended_prompts(),
             }
 
-        wbs_precheck = result_json.get("wbs_precheck")
-        if artifact_type == "WBS" and isinstance(wbs_precheck, dict):
-            return {
-                "state": ChatState.WAITING_REQUIRED_INFO.value,
-                "message": "WBS 생성 전 요건을 확인해주세요.",
-                "result": {
-                    "wbs_precheck": wbs_precheck,
-                },
-                "suggested_actions": [],
-                "recommended_prompts": self._default_recommended_prompts(),
-            }
-
         messages = {
             "REQUIREMENT_SPEC": (
-                "요구사항 정의서를 생성하려면 구축요건정의서 또는 RFP가 필요합니다. "
-                "구축요건 정의서를 업로드해주세요."
+                "요구사항 정의서를 만들려면 구축요건 정의서를 업로드해주세요.\n"
+                "기술협상회의록이 있으면 함께 선택할 수 있습니다."
             ),
             "WBS": (
-                "WBS 생성을 위해 기준 문서가 필요합니다. 요구사항 정의서를 업로드하거나 "
-                "먼저 생성해 주세요."
+                "WBS를 만들려면 요구사항 정의서를 업로드해주세요.\n"
+                "요구사항 정의서를 먼저 생성한 뒤 WBS를 만들 수 있습니다."
             ),
             "SCREEN_DESIGN": (
-                "화면설계서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서를 "
-                "업로드하거나 먼저 생성해 주세요."
+                "화면설계서를 만들려면 요구사항 정의서를 업로드해주세요.\n"
+                "요구사항 정의서를 먼저 생성한 뒤 화면설계서를 만들 수 있습니다."
             ),
             "UNITTEST_SPEC": (
-                "단위테스트계획서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서나 "
-                "화면설계서를 업로드하거나 선행 산출물을 먼저 생성해 주세요."
+                "단위테스트케이스를 만들려면 화면설계서를 업로드해주세요.\n"
+                "화면설계서를 먼저 생성한 뒤 단위테스트케이스를 만들 수 있습니다."
             ),
         }
         upload_request = self._upload_request_payload(
@@ -419,7 +409,7 @@ class ChatOutputAgent:
             "state": ChatState.WAITING_REQUIRED_INFO.value,
             "message": messages.get(
                 artifact_type,
-                "진행하려면 기준 문서를 먼저 업로드하거나 선택해 주세요.",
+                "산출물 생성을 위한 기준 문서를 업로드해주세요.",
             ),
             "result": result,
             "suggested_actions": [],
@@ -479,6 +469,10 @@ class ChatOutputAgent:
                 "acceptedTypes": self._meeting_upload_accept_types(),
                 "documentType": "MEETING_NOTES",
                 "originalMessage": "회의록 보고 TODO 정리해줘",
+                "requestType": "MEETING_TODO_EXTRACTION",
+                "resumeAfterUpload": True,
+                "hideOutputFormat": True,
+                "startMessage": "회의록에서 TODO를 추출하고 있습니다.",
             }
             command_actions = []
         elif required_context == "ASSIGNEE" or "assignee" in missing_fields:
@@ -523,24 +517,26 @@ class ChatOutputAgent:
         artifact_type: str | None,
         original_message: Any,
     ) -> dict[str, Any] | None:
-        if artifact_type != "REQUIREMENT_SPEC":
-            if artifact_type in {"WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"}:
-                return {
-                    "required": True,
-                    "label": "요구사항 정의서 업로드",
-                    "acceptedTypes": self._document_upload_accept_types(),
-                    "documentType": "REQUIREMENT_SPEC",
-                    "originalMessage": str(
-                        original_message or f"{self._artifact_label(artifact_type)} 생성해줘"
-                    ),
-                }
+        source_types = {
+            "REQUIREMENT_SPEC": (
+                "CONSTRUCTION_REQUIREMENT_DEFINITION",
+                "구축요건 정의서 업로드",
+            ),
+            "WBS": ("REQUIREMENT_SPEC", "요구사항 정의서 업로드"),
+            "SCREEN_DESIGN": ("REQUIREMENT_SPEC", "요구사항 정의서 업로드"),
+            "UNITTEST_SPEC": ("SCREEN_DESIGN", "화면설계서 업로드"),
+        }
+        if artifact_type not in source_types:
             return None
+        document_type, label = source_types[artifact_type]
         return {
             "required": True,
-            "label": "구축요건 정의서 업로드",
+            "label": label,
             "acceptedTypes": self._document_upload_accept_types(),
-            "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
-            "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
+            "documentType": document_type,
+            "originalMessage": str(
+                original_message or f"{self._artifact_label(artifact_type)} 생성해줘"
+            ),
         }
 
     def _document_upload_accept_types(self) -> list[str]:
@@ -549,6 +545,8 @@ class ChatOutputAgent:
             "application/pdf",
             ".docx",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             ".xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ".xls",
@@ -580,24 +578,6 @@ class ChatOutputAgent:
         self,
         artifact_type: str | None,
     ) -> list[dict[str, str]]:
-        if artifact_type in {"WBS", "SCREEN_DESIGN"}:
-            return [
-                {
-                    "label": "요구사항 정의서 생성",
-                    "message": "요구사항 정의서 생성해줘",
-                }
-            ]
-        if artifact_type == "UNITTEST_SPEC":
-            return [
-                {
-                    "label": "화면설계서 생성",
-                    "message": "요구사항 정의서를 기준으로 화면설계서 생성해줘",
-                },
-                {
-                    "label": "요구사항 정의서 생성",
-                    "message": "요구사항 정의서 생성해줘",
-                },
-            ]
         return []
 
     def _pm_concept_answer(self, *, topic: Any, query: Any) -> str:

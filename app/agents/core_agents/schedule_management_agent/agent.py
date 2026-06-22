@@ -298,12 +298,27 @@ class ScheduleManagementAgent:
             self._meeting_notes_reference_date(meeting_notes)
             or self._current_date(context)
         )
-        todos = self._extract_todos(
-            meeting_notes=meeting_notes,
+        extraction = self._normalized_meeting_todo_extraction(context)
+        todos = self._todos_from_input_agent_extraction(
+            extraction=extraction,
             source_document_id=source_document_id,
             source_chunk_ids=source_chunk_ids,
-            current_date=current_date,
         )
+        extraction_metadata = extraction.get("metadata") if extraction else {}
+        candidates = extraction.get("candidate_items") if extraction else []
+        if not todos:
+            todos = self._extract_todos(
+                meeting_notes=meeting_notes,
+                source_document_id=source_document_id,
+                source_chunk_ids=source_chunk_ids,
+                current_date=current_date,
+            )
+            extraction_metadata = {
+                "extraction_strategy": "rule_based_schedule_agent",
+                "fallback_used": True,
+                "fallback_reason": "input_agent_extraction_empty",
+            }
+            candidates = []
         if not todos:
             return AgentResponse(
                 success=False,
@@ -325,10 +340,10 @@ class ScheduleManagementAgent:
                 ],
                 "needs_confirmation_count": needs_confirmation_count,
                 "missing_fields": [],
-                "candidates": [],
+                "candidates": candidates or [],
                 "metadata": {
                     "source": "meeting_notes",
-                    "extraction_strategy": "rule_based_schedule_agent",
+                    **(extraction_metadata or {}),
                     "todo_count": len(todos),
                     "needs_confirmation_count": needs_confirmation_count,
                 },
@@ -388,6 +403,76 @@ class ScheduleManagementAgent:
                     "evidence": sentence,
                     "source_document_id": source_document_id,
                     "source_chunk_ids": source_chunk_ids,
+                    "metadata": metadata,
+                }
+            )
+
+        return self._dedupe_extracted_todos(todos)
+
+    def _normalized_meeting_todo_extraction(
+        self,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_input = context.get("normalized_input") or {}
+        extraction = normalized_input.get("meeting_todo_extraction")
+        return extraction if isinstance(extraction, dict) else {}
+
+    def _todos_from_input_agent_extraction(
+        self,
+        *,
+        extraction: dict[str, Any],
+        source_document_id: str | None,
+        source_chunk_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        todo_items = extraction.get("todo_items") if isinstance(extraction, dict) else []
+        if not isinstance(todo_items, list):
+            return []
+
+        todos: list[dict[str, Any]] = []
+        for item in todo_items:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            source_sentence = str(item.get("source_sentence") or "").strip()
+            if not title or not source_sentence:
+                continue
+
+            status = str(item.get("status") or "NEEDS_CONFIRMATION").upper()
+            if status not in {"TODO", "NEEDS_CONFIRMATION"}:
+                status = "NEEDS_CONFIRMATION"
+
+            metadata = {
+                **(item.get("metadata") or {}),
+                "source_text": source_sentence,
+                "source_sentence": source_sentence,
+                "source_section": item.get("source_section"),
+                "due_date_text": item.get("due_date_text"),
+                "confidence": item.get("confidence"),
+                "needs_confirmation": item.get("needs_confirmation") or [],
+                "classification": item.get("classification") or "todo",
+                "extraction_strategy": "input_agent_meeting_todo_extraction",
+            }
+            todos.append(
+                {
+                    "todo_id": f"TODO-TEMP-{len(todos) + 1:03d}",
+                    "project_id": "",
+                    "title": title,
+                    "description": item.get("description")
+                    or f"근거: {source_sentence}",
+                    "assignee": item.get("assignee"),
+                    "due_date": item.get("due_date"),
+                    "related_artifact": item.get("related_artifact"),
+                    "related_document": item.get("related_document")
+                    or "회의록 기반 신규 TODO",
+                    "source_type": item.get("source_type") or "MEETING_NOTE",
+                    "status": status,
+                    "confidence": item.get("confidence"),
+                    "evidence": source_sentence,
+                    "source_document_id": source_document_id
+                    or metadata.get("source_document_id"),
+                    "source_chunk_ids": source_chunk_ids
+                    or metadata.get("source_chunk_ids")
+                    or [],
                     "metadata": metadata,
                 }
             )
