@@ -203,7 +203,7 @@ class ChatOutputAgent:
         action_id = action.get("action_id") or result_json.get("action_id")
         return {
             "state": ChatState.EXECUTING_ACTION.value,
-            "message": "Artifact generation has started. I will keep checking the job status.",
+            "message": "문서 생성을 시작하겠습니다.",
             "pending_action": action,
             "result": {
                 "action_id": action_id,
@@ -369,35 +369,11 @@ class ChatOutputAgent:
                 "recommended_prompts": self._default_recommended_prompts(),
             }
 
-        wbs_precheck = result_json.get("wbs_precheck")
-        if artifact_type == "WBS" and isinstance(wbs_precheck, dict):
-            return {
-                "state": ChatState.WAITING_REQUIRED_INFO.value,
-                "message": "WBS 생성 전 요건을 확인해주세요.",
-                "result": {
-                    "wbs_precheck": wbs_precheck,
-                },
-                "suggested_actions": [],
-                "recommended_prompts": self._default_recommended_prompts(),
-            }
-
         messages = {
-            "REQUIREMENT_SPEC": (
-                "요구사항 정의서를 생성하려면 구축요건정의서 또는 RFP가 필요합니다. "
-                "구축요건 정의서를 업로드해주세요."
-            ),
-            "WBS": (
-                "WBS 생성을 위해 기준 문서가 필요합니다. 요구사항 정의서를 업로드하거나 "
-                "먼저 생성해 주세요."
-            ),
-            "SCREEN_DESIGN": (
-                "화면설계서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서를 "
-                "업로드하거나 먼저 생성해 주세요."
-            ),
-            "UNITTEST_SPEC": (
-                "단위테스트계획서를 생성하기 위해 기준 문서가 필요합니다. 요구사항 정의서나 "
-                "화면설계서를 업로드하거나 선행 산출물을 먼저 생성해 주세요."
-            ),
+            "REQUIREMENT_SPEC": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
+            "WBS": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
+            "SCREEN_DESIGN": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
+            "UNITTEST_SPEC": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
         }
         upload_request = self._upload_request_payload(
             artifact_type=artifact_type,
@@ -419,7 +395,7 @@ class ChatOutputAgent:
             "state": ChatState.WAITING_REQUIRED_INFO.value,
             "message": messages.get(
                 artifact_type,
-                "진행하려면 기준 문서를 먼저 업로드하거나 선택해 주세요.",
+                "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
             ),
             "result": result,
             "suggested_actions": [],
@@ -527,7 +503,7 @@ class ChatOutputAgent:
             if artifact_type in {"WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"}:
                 return {
                     "required": True,
-                    "label": "요구사항 정의서 업로드",
+                    "label": "참고 문서 업로드",
                     "acceptedTypes": self._document_upload_accept_types(),
                     "documentType": "REQUIREMENT_SPEC",
                     "originalMessage": str(
@@ -537,7 +513,7 @@ class ChatOutputAgent:
             return None
         return {
             "required": True,
-            "label": "구축요건 정의서 업로드",
+            "label": "참고 문서 업로드",
             "acceptedTypes": self._document_upload_accept_types(),
             "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
             "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
@@ -580,24 +556,6 @@ class ChatOutputAgent:
         self,
         artifact_type: str | None,
     ) -> list[dict[str, str]]:
-        if artifact_type in {"WBS", "SCREEN_DESIGN"}:
-            return [
-                {
-                    "label": "요구사항 정의서 생성",
-                    "message": "요구사항 정의서 생성해줘",
-                }
-            ]
-        if artifact_type == "UNITTEST_SPEC":
-            return [
-                {
-                    "label": "화면설계서 생성",
-                    "message": "요구사항 정의서를 기준으로 화면설계서 생성해줘",
-                },
-                {
-                    "label": "요구사항 정의서 생성",
-                    "message": "요구사항 정의서 생성해줘",
-                },
-            ]
         return []
 
     def _pm_concept_answer(self, *, topic: Any, query: Any) -> str:

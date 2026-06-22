@@ -409,37 +409,8 @@ class ChatOrchestrator:
     ) -> ChatResponse:
         target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
         project_start_date = self._project_context_value(request.context, "start_date")
-        if target_artifact_type == ArtifactType.WBS and not str(project_start_date or "").strip():
-            return await self._render_and_save_response(
-                conversation=conversation,
-                project_id=request.project_id,
-                result_json={
-                    "event": "REQUIRED_INFO",
-                    "target_artifact_type": target_artifact_type.value,
-                    "query": request.message,
-                    "missing_fields": ["project_start_date"],
-                    "required_project_fields": ["project_start_date"],
-                },
-            )
 
         source_document_ids = structured_context.get("source_document_ids") or []
-        if not source_document_ids:
-            return await self._render_and_save_response(
-                conversation=conversation,
-                project_id=request.project_id,
-                result_json={
-                    "event": "REQUIRED_INFO",
-                    "target_artifact_type": structured_context.get(
-                        "target_artifact_type"
-                    ),
-                    "query": request.message,
-                    "required_source_document_types": structured_context.get(
-                        "required_source_document_types"
-                    )
-                    or [],
-                },
-            )
-
         validation_request = GenerationRequest(
             project_id=request.project_id,
             project_name=request.context.get("project_name"),
@@ -471,43 +442,6 @@ class ChatOrchestrator:
                 document_ids=source_document_ids,
             )
 
-        requirements_confirmed = bool(
-            (request.context or {}).get("requirements_confirmed")
-            or (request.context or {}).get("wbs_requirements_confirmed")
-        )
-        if target_artifact_type == ArtifactType.WBS and not requirements_confirmed:
-            first_source_document = source_documents[0] if source_documents else {}
-            return await self._render_and_save_response(
-                conversation=conversation,
-                project_id=request.project_id,
-                result_json={
-                    "event": "REQUIRED_INFO",
-                    "target_artifact_type": target_artifact_type.value,
-                    "query": request.message,
-                    "wbs_precheck": {
-                        "source_document_id": (
-                            first_source_document.get("document_id")
-                            if isinstance(first_source_document, dict)
-                            else None
-                        ),
-                        "source_file_name": (
-                            first_source_document.get("file_name")
-                            if isinstance(first_source_document, dict)
-                            else None
-                        ),
-                        "source_document_type": (
-                            first_source_document.get("document_type")
-                            if isinstance(first_source_document, dict)
-                            else None
-                        ),
-                        "source_documents": source_documents,
-                        "project_start_date": project_start_date,
-                        "requirements_confirmed": False,
-                        "original_message": request.message,
-                    },
-                },
-            )
-
         payload = {
             "project_id": request.project_id,
             "target_artifact_type": target_artifact_type.value,
@@ -517,7 +451,7 @@ class ChatOrchestrator:
                 **(request.context or {}),
                 "source_document_ids": source_document_ids,
                 "source_documents": source_documents,
-                "requirements_confirmed": requirements_confirmed,
+                "requirements_confirmed": True,
             },
             "source_document_type": structured_context.get("source_document_type"),
             "project_name": request.context.get("project_name"),
@@ -541,13 +475,9 @@ class ChatOrchestrator:
             action_type=self._action_type_for_artifact(target_artifact_type),
             payload=payload,
         )
-        return await self._render_and_save_response(
+        return await self._start_pending_action(
             conversation=conversation,
             project_id=request.project_id,
-            result_json={
-                "event": "CONFIRMATION_REQUIRED",
-                "pending_action": pending_action.model_dump(mode="json"),
-            },
             pending_action=pending_action,
         )
 
@@ -628,28 +558,13 @@ class ChatOrchestrator:
             pending_action=pending_action,
         )
 
-    async def _confirm_pending_action(
+    async def _start_pending_action(
         self,
         *,
         conversation: ConversationMetadata,
         project_id: str,
-        action_id: str | None = None,
+        pending_action: ChatActionMetadata,
     ) -> ChatResponse:
-        pending_action = await self._resolve_pending_action(
-            project_id=project_id,
-            conversation_id=conversation.conversation_id,
-            action_id=action_id,
-        )
-        if pending_action is None:
-            return await self._render_and_save_response(
-                conversation=conversation,
-                project_id=project_id,
-                result_json={
-                    "event": "NO_PENDING_ACTION",
-                    "action": "CONFIRM",
-                },
-            )
-
         await self.conversation_repository.update_action_status(
             project_id=project_id,
             action_id=pending_action.action_id,
@@ -723,6 +638,34 @@ class ChatOrchestrator:
                 "result": response.result if isinstance(response.result, dict) else {},
             },
             pending_action=completed_action,
+        )
+
+    async def _confirm_pending_action(
+        self,
+        *,
+        conversation: ConversationMetadata,
+        project_id: str,
+        action_id: str | None = None,
+    ) -> ChatResponse:
+        pending_action = await self._resolve_pending_action(
+            project_id=project_id,
+            conversation_id=conversation.conversation_id,
+            action_id=action_id,
+        )
+        if pending_action is None:
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=project_id,
+                result_json={
+                    "event": "NO_PENDING_ACTION",
+                    "action": "CONFIRM",
+                },
+            )
+
+        return await self._start_pending_action(
+            conversation=conversation,
+            project_id=project_id,
+            pending_action=pending_action,
         )
 
     def _runs_generation_in_background(self) -> bool:

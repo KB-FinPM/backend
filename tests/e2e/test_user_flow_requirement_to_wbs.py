@@ -245,25 +245,14 @@ async def test_user_flow_uploads_rfp_then_generates_requirement_spec(
         )
     )
 
-    assert first_response.state == "WAITING_CONFIRMATION"
-    assert first_response.pending_action is not None
-    assert_user_facing_message(first_response.message)
-
-    completed_response = await orchestrator.handle_message(
-        confirm_request(
-            first_response.conversation_id,
-            first_response.pending_action.action_id,
-        )
-    )
-
-    assert completed_response.state == "COMPLETED"
-    assert completed_response.download_files
-    assert completed_response.download_files[0]["artifact_id"].startswith(
+    assert first_response.state == "COMPLETED"
+    assert first_response.download_files
+    assert first_response.download_files[0]["artifact_id"].startswith(
         "ART-REQUIREMENT_SPEC"
     )
     assert generation_service.requests[-1].target_artifact_type == "REQUIREMENT_SPEC"
     assert generation_service.requests[-1].source_document_ids == ["DOC-RFP-001"]
-    assert_user_facing_message(completed_response.message)
+    assert_user_facing_message(first_response.message)
 
 
 @pytest.mark.anyio
@@ -294,51 +283,12 @@ async def test_user_flow_generates_wbs_from_requirement_spec(
         )
     )
 
-    assert first_response.state == "WAITING_REQUIRED_INFO"
-    assert first_response.pending_action is None
-    assert first_response.result["wbs_precheck"]["source_file_name"] == (
-        "kb-requirement-spec.xlsx"
-    )
-
-    confirmed_response = await orchestrator.handle_message(
-        ChatMessageRequest(
-            project_id=PROJECT_ID,
-            conversation_id=first_response.conversation_id,
-            user_id="USER-001",
-            message="확정됨, WBS 생성",
-            context={
-                "project_name": PROJECT_NAME,
-                "start_date": "2025-01-20",
-                "requirements_confirmed": True,
-                "selected_document_ids": ["DOC-REQ-001"],
-                "selected_documents": [
-                    {
-                        "document_id": "DOC-REQ-001",
-                        "file_name": "kb-requirement-spec.xlsx",
-                        "display_label": "requirement spec",
-                    }
-                ],
-                "source_document_type": "REQUIREMENT_SPEC",
-            },
-        )
-    )
-
-    assert confirmed_response.state == "WAITING_CONFIRMATION"
-    assert confirmed_response.pending_action is not None
-
-    completed_response = await orchestrator.handle_message(
-        confirm_request(
-            confirmed_response.conversation_id,
-            confirmed_response.pending_action.action_id,
-        )
-    )
-
-    assert completed_response.state == "COMPLETED"
-    assert completed_response.download_files
-    assert completed_response.download_files[0]["artifact_id"].startswith("ART-WBS")
+    assert first_response.state == "COMPLETED"
+    assert first_response.download_files
+    assert first_response.download_files[0]["artifact_id"].startswith("ART-WBS")
     assert generation_service.requests[-1].target_artifact_type == "WBS"
     assert generation_service.requests[-1].source_document_ids == ["DOC-REQ-001"]
-    assert_user_facing_message(completed_response.message)
+    assert_user_facing_message(first_response.message)
 
 
 @pytest.mark.anyio

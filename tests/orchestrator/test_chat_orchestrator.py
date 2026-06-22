@@ -240,17 +240,7 @@ async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> No
             },
         )
     )
-    second_response = await orchestrator.handle_message(
-        ChatMessageRequest(
-            project_id="PRJ-001",
-            conversation_id=first_response.conversation_id,
-            user_id="USER-001",
-            message="생성해",
-        )
-    )
-
-    assert first_response.state == "WAITING_CONFIRMATION"
-    assert second_response.state == "COMPLETED"
+    assert first_response.state == "COMPLETED"
     assert generation_service.received_request is not None
     assert generation_service.received_request.target_artifact_type == "WBS"
 

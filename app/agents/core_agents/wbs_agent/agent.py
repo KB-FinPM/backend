@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
 from util.agent_generation_utils import (
+    RequirementAtom,
     classify_project_type,
     normalize_requirement_atoms,
     parse_json_array,
@@ -162,8 +163,6 @@ class WbsAgent:
             or context.get("contract_start_date")
         )
         start_date = self._normalize_date(start_date_value)
-        if start_date is None:
-            raise ValueError("project start_date is required for WBS generation")
 
         project_period = self._extract_project_period(request.documents, context)
         if project_period is None:
@@ -611,8 +610,6 @@ class WbsAgent:
         project_period: str | None,
     ) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
-        if start_date is None:
-            raise ValueError("project start_date is required for WBS generation")
         start_date_text = self._format_date(start_date) or ""
         end_date_text = self._format_date(end_date) or ""
         template_rows = load_wbs_common_rows()
@@ -675,7 +672,8 @@ class WbsAgent:
                 )
             )
 
-        self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
+        if start_date is not None:
+            self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
         return tasks
 
     def _development_phase_from_wbs_id(self, wbs_id: str) -> str:
@@ -1199,12 +1197,10 @@ Project period: {project_period or ""}
                 self._context_requirement_artifact(request),
                 documents=request.documents,
             )
+            used_default_draft = False
             if not atoms:
-                return AgentResponse(
-                    success=False,
-                    agent_name=self.AGENT_NAME,
-                    error="No requirement context available for WBS generation",
-                )
+                atoms = self._fallback_atoms_from_request(request)
+                used_default_draft = True
 
             configured_type = str((request.context or {}).get("project_type") or "auto")
             project_type = classify_project_type(
@@ -1276,12 +1272,76 @@ Project period: {project_period or ""}
                         "project_end_date": self._format_date(end_date) or "",
                         "project_period": project_period,
                         "process_rule": "Common WBS template rows plus LLM-generated development tasks",
+                        **(self._default_draft_metadata() if used_default_draft else {}),
                     },
                 },
             )
         except Exception as exc:
             logger.error(f"[{self.AGENT_NAME}] error: {exc}")
             return AgentResponse(success=False, agent_name=self.AGENT_NAME, error=str(exc))
+
+    def _fallback_atoms_from_request(self, request: AgentRequest) -> list[RequirementAtom]:
+        context = request.context or {}
+        query = str(context.get("query") or "").strip()
+        project_name = str(
+            context.get("project_name")
+            or context.get("project_nm")
+            or request.project_id
+            or "프로젝트"
+        ).strip()
+        subject = truncate_text(query or f"{project_name} WBS 생성", 100)
+        common_metadata = {
+            "generation_source": "default_draft",
+            "assumptions": [
+                "참고 문서가 없어 일반적인 PM WBS 구조를 기준으로 초안을 작성했습니다.",
+            ],
+            "additional_check_required": [
+                "실제 프로젝트 시작일, 종료일, 담당자, 상세 산출물은 확인이 필요합니다.",
+            ],
+        }
+        return [
+            RequirementAtom(
+                requirement_id="REQ-00001",
+                title=subject,
+                requirement_name=subject,
+                description=f"{project_name} 요청을 기준으로 전체 WBS 작업 구조를 작성한다.",
+                biz_requirement_name="프로젝트관리",
+                domain="프로젝트관리",
+                feature="WBS 초안",
+                metadata=common_metadata,
+            ),
+            RequirementAtom(
+                requirement_id="REQ-00002",
+                title="분석 및 설계 작업",
+                requirement_name="분석 및 설계 작업",
+                description="업무 분석, 요구사항 정리, 설계 산출물 작성을 위한 작업을 구성한다.",
+                biz_requirement_name="분석설계",
+                domain="분석설계",
+                feature="분석/설계",
+                metadata=common_metadata,
+            ),
+            RequirementAtom(
+                requirement_id="REQ-00003",
+                title="구현 및 검증 작업",
+                requirement_name="구현 및 검증 작업",
+                description="개발, 테스트, 이행 준비와 안정화 작업을 WBS에 포함한다.",
+                biz_requirement_name="구현검증",
+                domain="구현검증",
+                feature="구현/검증",
+                metadata=common_metadata,
+            ),
+        ]
+
+    def _default_draft_metadata(self) -> dict[str, object]:
+        return {
+            "generation_source": "default_draft",
+            "가정사항": [
+                "참고 문서가 없어 일반적인 PM WBS 구조를 기준으로 초안을 작성했습니다.",
+            ],
+            "추가 확인 필요 항목": [
+                "실제 프로젝트 시작일, 종료일, 담당자, 상세 산출물은 확인이 필요합니다.",
+            ],
+        }
 
     def _context_requirement_artifact(self, request: AgentRequest):
         context = request.context or {}
@@ -1293,8 +1353,6 @@ Project period: {project_period or ""}
 
     def _build_tasks(self, atoms, request, start_date: date | None, end_date: date | None, project_period: str | None):
         tasks = []
-        if start_date is None:
-            raise ValueError("project start_date is required for WBS generation")
         start_date_text = self._format_date(start_date) or ""
         end_date_text = self._format_date(end_date) or ""
 
@@ -1341,7 +1399,8 @@ Project period: {project_period or ""}
                     "metadata": task_metadata,
                 }
             )
-        self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
+        if start_date is not None:
+            self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
         return tasks
 
 

@@ -37,7 +37,7 @@ def _doc(document_id: str, document_type: DocumentType, project_id: str = "PRJ-0
     "target_artifact_type",
     ["REQUIREMENT_SPEC", "WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"],
 )
-async def test_source_document_ids_are_required_for_generation_targets(
+async def test_source_document_ids_are_optional_for_generation_targets(
     target_artifact_type: str,
 ) -> None:
     service = GenerationService(StubOrchestrator())
@@ -50,8 +50,8 @@ async def test_source_document_ids_are_required_for_generation_targets(
         document_service=StubDocumentService({}),
     )
 
-    assert result.success is False
-    assert result.error_code == "SOURCE_DOCUMENT_REQUIRED"
+    assert result.success is True
+    assert result.error_code is None
 
 
 @pytest.mark.anyio

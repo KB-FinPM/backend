@@ -286,14 +286,17 @@ class GenerationOrchestrator:
             ),
         )
         retrieval_started_at = perf_counter()
-        documents = await retrieval.search(
-            project_id=request.project_id,
-            permission_scope=request.permission_scope,
-            query=retrieval_query,
-            top_k=top_k,
-            document_ids=request.source_document_ids or None,
-            search_mode="text",
-        )
+        if request.source_document_ids:
+            documents = await retrieval.search(
+                project_id=request.project_id,
+                permission_scope=request.permission_scope,
+                query=retrieval_query,
+                top_k=top_k,
+                document_ids=request.source_document_ids,
+                search_mode="text",
+            )
+        else:
+            documents = []
         logger.info(
             "[Orchestrator] retrieval done | "
             f"project_id={request.project_id} | "

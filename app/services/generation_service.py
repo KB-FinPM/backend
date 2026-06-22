@@ -134,7 +134,6 @@ class GenerationService:
                 target_artifact_type=target_artifact_type,
                 required_source_type=required_source_type,
                 allowed_source_types=allowed_source_types,
-                source_document_required=True,
             )
 
         missing_document_ids: list[str] = []
