@@ -205,7 +205,8 @@ async def test_chat_output_agent_renders_required_info_message() -> None:
     )
 
     assert response.success is True
-    assert "참고할 문서를 업로드해주세요" in response.message
+    assert "구축요건 정의서" in response.message
+    assert "요구사항 정의서" in response.message
     assert response.display_payload["state"] == "WAITING_REQUIRED_INFO"
     assert not any(name in response.message for name in INTERNAL_NAMES)
 

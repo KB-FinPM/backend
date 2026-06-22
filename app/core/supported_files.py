@@ -8,6 +8,7 @@ SUPPORTED_FILE_EXTENSIONS = frozenset(
     {
         ".pdf",
         ".docx",
+        ".pptx",
         ".xlsx",
         ".xls",
         ".txt",
@@ -22,6 +23,7 @@ SUPPORTED_FILE_EXTENSIONS = frozenset(
 SUPPORTED_MIME_TYPES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/vnd.ms-excel": ".xls",
     "text/plain": ".txt",
@@ -40,7 +42,7 @@ GENERIC_MIME_TYPES = {
 
 SUPPORTED_FILE_TYPE_MESSAGE = (
     "unsupported file type. Supported extensions: "
-    "PDF, DOCX, XLSX, XLS, TXT, MD, CSV, JSON, LOG."
+    "PDF, DOCX, PPTX, XLSX, XLS, TXT, MD, CSV, JSON, LOG."
 )
 
 
@@ -95,6 +97,7 @@ def supported_extensions_for_display() -> list[str]:
     preferred_order = [
         ".pdf",
         ".docx",
+        ".pptx",
         ".xlsx",
         ".xls",
         ".txt",

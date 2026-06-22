@@ -130,6 +130,8 @@ class DocumentParserAgent:
             return self._extract_pdf_text(file_bytes)
         if extension == ".docx":
             return self._extract_docx_text(file_bytes, document_type=document_type)
+        if extension == ".pptx":
+            return self._extract_pptx_text(file_bytes)
         return self._decode_text(file_bytes)
 
     def _extract_pdf_text(self, file_bytes: bytes) -> str:
@@ -268,6 +270,36 @@ class DocumentParserAgent:
                     lines.append("\n".join(cells) if collapse_merged_cells else " | ".join(cells))
 
         return "\n".join(lines)
+
+    def _extract_pptx_text(self, file_bytes: bytes) -> str:
+        try:
+            from pptx import Presentation
+        except ImportError as exc:
+            raise RuntimeError(
+                "python-pptx is required for .pptx uploads. Run `pip install python-pptx`."
+            ) from exc
+
+        presentation = Presentation(BytesIO(file_bytes))
+        lines: list[str] = []
+        for slide_index, slide in enumerate(presentation.slides, start=1):
+            slide_lines: list[str] = []
+            for shape in slide.shapes:
+                if getattr(shape, "has_text_frame", False):
+                    text = str(shape.text or "").strip()
+                    if text:
+                        slide_lines.append(text)
+                if getattr(shape, "has_table", False):
+                    for row in shape.table.rows:
+                        cells = [
+                            str(cell.text or "").strip()
+                            for cell in row.cells
+                            if str(cell.text or "").strip()
+                        ]
+                        if cells:
+                            slide_lines.append(" | ".join(cells))
+            if slide_lines:
+                lines.append(f"[Slide {slide_index}] " + "\n".join(slide_lines))
+        return "\n\n".join(lines)
 
     def _extract_docx_cell_text(
         self,

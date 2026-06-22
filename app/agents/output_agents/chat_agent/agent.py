@@ -370,10 +370,22 @@ class ChatOutputAgent:
             }
 
         messages = {
-            "REQUIREMENT_SPEC": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
-            "WBS": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
-            "SCREEN_DESIGN": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
-            "UNITTEST_SPEC": "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
+            "REQUIREMENT_SPEC": (
+                "요구사항 정의서를 만들려면 구축요건 정의서를 업로드해주세요.\n"
+                "기술협상회의록이 있으면 함께 선택할 수 있습니다."
+            ),
+            "WBS": (
+                "WBS를 만들려면 요구사항 정의서를 업로드해주세요.\n"
+                "요구사항 정의서를 먼저 생성한 뒤 WBS를 만들 수 있습니다."
+            ),
+            "SCREEN_DESIGN": (
+                "화면설계서를 만들려면 요구사항 정의서를 업로드해주세요.\n"
+                "요구사항 정의서를 먼저 생성한 뒤 화면설계서를 만들 수 있습니다."
+            ),
+            "UNITTEST_SPEC": (
+                "단위테스트케이스를 만들려면 화면설계서를 업로드해주세요.\n"
+                "화면설계서를 먼저 생성한 뒤 단위테스트케이스를 만들 수 있습니다."
+            ),
         }
         upload_request = self._upload_request_payload(
             artifact_type=artifact_type,
@@ -395,7 +407,7 @@ class ChatOutputAgent:
             "state": ChatState.WAITING_REQUIRED_INFO.value,
             "message": messages.get(
                 artifact_type,
-                "참고할 문서를 업로드해주세요.\n문서 없이 바로 생성하려면 생성 버튼을 눌러주세요.",
+                "산출물 생성을 위한 기준 문서를 업로드해주세요.",
             ),
             "result": result,
             "suggested_actions": [],
@@ -499,24 +511,26 @@ class ChatOutputAgent:
         artifact_type: str | None,
         original_message: Any,
     ) -> dict[str, Any] | None:
-        if artifact_type != "REQUIREMENT_SPEC":
-            if artifact_type in {"WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"}:
-                return {
-                    "required": True,
-                    "label": "참고 문서 업로드",
-                    "acceptedTypes": self._document_upload_accept_types(),
-                    "documentType": "REQUIREMENT_SPEC",
-                    "originalMessage": str(
-                        original_message or f"{self._artifact_label(artifact_type)} 생성해줘"
-                    ),
-                }
+        source_types = {
+            "REQUIREMENT_SPEC": (
+                "CONSTRUCTION_REQUIREMENT_DEFINITION",
+                "구축요건 정의서 업로드",
+            ),
+            "WBS": ("REQUIREMENT_SPEC", "요구사항 정의서 업로드"),
+            "SCREEN_DESIGN": ("REQUIREMENT_SPEC", "요구사항 정의서 업로드"),
+            "UNITTEST_SPEC": ("SCREEN_DESIGN", "화면설계서 업로드"),
+        }
+        if artifact_type not in source_types:
             return None
+        document_type, label = source_types[artifact_type]
         return {
             "required": True,
-            "label": "참고 문서 업로드",
+            "label": label,
             "acceptedTypes": self._document_upload_accept_types(),
-            "documentType": "CONSTRUCTION_REQUIREMENT_DEFINITION",
-            "originalMessage": str(original_message or "요구사항 정의서 생성해줘"),
+            "documentType": document_type,
+            "originalMessage": str(
+                original_message or f"{self._artifact_label(artifact_type)} 생성해줘"
+            ),
         }
 
     def _document_upload_accept_types(self) -> list[str]:
@@ -525,6 +539,8 @@ class ChatOutputAgent:
             "application/pdf",
             ".docx",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             ".xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ".xls",

@@ -55,6 +55,10 @@ class GenerationRequest(BaseModel):
         ArtifactType.REQUIREMENT_SPEC,
         description="Type of artifact to generate",
     )
+    output_format: Optional[str] = Field(
+        None,
+        description="Requested generated file format such as xlsx or pptx",
+    )
     template_id: Optional[str] = Field(
         None,
         description="Template ID from admin UI or built-in template registry",
@@ -116,6 +120,10 @@ class GenerationRequest(BaseModel):
 
     def author_value(self) -> str:
         return str(self.author or self.writer or self.created_by or self.user_id or "")
+
+
+class ArtifactRenameRequest(BaseModel):
+    file_name: str = Field(..., min_length=1, description="New generated file name")
 
 
 class ScheduleTodoRequest(BaseModel):

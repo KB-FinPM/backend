@@ -32,7 +32,7 @@ from app.schemas.request import GenerationRequest
 from app.schemas.response import ErrorResponse, GenerationResponse
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
-from app.services.generation_service import GenerationService
+from app.services.generation_service import GenerationService, SUPPORTED_OUTPUT_FORMATS
 from app.services.project_service import ProjectService
 from app.services.template_service import TemplateService
 
@@ -89,13 +89,13 @@ SCREEN_DESIGN_EXAMPLE = {
 }
 
 UNITTEST_EXAMPLE = {
-    "summary": "Build unit test cases from requirement specification",
+    "summary": "Build unit test cases from screen design",
     "value": {
         "project_id": "PRJ-TEST-001",
         "project_name": "테스트 구축 프로젝트",
         "author": "김국민",
         "source_document_ids": ["DOC-ADA194C012AF"],
-        "source_document_type": "REQUIREMENT_SPEC",
+        "source_document_type": "SCREEN_DESIGN",
         "target_artifact_type": "UNITTEST_SPEC",
         "query": "단위테스트케이스를 생성해줘",
         "permission_scope": ["project:read"],
@@ -243,7 +243,7 @@ async def generate_unittest(
     logger.info(f"generate_unittest | project_id={request.project_id}")
     request.target_artifact_type = ArtifactType.UNITTEST_SPEC
     request.source_document_type = request.source_document_type or (
-        DocumentType.REQUIREMENT_SPEC
+        DocumentType.SCREEN_DESIGN
     )
 
     return await _generate_artifact_response(
@@ -286,6 +286,32 @@ async def _generate_artifact_response(
         generation_service=generation_service,
         document_service=document_service,
     )
+    try:
+        normalize_output_format = getattr(
+            generation_service,
+            "normalize_output_format",
+            None,
+        )
+        if callable(normalize_output_format):
+            request.output_format = normalize_output_format(
+                request.target_artifact_type,
+                request.output_format,
+            )
+        else:
+            request.output_format = _normalize_output_format(
+                request.target_artifact_type,
+                request.output_format,
+            )
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="UNSUPPORTED_OUTPUT_FORMAT",
+            message=str(exc),
+            detail={
+                "target_artifact_type": request.target_artifact_type.value,
+                "output_format": request.output_format,
+            },
+        ) from exc
     input_response = await _normalize_generation_input(request, input_orchestrator)
     if not input_response.success:
         raise ApiError(
@@ -342,9 +368,26 @@ async def _normalize_generation_input(
                 "query": request.query,
                 "start_date": request.start_date,
                 "project_period": request.project_period,
+                "output_format": request.output_format,
             },
         )
     )
+
+
+def _normalize_output_format(
+    target_artifact_type: ArtifactType,
+    output_format: str | None,
+) -> str:
+    supported_formats = SUPPORTED_OUTPUT_FORMATS.get(target_artifact_type, set())
+    normalized = str(output_format or "").strip().lower().lstrip(".")
+    if not normalized:
+        return next(iter(supported_formats), "")
+    if normalized not in supported_formats:
+        supported_text = ", ".join(sorted(supported_formats)) or "none"
+        raise ValueError(
+            f"{target_artifact_type.value}는 {supported_text} 형식만 지원합니다."
+        )
+    return normalized
 
 
 async def _validate_source_documents(

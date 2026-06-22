@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import Response
 
 from app.core.auth import CurrentUser, assert_project_access
+from app.core.config import settings
 from app.core.exceptions import ApiError
-from app.dependencies import get_current_user, get_document_service
+from app.dependencies import get_artifact_service, get_current_user, get_document_service
 from app.schemas.artifact import DocumentMetadata
-from app.schemas.response import BaseResponse, ErrorResponse
+from app.schemas.response import BaseResponse, ErrorResponse, ProjectFilesResponse
+from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
 from app.storage.s3 import s3_service
 
@@ -42,17 +44,28 @@ async def list_documents(
 
 @router.get(
     "/projects/{project_id}/files",
-    response_model=list[DocumentMetadata],
+    response_model=ProjectFilesResponse,
     responses=DOCUMENT_ERROR_RESPONSES,
 )
 async def list_project_files(
     project_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
-) -> list[DocumentMetadata]:
-    """Compatibility alias for file-manager views; documents remain source of truth."""
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> ProjectFilesResponse:
+    """List uploaded source files separately from generated artifact files."""
     assert_project_access(current_user, project_id, "document:read")
-    return await document_service.list_documents(project_id=project_id)
+    documents = await document_service.list_documents(project_id=project_id)
+    generated_prefix = f"{settings.S3_GENERATED_PREFIX}/"
+    uploaded_files = [
+        document
+        for document in documents
+        if not str(document.storage_path or "").startswith(generated_prefix)
+    ]
+    return ProjectFilesResponse(
+        uploaded_files=uploaded_files,
+        generated_files=await artifact_service.list_artifacts(project_id=project_id),
+    )
 
 
 @router.get(

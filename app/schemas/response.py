@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from app.schemas.artifact import DocumentMetadata
+from app.schemas.artifact import ArtifactMetadata, DocumentMetadata
 
 
 class BaseResponse(BaseModel):
@@ -47,3 +47,8 @@ class DocumentUploadResponse(BaseResponse):
         default_factory=dict,
         description="Output-agent formatted API/UI display payload",
     )
+
+
+class ProjectFilesResponse(BaseModel):
+    uploaded_files: list[DocumentMetadata] = Field(default_factory=list)
+    generated_files: list[ArtifactMetadata] = Field(default_factory=list)

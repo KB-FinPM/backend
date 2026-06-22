@@ -11,7 +11,7 @@ from app.orchestrator.output_orchestrator import (
     output_orchestrator,
 )
 from app.repositories.conversation_repository import ConversationRepository
-from app.schemas.artifact import ArtifactType
+from app.schemas.artifact import ArtifactType, DocumentType
 from app.schemas.chat import (
     ChatActionMetadata,
     ChatActionStatus,
@@ -409,22 +409,62 @@ class ChatOrchestrator:
     ) -> ChatResponse:
         target_artifact_type = ArtifactType(structured_context["target_artifact_type"])
         project_start_date = self._project_context_value(request.context, "start_date")
+        output_format = (
+            request.context.get("output_format")
+            or structured_context.get("output_format")
+            or structured_context.get("export_format")
+        )
 
         source_document_ids = structured_context.get("source_document_ids") or []
+        required_source_type = self._required_source_type_for_target(
+            target_artifact_type
+        )
+        if required_source_type is not None and not source_document_ids:
+            return await self._render_and_save_response(
+                conversation=conversation,
+                project_id=request.project_id,
+                result_json={
+                    "event": "REQUIRED_INFO",
+                    "target_artifact_type": target_artifact_type.value,
+                    "required_source_document_types": [required_source_type.value],
+                    "query": request.message,
+                },
+            )
         validation_request = GenerationRequest(
             project_id=request.project_id,
             project_name=request.context.get("project_name"),
             source_document_ids=source_document_ids,
             source_document_type=structured_context.get("source_document_type"),
             target_artifact_type=target_artifact_type,
+            output_format=output_format,
             query=request.message,
             permission_scope=request.permission_scope,
         )
         validation_result = await self.generation_service.validate_source_documents(
             validation_request,
             document_service=self.document_service,
+            required_source_type=required_source_type,
         )
         if not validation_result.success:
+            if validation_result.error_code == "SOURCE_DOCUMENT_REQUIRED":
+                source_types = (
+                    validation_result.allowed_source_types
+                    or [validation_result.required_source_type]
+                )
+                return await self._render_and_save_response(
+                    conversation=conversation,
+                    project_id=request.project_id,
+                    result_json={
+                        "event": "REQUIRED_INFO",
+                        "target_artifact_type": target_artifact_type.value,
+                        "required_source_document_types": [
+                            source_type.value
+                            for source_type in source_types
+                            if source_type is not None
+                        ],
+                        "query": request.message,
+                    },
+                )
             return await self._render_and_save_response(
                 conversation=conversation,
                 project_id=request.project_id,
@@ -451,9 +491,11 @@ class ChatOrchestrator:
                 **(request.context or {}),
                 "source_document_ids": source_document_ids,
                 "source_documents": source_documents,
+                "output_format": output_format,
                 "requirements_confirmed": True,
             },
             "source_document_type": structured_context.get("source_document_type"),
+            "output_format": output_format,
             "project_name": request.context.get("project_name"),
             "start_date": project_start_date,
             "end_date": self._project_context_value(request.context, "end_date"),
@@ -480,6 +522,25 @@ class ChatOrchestrator:
             project_id=request.project_id,
             pending_action=pending_action,
         )
+
+    def _required_source_type_for_target(
+        self,
+        target_artifact_type: ArtifactType,
+    ) -> DocumentType | None:
+        required_source_type_for = getattr(
+            self.generation_service,
+            "required_source_type_for",
+            None,
+        )
+        if callable(required_source_type_for):
+            return required_source_type_for(target_artifact_type)
+        if target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
+            return DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION
+        if target_artifact_type in {ArtifactType.WBS, ArtifactType.SCREEN_DESIGN}:
+            return DocumentType.REQUIREMENT_SPEC
+        if target_artifact_type == ArtifactType.UNITTEST_SPEC:
+            return DocumentType.SCREEN_DESIGN
+        return None
 
     async def _source_documents_for_ids(
         self,
@@ -516,6 +577,7 @@ class ChatOrchestrator:
         labels = {
             "CONSTRUCTION_REQUIREMENT_DEFINITION": "업로드한 구축요건 정의서",
             "REQUIREMENT_SPEC": "업로드한 요구사항 명세서",
+            "SCREEN_DESIGN": "업로드한 화면설계서",
             "MEETING_NOTES": "업로드한 회의록",
             "WBS": "업로드한 WBS",
         }
@@ -757,6 +819,7 @@ class ChatOrchestrator:
             source_document_ids=payload.get("source_document_ids") or [],
             source_document_type=payload.get("source_document_type"),
             target_artifact_type=payload["target_artifact_type"],
+            output_format=payload.get("output_format"),
             template_id=payload.get("template_id"),
             template_version=payload.get("template_version"),
             query=payload.get("query"),

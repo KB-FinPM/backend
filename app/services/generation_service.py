@@ -12,6 +12,13 @@ from app.schemas.response import GenerationResponse
 
 logger = get_logger(__name__)
 
+SUPPORTED_OUTPUT_FORMATS = {
+    ArtifactType.REQUIREMENT_SPEC: {"xlsx"},
+    ArtifactType.WBS: {"xlsx"},
+    ArtifactType.SCREEN_DESIGN: {"pptx"},
+    ArtifactType.UNITTEST_SPEC: {"xlsx"},
+}
+
 
 @dataclass(frozen=True)
 class GenerationSourceValidationResult:
@@ -88,11 +95,10 @@ class GenerationService:
     ) -> DocumentType | None:
         if target_artifact_type == ArtifactType.REQUIREMENT_SPEC:
             return DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION
-        if target_artifact_type in {
-            ArtifactType.WBS,
-            ArtifactType.UNITTEST_SPEC,
-        }:
+        if target_artifact_type in {ArtifactType.WBS, ArtifactType.SCREEN_DESIGN}:
             return DocumentType.REQUIREMENT_SPEC
+        if target_artifact_type == ArtifactType.UNITTEST_SPEC:
+            return DocumentType.SCREEN_DESIGN
         return None
 
     def allowed_source_types_for(
@@ -108,8 +114,28 @@ class GenerationService:
             return [
                 DocumentType.REQUIREMENT_SPEC,
             ]
+        if target_artifact_type == ArtifactType.UNITTEST_SPEC:
+            return [
+                DocumentType.SCREEN_DESIGN,
+            ]
         required_source_type = self.required_source_type_for(target_artifact_type)
         return [required_source_type] if required_source_type is not None else []
+
+    def normalize_output_format(
+        self,
+        target_artifact_type: ArtifactType,
+        output_format: str | None,
+    ) -> str:
+        supported_formats = SUPPORTED_OUTPUT_FORMATS.get(target_artifact_type, set())
+        normalized = str(output_format or "").strip().lower().lstrip(".")
+        if not normalized:
+            return next(iter(supported_formats), "")
+        if normalized not in supported_formats:
+            supported_text = ", ".join(sorted(supported_formats)) or "none"
+            raise ValueError(
+                f"{target_artifact_type.value}는 {supported_text} 형식만 지원합니다."
+            )
+        return normalized
 
     async def validate_source_documents(
         self,

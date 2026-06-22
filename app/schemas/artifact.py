@@ -12,6 +12,7 @@ class DocumentType(StrEnum):
     CONSTRUCTION_REQUIREMENT_DEFINITION = "CONSTRUCTION_REQUIREMENT_DEFINITION"
     CONSTRUCTION_UNITTEST_DEFINITION = "CONSTRUCTION_UNITTEST_DEFINITION"
     REQUIREMENT_SPEC = "REQUIREMENT_SPEC"
+    SCREEN_DESIGN = "SCREEN_DESIGN"
     MEETING_NOTES = "MEETING_NOTES"
     WBS = "WBS"
     UNKNOWN = "UNKNOWN"
@@ -98,3 +99,5 @@ class ArtifactMetadata(BaseModel):
         ArtifactStatus.CREATED,
         description="Current artifact status",
     )
+    created_at: Optional[datetime] = Field(None, description="Created timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last updated timestamp")
