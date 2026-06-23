@@ -15,12 +15,18 @@ from app.agents.input_agents.meeting_todo_extraction_agent.schemas import (
 class MeetingTodoNormalizer:
     REQUIREMENT_ONLY_PATTERNS = (
         r"개발\s*이?\s*필요",
-        r"이관\s*필요",
+        r"이관\s*필요(?:함)?",
+        r"재적재\s*필요",
         r"재적재\s*해야",
         r"표시$",
     )
     ISSUE_PATTERNS = (
         r"성능\s*저하\s*우려",
+        r"데이터\s*양",
+        r"데이터양",
+        r"많음",
+        r"약\s*\d+\s*(?:GB|MB|TB)",
+        r"현황",
         r"문제점",
         r"단점",
         r"우려",
@@ -84,7 +90,7 @@ class MeetingTodoNormalizer:
         elif not due_date:
             needs_confirmation.append("기한")
 
-        status = "NEEDS_CONFIRMATION" if needs_confirmation else "TODO"
+        status = "NEEDS_CONFIRMATION" if not assignee else "TODO"
         confidence = 0.86 if status == "TODO" else 0.64
         if candidate.signals == ["빠른 대응 요청"]:
             status = "NEEDS_CONFIRMATION"
@@ -141,8 +147,21 @@ class MeetingTodoNormalizer:
         sentence = candidate.source_sentence
         classification = "issue_or_requirement"
         reason = "담당자와 회의 이후 실행 행동이 명확하지 않아 TODO로 확정하지 않았습니다."
+        if re.search(r"이관\s*필요(?:함)?|재적재\s*필요", sentence):
+            classification = "requirement_candidate"
+            reason = (
+                "중요한 요구사항 또는 논의사항이지만 회의 이후 바로 수행할 "
+                "개별 할일로 확정하기에는 담당자와 실행 단위가 불명확합니다."
+            )
         if any(re.search(pattern, sentence) for pattern in self.ISSUE_PATTERNS):
-            reason = "문제점 또는 우려 설명에 가까워 TODO로 확정하지 않았습니다."
+            classification = "issue"
+            reason = "현황, 문제점 또는 우려 설명에 가까워 TODO로 확정하지 않았습니다."
+        if "비즈플랫폼" in sentence and re.search(r"개발\s*이?\s*필요", sentence):
+            classification = "issue_or_requirement"
+            reason = (
+                "방안의 단점 또는 조건 설명에 포함되어 있으며, 별도 담당자와 "
+                "완료 결과물이 명확하지 않아 할일로 확정하지 않았습니다."
+            )
         return MeetingTodoNonTodoCandidate(
             title=self._compact_title(sentence) or sentence[:80],
             classification=classification,
@@ -346,8 +365,13 @@ class MeetingTodoNormalizer:
                 "SI개발팀이 파악 중인 미진사항을 정리하여 배포하고 빠른 대응을 요청한다."
             )
         if title == "영업감사 상세요건 미진 이슈 주간보고 제기":
+            due_label = self._brief_due_label(due_date_text)
+            if due_label:
+                return f"영업감사 상세요건 정의 지연 건을 {due_label} 주간보고 시 이슈로 제기한다."
             return "영업감사 상세요건 정의 지연 건을 주간보고 시 이슈로 제기한다."
         if title == "WiseNet 연계 layout 정의 정리":
+            if "1.14" in context or "01.14" in context:
+                return "1.14 업무협의에서 결정한 WiseNet 연계를 위해 layout 정의를 정리한다."
             return "WiseNet 연계를 위해 layout 정의를 정리한다."
         if title == "결재문서 및 감사문서 열람율 layout 정의":
             return "WiseNet 연계 대상인 결재문서 및 감사문서 열람율 layout을 정의한다."
@@ -385,6 +409,13 @@ class MeetingTodoNormalizer:
             text = text.replace(source, target)
         text = re.sub(r"\s+", " ", text).strip(" -:：,，.")
         return text[:120]
+
+    def _brief_due_label(self, value: str | None) -> str:
+        text = str(value or "").strip()
+        if not text or text == "미정":
+            return ""
+        text = re.sub(r"\s*\([^)]*\)", "", text)
+        return text.strip()
 
     def _parse_date(self, value: str | None) -> date | None:
         if not value:

@@ -14,7 +14,11 @@ EXAMPLE_MEETING_NOTES = """
 외규관련
 법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)
 
-영업감사관련 상세요건 정의 미진 건에 대한 이슈 제기
+내규관련
+내규 데이터를 감사정보시스템으로 이관 필요함
+데이터양이 많음 약 400GB
+
+영업감사관련 상세요건 정의 미진 건에 대한 이슈 제기 (유경근 PM)
 영업감사관련 상세요건중 미진한 건에 대한 정의를 1월중 완료하기로 하였으나, 영업감사부 담당자 부재로 지연되고 있음
 영업감사관련 미진사항을 SI개발팀 파악하고 있는 기준으로 정리하여 배포 예정(01.17(금))으로 빠른 대응 요청
 1.22(수) 주간보고시 이슈로 제기 예정
@@ -67,6 +71,39 @@ class V26ShapeLlmService:
         """
 
 
+class V27ShapeLlmService:
+    async def invoke(self, *args, **kwargs):
+        return """
+        {
+          "items": [
+            {
+              "title": "법제처 자료 RPA 축적 가능 여부 검토",
+              "description": "회의록에서 추출한 TODO입니다.",
+              "assignee": "임태운 감사역",
+              "due_date": null,
+              "due_date_text": "미정",
+              "status": "진행전",
+              "confidence": "high",
+              "source_sentence": "법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)",
+              "needs_confirmation": ["기한"]
+            }
+          ],
+          "excluded_candidates": [
+            {
+              "text": "데이터양이 많음 약 400GB",
+              "reason": "현황 설명이며 실행항목이 아니다.",
+              "classification": "issue"
+            },
+            {
+              "text": "내규 데이터를 감사정보시스템으로 이관 필요함",
+              "reason": "요구사항 후보이지만 담당자와 실행 단위가 불명확하다.",
+              "classification": "requirement_candidate"
+            }
+          ]
+        }
+        """
+
+
 @pytest.mark.anyio
 async def test_meeting_todo_extraction_agent_extracts_body_todos_when_action_table_is_empty() -> None:
     agent = MeetingTodoExtractionAgent(
@@ -94,6 +131,18 @@ async def test_meeting_todo_extraction_agent_extracts_body_todos_when_action_tab
         "WiseNet 최종 레이아웃 확정",
     }
 
+    assert [section["title"] for section in result["meeting_document"]["sections"]][:3] == [
+        "외규관련",
+        "내규관련",
+        "영업감사관련 상세요건 정의 미진 건에 대한 이슈 제기 (유경근 PM)",
+    ]
+
+    rpa = todos_by_title["법제처 자료 RPA 축적 가능 여부 검토"]
+    assert rpa["assignee"] == "임태운 감사역"
+    assert rpa["due_date"] is None
+    assert rpa["status"] == "TODO"
+    assert "기한" in rpa["needs_confirmation"]
+
     distribution = todos_by_title["영업감사 미진사항 정리 및 배포"]
     assert distribution["assignee"] == "SI개발팀"
     assert distribution["due_date"] == "2025-01-17"
@@ -104,8 +153,10 @@ async def test_meeting_todo_extraction_agent_extracts_body_todos_when_action_tab
     assert "배포" in distribution["description"]
 
     weekly_issue = todos_by_title["영업감사 상세요건 미진 이슈 주간보고 제기"]
+    assert weekly_issue["assignee"] == "유경근 PM"
     assert weekly_issue["due_date"] == "2025-01-22"
-    assert weekly_issue["status"] == "NEEDS_CONFIRMATION"
+    assert weekly_issue["status"] == "TODO"
+    assert "1.22" in weekly_issue["description"]
 
     layout = todos_by_title["WiseNet 연계 layout 정의 정리"]
     assert layout["assignee"] == "김병원 이사"
@@ -136,6 +187,16 @@ async def test_meeting_todo_extraction_agent_extracts_body_todos_when_action_tab
     assert any("비즈플랫폼" in candidate["source_sentence"] for candidate in candidates)
     assert any("검색 성능 저하 우려" in candidate["source_sentence"] for candidate in candidates)
     assert any("담당자 부재로 지연" in candidate["source_sentence"] for candidate in candidates)
+    assert any(
+        candidate["classification"] == "issue"
+        and "데이터양이 많음" in candidate["source_sentence"]
+        for candidate in candidates
+    )
+    assert any(
+        candidate["classification"] == "requirement_candidate"
+        and "이관 필요함" in candidate["source_sentence"]
+        for candidate in candidates
+    )
     assert not any("비즈플랫폼" in todo["title"] for todo in todos)
     assert result["metadata"]["fallback_used"] is True
     assert result["metadata"]["llm_used"] is False
@@ -174,3 +235,27 @@ async def test_meeting_todo_extraction_agent_accepts_v26_llm_json_shape() -> Non
     assert result["todo_items"][0]["source_type"] == "MEETING_NOTE"
     assert result["candidate_items"][0]["source_sentence"] == "데이터양이 많음 약 400GB"
     assert result["metadata"]["llm_used"] is True
+
+
+@pytest.mark.anyio
+async def test_meeting_todo_extraction_agent_accepts_v27_llm_json_shape() -> None:
+    agent = MeetingTodoExtractionAgent(
+        llm_service=V27ShapeLlmService(),
+        use_llm_by_default=True,
+    )
+
+    result = await agent.extract(
+        project_id="PRJ-001",
+        meeting_notes=EXAMPLE_MEETING_NOTES,
+        context={"use_llm": True},
+    )
+
+    todo = result["todo_items"][0]
+    assert todo["status"] == "TODO"
+    assert todo["confidence"] == 0.9
+    assert "회의록에서 추출" not in todo["description"]
+    assert "RPA" in todo["description"]
+    assert [candidate["classification"] for candidate in result["candidate_items"]] == [
+        "issue",
+        "requirement_candidate",
+    ]

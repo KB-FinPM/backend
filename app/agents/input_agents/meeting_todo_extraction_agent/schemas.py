@@ -51,7 +51,13 @@ class MeetingTodoItem(BaseModel):
 
 class MeetingTodoNonTodoCandidate(BaseModel):
     title: str
-    classification: Literal["candidate", "issue_or_requirement", "not_todo"]
+    classification: Literal[
+        "candidate",
+        "issue_or_requirement",
+        "requirement_candidate",
+        "issue",
+        "not_todo",
+    ]
     reason: str
     source_sentence: str
 

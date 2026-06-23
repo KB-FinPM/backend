@@ -28,8 +28,13 @@ class MeetingTodoCandidateCollector:
         "협의 필요",
         "정의 필요",
         "개발 필요",
+        "이관 필요",
         "필요",
         "우려",
+        "데이터양",
+        "데이터 양",
+        "많음",
+        "성능 저하",
         "완료하기로",
         "완료 예정",
         "지연되고 있음",
@@ -67,6 +72,8 @@ class MeetingTodoCandidateCollector:
 
         for line in lines:
             cleaned = self._strip_bullet(line)
+            if self._is_metadata_line(cleaned):
+                continue
             if self._looks_like_section_title(cleaned):
                 self._append_section(sections, current_title, current_lines)
                 current_title = cleaned
@@ -159,6 +166,14 @@ class MeetingTodoCandidateCollector:
             for attendee in re.split(r"[,/、]|및", value)
             if attendee.strip()
         ]
+
+    def _is_metadata_line(self, line: str) -> bool:
+        return bool(
+            re.match(
+                r"^\s*(?:회의명|제목|회의일시|회의일자|회의일|일시|장소|회의장소|참석자|참석|안건|회의안건)\s*[:：]",
+                line,
+            )
+        )
 
     def _strip_bullet(self, line: str) -> str:
         return re.sub(r"^\s*(?:[-*•]+|\d+[.)]\s+|[가-하][.)]\s+)", "", line).strip()
