@@ -205,3 +205,40 @@ async def test_requirement_agent_includes_meeting_note_context() -> None:
     assert source_context is not None
     assert source_context["meeting_note_titles"] == ["2026-06-01 주간회의록.docx"]
     assert source_context["meeting_notes"][0]["document_type"] == "MEETING_NOTES"
+
+
+@pytest.mark.anyio
+async def test_requirement_agent_splits_meeting_note_candidates_in_prompt() -> None:
+    orchestrator = CapturingRequirementOrchestrator([])
+    agent = RequirementAgent()
+    request = AgentRequest(
+        project_id="PRJ-001",
+        documents=[
+            {
+                "chunk_id": "CHUNK-001",
+                "document_id": "DOC-MEET-001",
+                "text": (
+                    "회의명 | 기술협상회의\n"
+                    "회의 주제 | 업무 내용중 추가 필요한 부분 협의\n"
+                    "1. 환율 고시 및 조회 | - 실시간 환율 채집 및 고시 관리 기능 필요 | - Pricing 기능 필요 | "
+                    "- 채집 및 고시된 환율을 직원이 기간별로 조회할 수 있는 화면 구현\n"
+                    "1-1. 실시간 환율 채집 및 고시 관리 기능 상세 | - 시장 LP 및 CMBS로부터의 시장 환율을 채집 및 고시 | "
+                    "- 시장 채집 불가한 환율 및 Swap PT의 경우 수기 입력 기능 구현\n"
+                ),
+                "metadata": {
+                    "document_type": "MEETING_NOTES",
+                    "source_file_name": "시연용_회의록.v.1.docx",
+                },
+            }
+        ],
+        context={"generation_orchestrator": orchestrator},
+    )
+
+    response = await agent.generate(request)
+
+    assert response.success is True
+    assert orchestrator.calls
+    prompt = orchestrator.calls[0]["user_prompt"]
+    assert "실시간 환율 채집 및 고시 관리 기능 필요" in prompt
+    assert "Pricing 기능 필요" in prompt
+    assert "회의명" not in prompt

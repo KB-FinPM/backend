@@ -3,10 +3,12 @@
 
 from io import BytesIO
 
+import pytest
 from openpyxl import load_workbook
 from pptx import Presentation
 
 import app.db.base  # noqa: F401
+from app.schemas.artifact import ArtifactType
 from app.services.artifact_export_service import ArtifactExportService
 
 
@@ -204,6 +206,37 @@ def test_requirement_export_keeps_work_category_and_empty_review_note(
     assert sheet.cell(row=2, column=5).value == "湲곕뒫"
     assert sheet.cell(row=2, column=11).value == "- ?쒕퉬?ㅻ퀎 ?낅┰?? ?뺤옣 ?좎뿰?깆쓣 媛吏????덈뒗 OCP ?뚮옯??援ъ텞"
     assert sheet.cell(row=2, column=16).value is None
+
+
+@pytest.mark.anyio
+async def test_requirement_export_uses_unprefixed_file_name() -> None:
+    class FakeStorageService:
+        def __init__(self) -> None:
+            self.uploaded_keys: list[str] = []
+
+        async def upload(self, *, file_bytes: bytes, key: str, content_type: str) -> str:
+            self.uploaded_keys.append(key)
+            return f"mock://{key}"
+
+    storage_service = FakeStorageService()
+    result = await ArtifactExportService().export_artifact(
+        project_id="PRJ-TEST-001",
+        artifact_id="ART-REQ-001",
+        artifact_type=ArtifactType.REQUIREMENT_SPEC,
+        result_json={
+            "artifact_type": "REQUIREMENT_SPEC",
+            "requirements": [],
+            "metadata": {"project_id": "PRJ-TEST-001", "author": "Tester"},
+        },
+        project_name="KB Star Banking Process",
+        storage_service=storage_service,
+    )
+
+    assert result is not None
+    assert result.file_name == "요구사항명세서.xlsx"
+    assert storage_service.uploaded_keys[0].endswith(
+        "/REQUIREMENT_SPEC/ART-REQ-001/요구사항명세서.xlsx"
+    )
 
 
 def test_screen_design_export_creates_pages_with_requirement_descriptions(
