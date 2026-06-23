@@ -99,12 +99,36 @@ class ScheduleService:
             )
 
         matched_todo = result.get("matched_todo") or {}
-        completed_todo = await self.action_item_repository.complete_todo_by_id(
+        return await self.complete_todo_by_id(
             project_id=project_id,
             todo_id=str(matched_todo.get("todo_id") or ""),
         )
+
+    async def complete_todo_by_id(
+        self,
+        *,
+        project_id: str,
+        todo_id: str,
+    ) -> ScheduleTodoResponse:
+        if self.action_item_repository is None:
+            return ScheduleTodoResponse(
+                success=False,
+                project_id=project_id,
+                message="todo storage is not available",
+                result={
+                    "action": "COMPLETE_TODO",
+                    "status": "STORAGE_UNAVAILABLE",
+                    "message_key": "TODO_STORAGE_UNAVAILABLE",
+                },
+            )
+
+        completed_todo = await self.action_item_repository.complete_todo_by_id(
+            project_id=project_id,
+            todo_id=todo_id,
+        )
         if completed_todo is None:
             return ScheduleTodoResponse(
+                success=False,
                 project_id=project_id,
                 message="matching todo not found",
                 result={

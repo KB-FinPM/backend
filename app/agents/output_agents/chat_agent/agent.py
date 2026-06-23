@@ -815,30 +815,56 @@ class ChatOutputAgent:
                 continue
             assignee = todo.get("assignee_display") or todo.get("assignee") or "담당자 미정"
             due_date = todo.get("due_date") or todo.get("planned_end_date") or "기한 미정"
-            status = todo.get("status") or "TODO"
+            status = str(todo.get("status") or "TODO")
             status_display = todo.get("status_display") or self._todo_status_value(
                 status,
                 assignee,
                 due_date,
             )
+            status_key = str(status).upper()
+            is_completed = status_key in {"DONE", "COMPLETED"} or str(
+                status_display
+            ) == "완료"
+            source_type = todo.get("source_type") or todo.get("source_artifact_type")
+            related_document = (
+                todo.get("related_artifact")
+                or todo.get("source_label")
+                or todo.get("source_document_name")
+                or todo.get("related_document")
+                or ("WBS" if str(source_type or "").upper() == "WBS" else "회의록 기반 신규 TODO")
+            )
+            todo_id = todo.get("todo_id")
+            actions = (
+                []
+                if is_completed or not todo_id
+                else [
+                    {
+                        "type": "COMPLETE_TODO",
+                        "label": "완료",
+                        "todo_id": todo_id,
+                    }
+                ]
+            )
             items.append(
                 {
-                    "todo_id": todo.get("todo_id"),
+                    "todo_id": todo_id,
                     "title": todo.get("title") or "제목 없음",
                     "assignee": assignee,
                     "due_date": due_date,
-                    "related_document": todo.get("related_artifact")
-                    or todo.get("related_document")
-                    or "회의록 기반 신규 TODO",
+                    "related_document": related_document,
+                    "source_type": source_type,
+                    "source_document_id": todo.get("source_document_id"),
                     "status": status_display,
+                    "status_code": status_key,
                     "description": todo.get("description") or "",
+                    "actions": actions,
                 }
             )
         return items
 
     def _schedule_table(self, items: list[dict[str, Any]]) -> dict[str, Any]:
         return {
-            "columns": ["할 일", "담당자", "기한", "관련 산출물", "상태"],
+            "columns": ["할 일", "담당자", "기한", "출처", "상태"],
             "items": items,
         }
 

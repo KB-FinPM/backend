@@ -139,8 +139,10 @@ class ActionItemRepository:
         if best_match is None or best_score < 2:
             return None
 
+        now = datetime.utcnow()
         best_match.status = "DONE"
-        best_match.updated_at = datetime.utcnow()
+        best_match.updated_at = now
+        best_match.completed_at = best_match.completed_at or now
         await self.session.commit()
         await self.session.refresh(best_match)
         return self._to_todo_dict(best_match)
@@ -156,15 +158,19 @@ class ActionItemRepository:
         statement = select(ActionItemModel).where(
             ActionItemModel.project_id == project_id,
             ActionItemModel.action_item_id == todo_id,
-            ActionItemModel.status != "DONE",
         )
         result = await self.session.execute(statement)
         item = result.scalar_one_or_none()
         if item is None:
             return None
 
-        item.status = "DONE"
-        item.updated_at = datetime.utcnow()
+        now = datetime.utcnow()
+        if item.status != "DONE":
+            item.status = "DONE"
+            item.completed_at = item.completed_at or now
+        elif item.completed_at is None:
+            item.completed_at = now
+        item.updated_at = now
         await self.session.commit()
         await self.session.refresh(item)
         return self._to_todo_dict(item)
@@ -193,6 +199,9 @@ class ActionItemRepository:
             "source_document_id": item.source_document_id,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            "completed_at": (
+                item.completed_at.isoformat() if item.completed_at else None
+            ),
         }
 
     def _new_todo_id(self) -> str:

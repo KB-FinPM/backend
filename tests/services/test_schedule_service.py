@@ -116,6 +116,64 @@ class StubNestedArtifactRepository:
         ]
 
 
+class StubCompleteActionItemRepository:
+    def __init__(self) -> None:
+        self.completed_ids: list[str] = []
+        self.todos = [
+            {"todo_id": "TODO-001", "title": "회의록 TODO", "status": "TODO"},
+            {"todo_id": "TODO-002", "title": "WBS TODO", "status": "TODO"},
+        ]
+
+    async def complete_todo_by_id(self, *, project_id: str, todo_id: str):
+        self.completed_ids.append(todo_id)
+        for todo in self.todos:
+            if todo["todo_id"] == todo_id:
+                todo["status"] = "DONE"
+                return {**todo}
+        return None
+
+    async def list_project_todos(self, *, project_id: str) -> list[dict]:
+        return [{**todo} for todo in self.todos]
+
+
+@pytest.mark.anyio
+async def test_schedule_service_completes_todo_by_id_without_matching() -> None:
+    action_item_repository = StubCompleteActionItemRepository()
+    service = ScheduleService(
+        orchestrator=StubScheduleOrchestrator(),
+        action_item_repository=action_item_repository,
+    )
+
+    response = await service.complete_todo_by_id(
+        project_id="PRJ-001",
+        todo_id="TODO-002",
+    )
+
+    assert response.success is True
+    assert action_item_repository.completed_ids == ["TODO-002"]
+    assert response.result["matched_todo"]["todo_id"] == "TODO-002"
+    assert response.result["matched_todo"]["next_status"] == "DONE"
+    assert [todo["todo_id"] for todo in response.result["remaining_todos"]] == [
+        "TODO-001"
+    ]
+
+
+@pytest.mark.anyio
+async def test_schedule_service_complete_todo_by_id_returns_not_found() -> None:
+    service = ScheduleService(
+        orchestrator=StubScheduleOrchestrator(),
+        action_item_repository=StubCompleteActionItemRepository(),
+    )
+
+    response = await service.complete_todo_by_id(
+        project_id="PRJ-001",
+        todo_id="TODO-404",
+    )
+
+    assert response.success is False
+    assert response.result["status"] == "NOT_FOUND"
+
+
 @pytest.mark.anyio
 async def test_schedule_service_uses_generated_wbs_artifact_without_upload() -> None:
     action_item_repository = StubActionItemRepository()
