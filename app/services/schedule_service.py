@@ -1,5 +1,6 @@
 # EN: Business service for lightweight schedule/todo management.
 
+import re
 from typing import Any
 
 from app.orchestrator.schedule_orchestrator import (
@@ -12,6 +13,12 @@ from app.repositories.document_repository import DocumentRepository
 from app.schemas.artifact import ArtifactType, DocumentType
 from app.schemas.request import ScheduleTodoRequest
 from app.schemas.response import ScheduleTodoResponse
+from app.schemas.todo import (
+    TodoImportCommitResponse,
+    TodoImportPreviewResponse,
+    TodoItem,
+    TodoListResponse,
+)
 
 
 class ScheduleService:
@@ -167,6 +174,169 @@ class ScheduleService:
             },
         )
 
+    async def list_todos(
+        self,
+        *,
+        project_id: str,
+        status_filter: str | None = None,
+        source_type: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> TodoListResponse:
+        todos = await self._stored_todos(project_id=project_id)
+        document_names = await self._document_name_map(project_id=project_id)
+        normalized_source_type = (
+            self._normalize_source_type(source_type) if source_type else None
+        )
+        items = [
+            self._todo_item(todo, document_names=document_names)
+            for todo in todos
+            if self._matches_todo_filters(
+                todo,
+                status_filter=status_filter,
+                source_type=normalized_source_type,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        ]
+        return TodoListResponse(items=items)
+
+    async def update_todo(
+        self,
+        *,
+        project_id: str,
+        todo_id: str,
+        values: dict[str, Any],
+    ) -> TodoItem | None:
+        if self.action_item_repository is None:
+            return None
+        updated = await self.action_item_repository.update_todo(
+            project_id=project_id,
+            todo_id=todo_id,
+            values=values,
+        )
+        if updated is None:
+            return None
+        document_names = await self._document_name_map(project_id=project_id)
+        return self._todo_item(updated, document_names=document_names)
+
+    async def delete_todo(self, *, project_id: str, todo_id: str) -> bool:
+        if self.action_item_repository is None:
+            return False
+        return await self.action_item_repository.delete_todo(
+            project_id=project_id,
+            todo_id=todo_id,
+        )
+
+    async def preview_todo_import(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        document_type: str,
+    ) -> TodoImportPreviewResponse:
+        if self.document_repository is None:
+            return TodoImportPreviewResponse(
+                metadata={"error": "DOCUMENT_STORAGE_UNAVAILABLE"}
+            )
+        document = await self.document_repository.get_document(
+            project_id=project_id,
+            document_id=document_id,
+        )
+        if document is None:
+            return TodoImportPreviewResponse(
+                metadata={"error": "DOCUMENT_NOT_FOUND", "document_id": document_id}
+            )
+
+        source_type = self._normalize_source_type(document_type)
+        candidates = await self._preview_candidates_from_document(
+            project_id=project_id,
+            document_id=document_id,
+            document_name=document.file_name,
+            source_type=source_type,
+        )
+        existing = await self._stored_todos(project_id=project_id)
+        document_names = await self._document_name_map(project_id=project_id)
+        new_items: list[TodoItem] = []
+        duplicate_items = []
+        for candidate in candidates:
+            duplicate = self._find_duplicate(
+                candidate.model_dump(mode="json"),
+                existing,
+                document_names=document_names,
+            )
+            if duplicate is None:
+                new_items.append(candidate)
+                continue
+            matched, duplicate_level = duplicate
+            duplicate_items.append(
+                {
+                    "candidate": candidate,
+                    "matched_existing": self._todo_item(
+                        matched,
+                        document_names=document_names,
+                    ),
+                    "duplicate_level": duplicate_level,
+                }
+            )
+
+        return TodoImportPreviewResponse(
+            new_items=new_items,
+            duplicate_items=duplicate_items,
+            metadata={
+                "document_id": document_id,
+                "document_type": source_type,
+                "candidate_count": len(candidates),
+                "new_count": len(new_items),
+                "duplicate_count": len(duplicate_items),
+            },
+        )
+
+    async def commit_todo_import(
+        self,
+        *,
+        project_id: str,
+        items: list[dict[str, Any]],
+        duplicate_decisions: list[dict[str, str]] | None = None,
+    ) -> TodoImportCommitResponse:
+        if self.action_item_repository is None:
+            return TodoImportCommitResponse(
+                metadata={"error": "TODO_STORAGE_UNAVAILABLE"}
+            )
+        decisions = {
+            str(item.get("client_import_id") or item.get("todo_id") or ""): str(
+                item.get("decision") or ""
+            ).upper()
+            for item in duplicate_decisions or []
+        }
+        selected_items = []
+        skipped_items = []
+        for item in items:
+            item_id = str(item.get("client_import_id") or item.get("todo_id") or "")
+            if decisions.get(item_id) == "SKIP":
+                skipped_items.append(item)
+                continue
+            selected_items.append(item)
+
+        saved = await self.action_item_repository.save_imported_todos(
+            project_id=project_id,
+            todos=selected_items,
+        )
+        document_names = await self._document_name_map(project_id=project_id)
+        return TodoImportCommitResponse(
+            saved_items=[
+                self._todo_item(todo, document_names=document_names) for todo in saved
+            ],
+            skipped_items=[
+                self._todo_item(item, document_names=document_names)
+                for item in skipped_items
+            ],
+            metadata={
+                "saved_count": len(saved),
+                "skipped_count": len(skipped_items),
+            },
+        )
+
     async def _request_with_source_document_notes(
         self,
         request: ScheduleTodoRequest,
@@ -205,6 +375,308 @@ class ScheduleService:
                 if text:
                     lines.append(text)
         return "\n".join(lines)
+
+    async def _stored_todos(self, *, project_id: str) -> list[dict[str, Any]]:
+        if self.action_item_repository is None:
+            return []
+        return await self.action_item_repository.list_project_todos(
+            project_id=project_id,
+        )
+
+    async def _document_name_map(self, *, project_id: str) -> dict[str, str]:
+        if self.document_repository is None:
+            return {}
+        documents = await self.document_repository.list_documents_by_project(
+            project_id=project_id,
+        )
+        return {document.document_id: document.file_name for document in documents}
+
+    def _todo_item(
+        self,
+        todo: dict[str, Any],
+        *,
+        document_names: dict[str, str] | None = None,
+    ) -> TodoItem:
+        source_document_id = todo.get("source_document_id")
+        source_document_name = (
+            todo.get("source_document_name")
+            or (document_names or {}).get(str(source_document_id or ""))
+            or todo.get("related_document")
+        )
+        description = todo.get("description")
+        source_sentence = todo.get("source_sentence")
+        metadata = todo.get("metadata") if isinstance(todo.get("metadata"), dict) else {}
+        source_sentence = source_sentence or metadata.get("source_sentence")
+        return TodoItem(
+            todo_id=str(
+                todo.get("client_import_id")
+                or todo.get("todo_id")
+                or todo.get("action_item_id")
+                or ""
+            ),
+            title=str(todo.get("title") or "").strip(),
+            assignee=todo.get("assignee") or todo.get("owner"),
+            due_date=todo.get("due_date"),
+            due_date_text=todo.get("due_date_text") or todo.get("due_date"),
+            status=self._ui_status(todo.get("status")),
+            source_type=self._normalize_source_type(todo.get("source_type")),
+            source_document_id=source_document_id,
+            source_document_name=source_document_name,
+            related_document=todo.get("related_document") or source_document_name,
+            description=description,
+            source_sentence=source_sentence or description,
+            created_at=todo.get("created_at"),
+            updated_at=todo.get("updated_at"),
+        )
+
+    def _matches_todo_filters(
+        self,
+        todo: dict[str, Any],
+        *,
+        status_filter: str | None,
+        source_type: str | None,
+        date_from: str | None,
+        date_to: str | None,
+    ) -> bool:
+        if status_filter and self._ui_status(todo.get("status")) != status_filter:
+            return False
+        if source_type and self._normalize_source_type(todo.get("source_type")) != source_type:
+            return False
+        due_date = str(todo.get("due_date") or "")[:10]
+        if date_from and (not due_date or due_date < date_from):
+            return False
+        if date_to and (not due_date or due_date > date_to):
+            return False
+        return True
+
+    async def _preview_candidates_from_document(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        document_name: str,
+        source_type: str,
+    ) -> list[TodoItem]:
+        if source_type == "WBS":
+            return await self._preview_wbs_candidates(
+                project_id=project_id,
+                document_id=document_id,
+                document_name=document_name,
+            )
+        return await self._preview_meeting_candidates(
+            project_id=project_id,
+            document_id=document_id,
+            document_name=document_name,
+        )
+
+    async def _preview_meeting_candidates(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        document_name: str,
+    ) -> list[TodoItem]:
+        meeting_notes = await self._load_source_document_text(
+            project_id=project_id,
+            document_ids=[document_id],
+        )
+        if not meeting_notes.strip():
+            return []
+        response = await self.orchestrator.extract_todos(
+            ScheduleTodoRequest(
+                project_id=project_id,
+                meeting_notes=meeting_notes,
+                source_document_ids=[document_id],
+            ),
+            structured_context={
+                "source": "todo_manager_import",
+                "schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+            },
+        )
+        result = response.result if isinstance(response.result, dict) else {}
+        return self._candidate_items(
+            result.get("todos") or [],
+            source_type="MEETING_NOTES",
+            document_id=document_id,
+            document_name=document_name,
+        )
+
+    async def _preview_wbs_candidates(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        document_name: str,
+    ) -> list[TodoItem]:
+        wbs_context = await self._load_wbs_context_for_document(
+            project_id=project_id,
+            document_id=document_id,
+            document_name=document_name,
+        )
+        response = await self.orchestrator.run_schedule_action(
+            project_id=project_id,
+            action="SHOW_ALL_TODOS",
+            context={
+                "wbs_context": wbs_context,
+                "normalized_input": {
+                    "entities": {
+                        "source": "WBS",
+                        "status_filter": "ALL",
+                        "time_filter": "ALL_PERIOD",
+                    }
+                },
+            },
+        )
+        result = response.result if isinstance(response.result, dict) else {}
+        return self._candidate_items(
+            result.get("todos") or [],
+            source_type="WBS",
+            document_id=document_id,
+            document_name=document_name,
+        )
+
+    async def _load_wbs_context_for_document(
+        self,
+        *,
+        project_id: str,
+        document_id: str,
+        document_name: str,
+    ) -> dict[str, Any]:
+        if self.document_repository is None:
+            return {"source_document_names": [document_name], "rows": [], "tasks": []}
+        rows: list[dict[str, Any]] = []
+        chunks = await self.document_repository.list_chunks_by_document(
+            project_id=project_id,
+            document_id=document_id,
+        )
+        for chunk in chunks:
+            metadata = chunk.chunk_metadata or {}
+            row = metadata.get("wbs_row")
+            if isinstance(row, dict):
+                rows.append(
+                    {
+                        **row,
+                        "source_document_id": document_id,
+                        "source_document_name": document_name,
+                    }
+                )
+            metadata_context = metadata.get("wbs_context")
+            if isinstance(metadata_context, dict):
+                for metadata_row in metadata_context.get("rows") or []:
+                    if isinstance(metadata_row, dict):
+                        rows.append(
+                            {
+                                **metadata_row,
+                                "source_document_id": document_id,
+                                "source_document_name": document_name,
+                            }
+                        )
+        return {
+            "source_document_names": [document_name],
+            "rows": self._dedupe_wbs_rows(rows),
+            "tasks": [],
+        }
+
+    def _candidate_items(
+        self,
+        todos: list[dict[str, Any]],
+        *,
+        source_type: str,
+        document_id: str,
+        document_name: str,
+    ) -> list[TodoItem]:
+        items: list[TodoItem] = []
+        for index, todo in enumerate(todos):
+            if not isinstance(todo, dict):
+                continue
+            normalized = {
+                **todo,
+                "client_import_id": f"IMPORT-{index + 1:03d}",
+                "source_type": source_type,
+                "source_document_id": document_id,
+                "source_document_name": document_name,
+                "related_document": document_name,
+            }
+            item = self._todo_item(normalized, document_names={document_id: document_name})
+            if item.title:
+                items.append(item)
+        return items
+
+    def _find_duplicate(
+        self,
+        candidate: dict[str, Any],
+        existing: list[dict[str, Any]],
+        *,
+        document_names: dict[str, str],
+    ) -> tuple[dict[str, Any], str] | None:
+        best_match = None
+        best_score = 0.0
+        for item in existing:
+            score = self._duplicate_score(candidate, item)
+            if score > best_score:
+                best_match = item
+                best_score = score
+        if best_match is None or best_score < 0.55:
+            return None
+        level = "DUPLICATE_HIGH" if best_score >= 0.82 else "DUPLICATE_POSSIBLE"
+        return best_match, level
+
+    def _duplicate_score(self, candidate: dict[str, Any], existing: dict[str, Any]) -> float:
+        title_score = self._text_similarity(candidate.get("title"), existing.get("title"))
+        assignee_match = self._field_match(
+            candidate.get("assignee"),
+            existing.get("assignee") or existing.get("owner"),
+        )
+        due_match = self._field_match(candidate.get("due_date"), existing.get("due_date"))
+        source_match = self._field_match(
+            candidate.get("source_document_id"),
+            existing.get("source_document_id"),
+        )
+        source_type_match = (
+            self._normalize_source_type(candidate.get("source_type"))
+            == self._normalize_source_type(existing.get("source_type"))
+        )
+        score = title_score
+        if assignee_match:
+            score += 0.08
+        if due_match:
+            score += 0.08
+        if source_match:
+            score += 0.16
+        if source_type_match:
+            score += 0.06
+        return min(score, 1.0)
+
+    def _text_similarity(self, left: Any, right: Any) -> float:
+        left_tokens = self._text_tokens(left)
+        right_tokens = self._text_tokens(right)
+        if not left_tokens or not right_tokens:
+            return 0.0
+        if left_tokens == right_tokens:
+            return 0.76
+        overlap = len(left_tokens & right_tokens)
+        return overlap / max(len(left_tokens | right_tokens), 1)
+
+    def _text_tokens(self, value: Any) -> set[str]:
+        normalized = re.sub(r"[^0-9a-zA-Z가-힣]+", " ", str(value or "").lower())
+        return {token for token in normalized.split() if len(token) >= 2}
+
+    def _field_match(self, left: Any, right: Any) -> bool:
+        left_text = str(left or "").strip()
+        right_text = str(right or "").strip()
+        return bool(left_text and right_text and left_text == right_text)
+
+    def _ui_status(self, value: Any) -> str:
+        status = str(value or "").strip().upper()
+        if status in {"DONE", "COMPLETED", "COMPLETE", "CLOSED"}:
+            return "DONE"
+        if status in {"IN_PROGRESS", "DOING"}:
+            return "IN_PROGRESS"
+        return "NOT_STARTED"
+
+    def _normalize_source_type(self, value: Any) -> str:
+        text = str(value or "").strip().upper()
+        return "WBS" if "WBS" in text else "MEETING_NOTES"
 
     async def run_query(
         self,

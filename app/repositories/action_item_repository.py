@@ -3,7 +3,7 @@ import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.action_item import ActionItemModel
@@ -184,6 +184,91 @@ class ActionItemRepository:
         result = await self.session.execute(statement)
         return [self._to_todo_dict(item) for item in result.scalars().all()]
 
+    async def save_imported_todos(
+        self,
+        *,
+        project_id: str,
+        todos: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        await ensure_project(self.session, project_id=project_id)
+        saved_items: list[dict[str, Any]] = []
+        for todo in todos:
+            title = str(todo.get("title") or "").strip()
+            if not title:
+                continue
+            action_item = ActionItemModel(
+                action_item_id=self._new_todo_id(),
+                project_id=project_id,
+                title=title,
+                description=todo.get("description") or todo.get("source_sentence"),
+                owner=todo.get("assignee"),
+                due_date=self._parse_iso_date(todo.get("due_date")),
+                due_date_text=todo.get("due_date") or todo.get("due_date_text"),
+                related_document=(
+                    todo.get("source_document_name")
+                    or todo.get("related_document")
+                    or todo.get("related_artifact")
+                ),
+                source_type=todo.get("source_type") or "MEETING_NOTES",
+                status=self._storage_status(todo.get("status")),
+                source_document_id=todo.get("source_document_id"),
+            )
+            self.session.add(action_item)
+            saved_items.append(self._to_todo_dict(action_item))
+
+        await self.session.commit()
+        return saved_items
+
+    async def update_todo(
+        self,
+        *,
+        project_id: str,
+        todo_id: str,
+        values: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        statement = select(ActionItemModel).where(
+            ActionItemModel.project_id == project_id,
+            ActionItemModel.action_item_id == todo_id,
+        )
+        result = await self.session.execute(statement)
+        item = result.scalar_one_or_none()
+        if item is None:
+            return None
+
+        if "title" in values and values["title"] is not None:
+            item.title = str(values["title"] or "").strip() or item.title
+        if "assignee" in values:
+            item.owner = values.get("assignee")
+        if "description" in values:
+            item.description = values.get("description")
+        if "due_date" in values:
+            due_date_value = values.get("due_date")
+            item.due_date = self._parse_iso_date(due_date_value)
+            item.due_date_text = due_date_value
+        if "status" in values and values["status"] is not None:
+            status_value = self._storage_status(values.get("status"))
+            item.status = status_value
+            now = datetime.utcnow()
+            if status_value == "DONE":
+                item.completed_at = item.completed_at or now
+            elif item.completed_at is not None:
+                item.completed_at = None
+
+        item.updated_at = datetime.utcnow()
+        await self.session.commit()
+        await self.session.refresh(item)
+        return self._to_todo_dict(item)
+
+    async def delete_todo(self, *, project_id: str, todo_id: str) -> bool:
+        result = await self.session.execute(
+            delete(ActionItemModel).where(
+                ActionItemModel.project_id == project_id,
+                ActionItemModel.action_item_id == todo_id,
+            )
+        )
+        await self.session.commit()
+        return bool(result.rowcount)
+
     def _to_todo_dict(self, item: ActionItemModel) -> dict[str, Any]:
         return {
             "project_id": item.project_id,
@@ -234,6 +319,23 @@ class ActionItemRepository:
             return date.fromisoformat(str(value))
         except ValueError:
             return None
+
+    def _storage_status(self, value: Any) -> str:
+        normalized = str(value or "").strip().upper()
+        aliases = {
+            "NOT_STARTED": "NOT_STARTED",
+            "TODO": "NOT_STARTED",
+            "PENDING": "NOT_STARTED",
+            "OPEN": "NOT_STARTED",
+            "NEEDS_CONFIRMATION": "NOT_STARTED",
+            "IN_PROGRESS": "IN_PROGRESS",
+            "DOING": "IN_PROGRESS",
+            "DONE": "DONE",
+            "COMPLETED": "DONE",
+            "COMPLETE": "DONE",
+            "CLOSED": "DONE",
+        }
+        return aliases.get(normalized, "NOT_STARTED")
 
     def _normalize_text(self, value: str) -> str:
         text = str(value or "").lower()

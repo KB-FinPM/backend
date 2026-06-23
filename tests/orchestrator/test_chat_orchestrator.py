@@ -280,7 +280,7 @@ class CompleteTodoInputNormalizer:
 
 
 @pytest.mark.anyio
-async def test_chat_orchestrator_blocks_chat_todo_completion_and_queries_todos() -> None:
+async def test_chat_orchestrator_guides_chat_todo_completion_to_sidebar() -> None:
     schedule_service = SpyScheduleServiceForTodoMutation()
     orchestrator = ChatOrchestrator(
         conversation_repository=StubConversationRepository(),
@@ -301,13 +301,11 @@ async def test_chat_orchestrator_blocks_chat_todo_completion_and_queries_todos()
         )
     )
 
-    assert response.state == "COMPLETED"
+    assert response.state == "IDLE"
     assert schedule_service.complete_calls == 0
-    assert schedule_service.query_calls[0]["schedule_action"] == "SHOW_ALL_TODOS"
-    normalized_input = schedule_service.query_calls[0]["context"]["normalized_input"]
-    assert normalized_input["todo_mutation_blocked"] is True
-    assert normalized_input["entities"]["status_filter"] == "NOT_DONE"
-    assert response.result["action"] == "SHOW_ALL_TODOS"
+    assert schedule_service.query_calls == []
+    assert response.result["todo_management"] is True
+    assert "TODO 관리" in response.message
 
 
 @pytest.mark.anyio
@@ -472,7 +470,7 @@ async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
 
 
 @pytest.mark.anyio
-async def test_chat_orchestrator_cancel_meeting_todo_action_requests_upload() -> None:
+async def test_chat_orchestrator_cancel_meeting_todo_action_does_not_request_upload() -> None:
     repository = StubConversationRepository()
     conversation = await repository.create_conversation(
         conversation_id="CONV-MEETING-001",
@@ -515,8 +513,6 @@ async def test_chat_orchestrator_cancel_meeting_todo_action_requests_upload() ->
         )
     )
 
-    assert response.state == "WAITING_REQUIRED_INFO"
+    assert response.state == "IDLE"
     assert repository.actions[pending_action.action_id].status == ChatActionStatus.CANCELLED
-    assert "회의록" in response.message
-    assert response.result["upload_request"]["documentType"] == "MEETING_NOTES"
-    assert response.result["upload_request"]["resumeAfterUpload"] is True
+    assert "upload_request" not in response.result

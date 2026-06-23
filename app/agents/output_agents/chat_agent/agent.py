@@ -43,6 +43,8 @@ class ChatOutputAgent:
             return self._artifact_download_required_info_payload(result_json)
         if event == "TODO_COMPLETED":
             return self._todo_completed_payload(result_json)
+        if event == "TODO_MANAGEMENT_GUIDANCE":
+            return self._todo_management_guidance_payload()
         if event == "SCHEDULE_RESULT":
             return self._schedule_result_payload(result_json)
         if event == "NO_PENDING_ACTION":
@@ -129,6 +131,15 @@ class ChatOutputAgent:
             "문서가 큰 경우 chunk/batch 처리에 시간이 걸릴 수 있습니다."
             f"{chunk_text}"
         )
+
+    def _todo_management_guidance_payload(self) -> dict[str, Any]:
+        return {
+            "state": ChatState.IDLE.value,
+            "message": "TODO 관리는 왼쪽 사이드바의 [TODO 관리]에서 확인하고 수정할 수 있습니다.",
+            "result": {"todo_management": True},
+            "suggested_actions": [],
+            "recommended_prompts": self._default_recommended_prompts(),
+        }
 
     def _completed_payload(self, result_json: dict[str, Any]) -> dict[str, Any]:
         generation_result = result_json.get("result") or {}
