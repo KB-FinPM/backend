@@ -6,6 +6,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.todo_description import normalize_todo_description
 from app.models.action_item import ActionItemModel
 from app.repositories.project_repository import ensure_project
 
@@ -31,7 +32,7 @@ class ActionItemRepository:
                 action_item_id=self._new_todo_id(),
                 project_id=project_id,
                 title=str(todo.get("title") or "").strip(),
-                description=todo.get("description"),
+                description=normalize_todo_description(todo) or None,
                 owner=todo.get("assignee"),
                 due_date=self._parse_iso_date(due_date_text),
                 due_date_text=due_date_text,
@@ -80,7 +81,9 @@ class ActionItemRepository:
                 self.session.add(action_item)
 
             action_item.title = title
-            action_item.description = todo.get("description")
+            action_item.description = normalize_todo_description(
+                {**todo, "title": title, "source_type": "WBS"},
+            ) or None
             action_item.owner = todo.get("assignee")
             due_date = self._normalize_due_date_text(
                 todo.get("due_date") or todo.get("planned_end_date"),
@@ -211,7 +214,11 @@ class ActionItemRepository:
                 action_item_id=self._new_todo_id(),
                 project_id=project_id,
                 title=title,
-                description=todo.get("description") or todo.get("source_sentence"),
+                description=normalize_todo_description(
+                    {**todo, "title": title},
+                    source_type=todo.get("source_type"),
+                )
+                or None,
                 owner=todo.get("assignee"),
                 due_date=self._parse_iso_date(due_date_text),
                 due_date_text=due_date_text,

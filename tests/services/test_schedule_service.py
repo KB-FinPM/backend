@@ -231,6 +231,8 @@ async def test_schedule_service_uses_generated_wbs_artifact_without_upload() -> 
     assert response.result["status"] == "SUCCESS"
     assert response.result["todos"][0]["todo_id"] == "TODO-WBS-001"
     assert response.result["todos"][0]["title"] == "설계 및 테스트"
+    assert response.result["todos"][0]["description"] != "WBS 기준 이번 기간 작업"
+    assert "설계 및 테스트" in response.result["todos"][0]["description"]
     assert response.result["metadata"]["wbs_todos_saved"] is True
     assert action_item_repository.saved_wbs_todos
 
@@ -257,3 +259,44 @@ async def test_schedule_service_reads_generated_wbs_rows_from_nested_artifact() 
     assert response.result["status"] == "SUCCESS"
     assert response.result["todos"][0]["title"] == "개발 및 테스트"
     assert response.result["todos"][0]["source_artifact_id"] == "ART-WBS-002"
+
+
+def test_schedule_service_duplicate_score_uses_description_context() -> None:
+    service = ScheduleService(orchestrator=StubScheduleOrchestrator())
+
+    score = service._duplicate_score(
+        {
+            "title": "법제처 자료 RPA 검토",
+            "description": "법제처 자료를 RPA로 축적할 수 있는지 검토한다.",
+            "assignee": "임태운 감사역",
+            "due_date": "2025-01-17",
+        },
+        {
+            "title": "법제처 자료 RPA 축적 가능 여부 검토",
+            "description": "법제처 자료를 RPA로 축적할 수 있는지 검토한다.",
+            "owner": "임태운 감사역",
+            "due_date": "2025-01-17",
+        },
+    )
+
+    assert score >= 0.55
+
+
+def test_schedule_service_todo_item_hides_generic_description() -> None:
+    service = ScheduleService(orchestrator=StubScheduleOrchestrator())
+
+    item = service._todo_item(
+        {
+            "todo_id": "TODO-001",
+            "title": "법제처 자료 RPA 축적 가능 여부 검토",
+            "description": "회의록에서 추출된 TODO",
+            "source_sentence": "법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)",
+            "assignee": "임태운 감사역",
+            "source_type": "MEETING_NOTES",
+        }
+    )
+
+    assert item.description
+    assert "회의록" not in item.description
+    assert "TODO" not in item.description
+    assert "RPA" in item.description

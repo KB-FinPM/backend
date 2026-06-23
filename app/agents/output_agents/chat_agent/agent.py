@@ -66,7 +66,7 @@ class ChatOutputAgent:
 
         return {
             "state": ChatState.IDLE.value,
-            "message": "문서 생성이나 회의록 기반 할 일 추출이 필요하면 요청해 주세요.",
+            "message": "문서 생성이나 회의록 기반 할일 추출이 필요하면 요청해 주세요.",
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
         }
@@ -76,8 +76,8 @@ class ChatOutputAgent:
         action_type = action.get("action_type")
         payload = action.get("payload") or {}
         if action_type == ChatActionType.EXTRACT_ACTION_ITEMS.value:
-            message = "회의록을 기준으로 TODO 목록을 추출할까요?"
-            confirm_label = "TODO 추출하기"
+            message = "회의록을 기준으로 할일 목록을 추출할까요?"
+            confirm_label = "할일 추출하기"
             cancel_label = "다른 회의록 업로드"
         else:
             artifact_label = self._artifact_label(payload.get("target_artifact_type"))
@@ -135,7 +135,7 @@ class ChatOutputAgent:
     def _todo_management_guidance_payload(self) -> dict[str, Any]:
         return {
             "state": ChatState.IDLE.value,
-            "message": "TODO 관리는 왼쪽 사이드바의 [TODO 관리]에서 확인하고 수정할 수 있습니다.",
+            "message": "할일 관리는 왼쪽 사이드바의 [할일 관리]에서 확인하고 수정할 수 있습니다.",
             "result": {"todo_management": True},
             "suggested_actions": [],
             "recommended_prompts": self._default_recommended_prompts(),
@@ -252,7 +252,7 @@ class ChatOutputAgent:
         result = result_json.get("result") or {}
         todos = result.get("todos") or []
         items = self._schedule_todo_items(todos)
-        title = items[0]["title"] if items else "선택한 TODO"
+        title = items[0]["title"] if items else "선택한 할일"
         return {
             "state": ChatState.COMPLETED.value,
             "message": f'"{title}" 업무를 완료 처리했습니다.',
@@ -480,11 +480,11 @@ class ChatOutputAgent:
                 "label": "회의록 업로드",
                 "acceptedTypes": self._meeting_upload_accept_types(),
                 "documentType": "MEETING_NOTES",
-                "originalMessage": "회의록 보고 TODO 정리해줘",
+                "originalMessage": "회의록 보고 할일 정리해줘",
                 "requestType": "MEETING_TODO_EXTRACTION",
                 "resumeAfterUpload": True,
                 "hideOutputFormat": True,
-                "startMessage": "회의록에서 TODO를 추출하고 있습니다.",
+                "startMessage": "회의록에서 할일을 추출하고 있습니다.",
             }
             command_actions = []
         elif required_context == "ASSIGNEE" or "assignee" in missing_fields:
@@ -626,23 +626,23 @@ class ChatOutputAgent:
             )
         if topic_value == "ACTION_ITEMS":
             return (
-                "TODO 또는 액션아이템은 회의나 업무 협의에서 정해진 후속 작업입니다. "
+                "할일 또는 액션아이템은 회의나 업무 협의에서 정해진 후속 작업입니다. "
                 "담당자, 기한, 관련 산출물, 상태를 함께 관리하면 누락 없이 진행 상황을 확인할 수 있습니다."
             )
         if topic_value == "MEETING_NOTES":
             return (
                 "회의록은 논의 내용, 결정 사항, 이슈, 후속 작업을 남기는 문서입니다. "
-                "회의록 내용을 붙여넣고 할 일 추출을 요청하면 담당자와 기한이 보이는 TODO를 정리할 수 있습니다."
+                "회의록 내용을 붙여넣고 할일 추출을 요청하면 담당자와 기한이 보이는 할일을 정리할 수 있습니다."
             )
 
         normalized_query = str(query or "").strip()
         if normalized_query:
             return (
                 "현재는 PM 산출물 생성과 일정 관리 중심으로 답변할 수 있습니다. "
-                "요구사항 정의서, 구축요건정의서, WBS, 화면설계서, 회의록 TODO에 대해 "
+                "요구사항 정의서, 구축요건정의서, WBS, 화면설계서, 회의록 할일에 대해 "
                 "궁금한 점을 물어보거나 산출물 생성을 요청해 주세요."
             )
-        return "문서 생성이나 회의록 기반 할 일 추출이 필요하면 요청해 주세요."
+        return "문서 생성이나 회의록 기반 할일 추출이 필요하면 요청해 주세요."
 
     def _topic_recommended_prompts(self, topic: Any) -> list[dict[str, str]]:
         topic_value = str(topic or "")
@@ -656,12 +656,12 @@ class ChatOutputAgent:
             return [
                 {"label": "요구사항 정의서 생성", "message": "요구사항 정의서 생성해줘"},
                 {"label": "요구사항 정의서 설명", "message": "요구사항 정의서가 뭐야?"},
-                {"label": "회의록 할 일 추출", "message": "회의록에서 할 일 뽑아줘"},
+                {"label": "회의록 할일 추출", "message": "회의록에서 할일 뽑아줘"},
             ]
         if topic_value in {"ACTION_ITEMS", "MEETING_NOTES"}:
             return [
-                {"label": "회의록 할 일 추출", "message": "회의록에서 할 일 뽑아줘"},
-                {"label": "이번 주 일정", "message": "이번 주 해야 할 일 알려줘"},
+                {"label": "회의록 할일 추출", "message": "회의록에서 할일 뽑아줘"},
+                {"label": "이번 주 일정", "message": "이번 주 해야 할일 알려줘"},
                 {"label": "요구사항 정의서 생성", "message": "요구사항 정의서 생성해줘"},
             ]
         return self._default_recommended_prompts()
@@ -675,9 +675,9 @@ class ChatOutputAgent:
         legacy_items = self._legacy_schedule_todo_items(todos)
         count = len(items)
         message = (
-            f"회의록을 기준으로 다음 TODO를 추출했습니다. 할 일 {count}건"
+            f"회의록을 기준으로 다음 할일을 추출했습니다. 할일 {count}건"
             if count
-            else "회의록에서 바로 수행할 TODO를 찾지 못했습니다."
+            else "회의록에서 바로 수행할 할일을 찾지 못했습니다."
         )
         return {
             "state": ChatState.COMPLETED.value if count else ChatState.FAILED.value,
@@ -722,27 +722,27 @@ class ChatOutputAgent:
             source_filter = metadata.get("source_filter")
             if source_filter == "MEETING":
                 message = (
-                    f"회의록에서 등록된 TODO가 {len(items)}건입니다."
+                    f"회의록에서 등록된 할일이 {len(items)}건입니다."
                     if items
-                    else "회의록에서 등록된 TODO가 없습니다."
+                    else "회의록에서 등록된 할일이 없습니다."
                 )
             elif source_filter == "WBS":
                 message = (
-                    f"WBS에서 등록된 TODO가 {len(items)}건입니다."
+                    f"WBS에서 등록된 할일이 {len(items)}건입니다."
                     if items
-                    else "WBS에서 등록된 TODO가 없습니다."
+                    else "WBS에서 등록된 할일이 없습니다."
                 )
             else:
                 message = (
-                    f"현재 등록된 TODO가 {len(items)}건입니다."
+                    f"현재 등록된 할일이 {len(items)}건입니다."
                     if items
-                    else "현재 등록된 TODO가 없습니다."
+                    else "현재 등록된 할일이 없습니다."
                 )
         elif action == "SHOW_OVERDUE_TODOS":
             message = (
-                f"기한이 지난 TODO는 {len(items)}건입니다."
+                f"기한이 지난 할일은 {len(items)}건입니다."
                 if items
-                else "기한이 지난 TODO가 없습니다."
+                else "기한이 지난 할일이 없습니다."
             )
         elif action == "SHOW_NEXT_WEEK_TODOS":
             message = (
@@ -765,21 +765,21 @@ class ChatOutputAgent:
             )
         elif action == "ASSISTANT_BRIEFING":
             message = (
-                f"WBS와 기존 TODO를 기준으로 이번 주에 챙겨야 할 일을 {len(items)}건 정리했습니다."
+                f"WBS와 기존 할일을 기준으로 이번 주에 챙겨야 할 일을 {len(items)}건 정리했습니다."
                 if items
-                else "WBS와 기존 TODO 기준으로 이번 주에 바로 표시할 업무가 없습니다."
+                else "WBS와 기존 할일 기준으로 이번 주에 바로 표시할 업무가 없습니다."
             )
         elif action == "COMPARE_WEEKLY_MEETING_TODOS":
             message = (
-                "지난 회의와 이번 회의의 TODO를 비교했습니다."
+                "지난 회의와 이번 회의의 할일을 비교했습니다."
                 if items
-                else "비교할 회의 TODO가 없습니다."
+                else "비교할 회의 할일이 없습니다."
             )
         else:
             message = (
-                f"이번 주 진행해야 할 TODO는 {len(items)}건입니다."
+                f"이번 주 진행해야 할 할일은 {len(items)}건입니다."
                 if items
-                else "이번 주 진행해야 할 TODO가 없습니다."
+                else "이번 주 진행해야 할 할일이 없습니다."
             )
         return {
             "state": ChatState.COMPLETED.value,
@@ -799,7 +799,7 @@ class ChatOutputAgent:
         if status == "SUCCESS":
             todos = result.get("todos") or []
             items = self._schedule_todo_items(todos)
-            title = items[0]["title"] if items else "선택한 TODO"
+            title = items[0]["title"] if items else "선택한 할일"
             return {
                 "state": ChatState.COMPLETED.value,
                 "message": (
@@ -822,7 +822,7 @@ class ChatOutputAgent:
                 "state": ChatState.WAITING_REQUIRED_INFO.value,
                 "message": (
                     "완료 처리할 업무를 특정하지 못했습니다. "
-                    "아래 TODO 중 어떤 업무를 완료했는지 선택해 주세요."
+                    "아래 할일 중 어떤 업무를 완료했는지 선택해 주세요."
                 ),
                 "result": {
                     **result,
@@ -835,7 +835,7 @@ class ChatOutputAgent:
             }
         return {
             "state": ChatState.FAILED.value,
-            "message": "완료 처리할 TODO를 찾지 못했습니다. TODO 제목을 조금 더 정확히 입력해 주세요.",
+            "message": "완료 처리할 할일을 찾지 못했습니다. 할일 제목을 조금 더 정확히 입력해 주세요.",
             "result": result,
             "suggested_actions": [],
             "recommended_prompts": self._schedule_recommended_prompts(),
@@ -861,7 +861,7 @@ class ChatOutputAgent:
                 or todo.get("source_label")
                 or todo.get("source_document_name")
                 or todo.get("related_document")
-                or ("WBS" if str(source_type or "").upper() == "WBS" else "회의록 기반 신규 TODO")
+                or ("WBS" if str(source_type or "").upper() == "WBS" else "")
             )
             todo_id = todo.get("todo_id")
             items.append(
@@ -882,10 +882,7 @@ class ChatOutputAgent:
         return items
 
     def _schedule_table(self, items: list[dict[str, Any]]) -> dict[str, Any]:
-        return {
-            "columns": ["할 일", "담당자", "기한", "출처", "상태"],
-            "items": items,
-        }
+        return {"columns": ["할일", "담당자", "기한", "상태"], "items": items}
 
     def _legacy_schedule_todo_items(self, todos: list[Any]) -> list[dict[str, Any]]:
         items = []
@@ -966,11 +963,11 @@ class ChatOutputAgent:
             return "회의록 내용을 입력해 주세요."
         if "no action items were found" in normalized:
             return (
-                "회의 내용에서 바로 추출할 할 일을 찾지 못했습니다. 담당자나 "
-                "할 일이 드러나도록 내용을 조금 더 구체적으로 입력해 주세요."
+                "회의 내용에서 바로 추출할 할일을 찾지 못했습니다. 담당자나 "
+                "할일이 드러나도록 내용을 조금 더 구체적으로 입력해 주세요."
             )
         if "matching todo not found" in normalized:
-            return "완료 처리할 TODO를 찾지 못했습니다. TODO 제목을 조금 더 정확히 입력해 주세요."
+            return "완료 처리할 할일을 찾지 못했습니다. 할일 제목을 조금 더 정확히 입력해 주세요."
         return "요청을 처리하지 못했습니다. 내용을 확인한 뒤 다시 시도해 주세요."
 
     def _should_expose_failure_detail(self, error: str) -> bool:
@@ -998,16 +995,16 @@ class ChatOutputAgent:
                 "message": "WBS 만들어줘",
             },
             {
-                "label": "회의록 할 일 추출",
-                "message": "회의록에서 할 일 뽑아줘",
+                "label": "회의록 할일 추출",
+                "message": "회의록에서 할일 뽑아줘",
             },
         ]
 
     def _schedule_recommended_prompts(self) -> list[dict[str, str]]:
         return [
             {
-                "label": "이번 주 할 일",
-                "message": "이번 주 해야 할 일 알려줘",
+                "label": "이번 주 할일",
+                "message": "이번 주 해야 할일 알려줘",
             },
             {
                 "label": "기한 지난 업무",

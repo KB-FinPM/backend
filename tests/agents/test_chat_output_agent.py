@@ -298,7 +298,7 @@ async def test_chat_output_agent_renders_schedule_todo_result() -> None:
     )
 
     assert response.success is True
-    assert "할 일 1건" in response.message
+    assert "할일 1건" in response.message
     assert response.display_payload["items"] == [
         {
             "todo_id": "TODO-001",
@@ -475,15 +475,14 @@ async def test_chat_output_agent_renders_schedule_table_metadata() -> None:
 
     result = response.display_payload["result"]
     assert response.success is True
-    assert "이번 주 진행해야 할 TODO는 1건" in response.message
+    assert "이번 주 진행해야 할 할일은 1건" in response.message
     assert result["items"][0]["status"] == "TODO"
     assert result["items"][0]["status_code"] == "TODO"
     assert result["items"][0]["actions"] == []
     assert result["schedule_table"]["columns"] == [
-        "할 일",
+        "할일",
         "담당자",
         "기한",
-        "출처",
         "상태",
     ]
 
@@ -573,7 +572,7 @@ async def test_chat_output_agent_schedule_confirmation_offers_meeting_upload() -
 
     assert response.success is True
     actions = response.display_payload["suggested_actions"]
-    assert actions[0]["label"] == "TODO 추출하기"
+    assert actions[0]["label"] == "할일 추출하기"
     assert actions[1]["label"] == "다른 회의록 업로드"
 
 

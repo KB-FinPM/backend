@@ -66,6 +66,10 @@ async def test_meeting_todo_extraction_agent_extracts_body_todos_when_action_tab
     assert distribution["assignee"] == "SI개발팀"
     assert distribution["due_date"] == "2025-01-17"
     assert distribution["status"] == "TODO"
+    assert "근거:" not in distribution["description"]
+    assert "회의록" not in distribution["description"]
+    assert "영업감사" in distribution["description"]
+    assert "배포" in distribution["description"]
 
     weekly_issue = next(todo for todo in todos if "주간보고시 이슈로 제기" in todo["title"])
     assert weekly_issue["due_date"] == "2025-01-22"
@@ -74,6 +78,11 @@ async def test_meeting_todo_extraction_agent_extracts_body_todos_when_action_tab
     layout = next(todo for todo in todos if todo["title"].startswith("layout 정의"))
     assert layout["assignee"] == "김병원 이사"
     assert layout["due_date"] == "2025-01-17"
+    assert "layout" in layout["description"]
+    assert not any(
+        "회의록에서 추출" in todo["description"] or "근거:" in todo["description"]
+        for todo in todos
+    )
 
     candidates = result["candidate_items"]
     assert any("비즈플랫폼" in candidate["source_sentence"] for candidate in candidates)

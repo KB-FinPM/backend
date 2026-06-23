@@ -8,6 +8,7 @@ from app.orchestrator.schedule_orchestrator import (
     ScheduleOrchestrator,
     schedule_orchestrator,
 )
+from app.core.todo_description import normalize_todo_description
 from app.repositories.action_item_repository import ActionItemRepository
 from app.repositories.artifact_repository import ArtifactRepository
 from app.repositories.document_repository import DocumentRepository
@@ -408,10 +409,16 @@ class ScheduleService:
             or (document_names or {}).get(str(source_document_id or ""))
             or todo.get("related_document")
         )
-        description = todo.get("description")
         source_sentence = todo.get("source_sentence")
         metadata = todo.get("metadata") if isinstance(todo.get("metadata"), dict) else {}
         source_sentence = source_sentence or metadata.get("source_sentence")
+        description = normalize_todo_description(
+            {
+                **todo,
+                "source_sentence": source_sentence,
+            },
+            source_type=todo.get("source_type"),
+        )
         return TodoItem(
             todo_id=str(
                 todo.get("client_import_id")
@@ -628,28 +635,20 @@ class ScheduleService:
 
     def _duplicate_score(self, candidate: dict[str, Any], existing: dict[str, Any]) -> float:
         title_score = self._text_similarity(candidate.get("title"), existing.get("title"))
+        description_score = self._text_similarity(
+            candidate.get("description"),
+            existing.get("description"),
+        )
         assignee_match = self._field_match(
             candidate.get("assignee"),
             existing.get("assignee") or existing.get("owner"),
         )
         due_match = self._field_match(candidate.get("due_date"), existing.get("due_date"))
-        source_match = self._field_match(
-            candidate.get("source_document_id"),
-            existing.get("source_document_id"),
-        )
-        source_type_match = (
-            self._normalize_source_type(candidate.get("source_type"))
-            == self._normalize_source_type(existing.get("source_type"))
-        )
-        score = title_score
+        score = max(title_score, (title_score * 0.62) + (description_score * 0.22))
         if assignee_match:
             score += 0.08
         if due_match:
             score += 0.08
-        if source_match:
-            score += 0.16
-        if source_type_match:
-            score += 0.06
         return min(score, 1.0)
 
     def _text_similarity(self, left: Any, right: Any) -> float:

@@ -143,6 +143,9 @@ async def test_schedule_management_agent_uses_input_agent_meeting_todo_extractio
     todo_list = ScheduleTodoList.model_validate(response.result)
     assert len(todo_list.todos) == 1
     assert todo_list.todos[0].title == "법제처 자료 RPA 축적 가능 여부 검토"
+    assert "근거:" not in todo_list.todos[0].description
+    assert "회의록" not in todo_list.todos[0].description
+    assert "RPA" in todo_list.todos[0].description
     assert todo_list.todos[0].metadata["source_section"] == "외규관련"
     assert response.result["candidates"][0]["classification"] == "issue_or_requirement"
     assert response.result["metadata"]["extraction_strategy"] == "hybrid_rule_llm_rag"

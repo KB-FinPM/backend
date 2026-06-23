@@ -35,12 +35,12 @@ class MeetingTodoItem(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     title: str
-    description: str = "회의록에서 추출된 TODO"
+    description: str = ""
     assignee: str | None = None
     due_date: str | None = None
     due_date_text: str | None = None
     status: Literal["TODO", "NEEDS_CONFIRMATION"] = "NEEDS_CONFIRMATION"
-    related_document: str = "회의록 기반 신규 TODO"
+    related_document: str = ""
     source_type: Literal["MEETING_NOTE"] = "MEETING_NOTE"
     source_section: str | None = None
     source_sentence: str

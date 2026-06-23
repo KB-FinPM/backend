@@ -1,5 +1,5 @@
 # EN: Core agent adapter for lightweight schedule/todo management.
-# KO: 회의록 기반 TODO와 주차 조회를 위한 Core Agent adapter입니다.
+# KO: 회의록 기반 할일과 주차 조회를 위한 Core Agent adapter입니다.
 
 from __future__ import annotations
 
@@ -9,6 +9,10 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.core.todo_description import (
+    build_meeting_todo_description,
+    build_wbs_todo_description,
+)
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
 
@@ -395,11 +399,16 @@ class ScheduleManagementAgent:
                     "todo_id": f"TODO-TEMP-{len(todos) + 1:03d}",
                     "project_id": "",
                     "title": title,
-                    "description": "회의록에서 추출된 TODO",
+                    "description": build_meeting_todo_description(
+                        title=title,
+                        source_sentence=sentence,
+                        assignee=assignee,
+                        due_date_text=due_metadata.get("raw_text"),
+                    ),
                     "assignee": assignee,
                     "due_date": due_date,
                     "related_artifact": related_artifact,
-                    "related_document": related_artifact or "회의록 기반 신규 TODO",
+                    "related_document": related_artifact,
                     "source_type": "MEETING_NOTE",
                     "status": status,
                     "confidence": confidence,
@@ -460,13 +469,17 @@ class ScheduleManagementAgent:
                     "todo_id": f"TODO-TEMP-{len(todos) + 1:03d}",
                     "project_id": "",
                     "title": title,
-                    "description": item.get("description")
-                    or f"근거: {source_sentence}",
+                    "description": build_meeting_todo_description(
+                        title=title,
+                        description=item.get("description"),
+                        source_sentence=source_sentence,
+                        assignee=item.get("assignee"),
+                        due_date_text=item.get("due_date_text") or item.get("due_date"),
+                    ),
                     "assignee": item.get("assignee"),
                     "due_date": item.get("due_date"),
                     "related_artifact": item.get("related_artifact"),
-                    "related_document": item.get("related_document")
-                    or "회의록 기반 신규 TODO",
+                    "related_document": item.get("related_document"),
                     "source_type": item.get("source_type") or "MEETING_NOTE",
                     "status": status,
                     "confidence": item.get("confidence"),
@@ -491,6 +504,7 @@ class ScheduleManagementAgent:
         for todo in todos:
             key = (
                 self._normalize_match_text(str(todo.get("title") or "")),
+                self._normalize_match_text(str(todo.get("description") or "")),
                 str(todo.get("assignee") or ""),
                 str(todo.get("due_date") or ""),
             )
@@ -1271,8 +1285,8 @@ class ScheduleManagementAgent:
             "status_filter": filters["status_filter"],
         }
         assistant_message = (
-            "채팅에서는 TODO 완료처리를 지원하지 않습니다.\n"
-            "현재 등록된 TODO 목록을 조회해드릴게요."
+            "채팅에서는 할일 완료처리를 지원하지 않습니다.\n"
+            "현재 등록된 할일 목록을 조회해드릴게요."
             if self._todo_mutation_blocked(context)
             else None
         )
@@ -1566,7 +1580,7 @@ class ScheduleManagementAgent:
     def _missing_period_context_message(self, missing_fields: list[str]) -> str:
         if "wbs.task_period" in missing_fields:
             return (
-                "WBS는 확인했지만 작업 기간 정보가 없어 이번 주 할 일을 계산할 수 없습니다. "
+                "WBS는 확인했지만 작업 기간 정보가 없어 이번 주 할일을 계산할 수 없습니다. "
                 "작업 시작일과 종료일이 포함된 WBS를 사용해 주세요."
             )
         return (
@@ -1890,6 +1904,14 @@ class ScheduleManagementAgent:
             or task.get("task_id")
             or self._wbs_row_todo_id(row_number=row_number, wbs_id=wbs_id, title=title)
         )
+        description_context = {
+            **task,
+            "title": title,
+            "assignee": assignee_display or assignee,
+            "planned_start_date": start_date.isoformat() if start_date else None,
+            "planned_end_date": end_date.isoformat() if end_date else None,
+            "artifact": self._task_value(task, "artifact", "deliverable", "산출물"),
+        }
         return {
             "todo_id": todo_id,
             "project_id": task.get("project_id"),
@@ -1898,7 +1920,11 @@ class ScheduleManagementAgent:
             "row_number": row_number,
             "wbs_id": wbs_id,
             "title": title,
-            "description": task.get("description") or "WBS 기준 이번 기간 작업",
+            "description": build_wbs_todo_description(
+                description_context,
+                title=title,
+                description=task.get("description"),
+            ),
             "raw_assignee": raw_assignee,
             "assignee": assignee,
             "assignee_display": assignee_display,
@@ -2197,7 +2223,7 @@ class ScheduleManagementAgent:
 
         if action == "ASSISTANT_BRIEFING":
             lines.append("")
-            lines.append("회의록 TODO가 함께 있으면 계획 대비 실제 진행 상황까지 이어서 확인할 수 있습니다.")
+            lines.append("회의록 할일이 함께 있으면 계획 대비 실제 진행 상황까지 이어서 확인할 수 있습니다.")
 
         return "\n".join(lines)
 

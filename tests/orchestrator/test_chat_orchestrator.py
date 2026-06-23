@@ -305,7 +305,7 @@ async def test_chat_orchestrator_guides_chat_todo_completion_to_sidebar() -> Non
     assert schedule_service.complete_calls == 0
     assert schedule_service.query_calls == []
     assert response.result["todo_management"] is True
-    assert "TODO 관리" in response.message
+    assert "할일 관리" in response.message
 
 
 @pytest.mark.anyio
@@ -427,7 +427,7 @@ async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
         conversation_id=conversation.conversation_id,
         project_id=conversation.project_id,
         role=ChatRole.ASSISTANT,
-        content="이번 주 TODO 1건을 찾았습니다.",
+        content="이번 주 할일 1건을 찾았습니다.",
         structured_payload={
             "state": "COMPLETED",
             "display_type": "schedule_todos",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from app.core.todo_description import build_meeting_todo_description
 from app.agents.input_agents.meeting_todo_extraction_agent.schemas import (
     MeetingTodoCandidate,
     MeetingTodoItem,
@@ -98,7 +99,14 @@ class MeetingTodoNormalizer:
         }
         return MeetingTodoItem(
             title=title,
-            description=f"근거: {sentence}",
+            description=build_meeting_todo_description(
+                title=title,
+                source_sentence=sentence,
+                context_before=candidate.context_before,
+                context_after=candidate.context_after,
+                assignee=assignee,
+                due_date_text=due_date_text,
+            ),
             assignee=assignee,
             due_date=due_date,
             due_date_text=due_date_text or ("미정" if not due_date else due_date),
@@ -299,6 +307,7 @@ class MeetingTodoNormalizer:
         for item in items:
             key = (
                 re.sub(r"\s+", "", item.title.lower()),
+                re.sub(r"\s+", "", item.description.lower()),
                 item.assignee or "",
                 item.due_date or "",
             )
