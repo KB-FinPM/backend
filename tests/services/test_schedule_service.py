@@ -1,5 +1,6 @@
 # EN: Tests for schedule service delegation behavior.
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -136,6 +137,25 @@ class StubCompleteActionItemRepository:
         return [{**todo} for todo in self.todos]
 
 
+class StubTodoDateRepository:
+    async def list_project_todos(self, *, project_id: str) -> list[dict]:
+        return [
+            {"todo_id": "TODO-EMPTY", "title": "Empty due date", "status": "TODO"},
+            {
+                "todo_id": "TODO-YEARLESS",
+                "title": "Yearless due date",
+                "status": "TODO",
+                "due_date": "01.17",
+            },
+            {
+                "todo_id": "TODO-EXPLICIT",
+                "title": "Explicit due date",
+                "status": "TODO",
+                "due_date": "2025.01.17",
+            },
+        ]
+
+
 @pytest.mark.anyio
 async def test_schedule_service_completes_todo_by_id_without_matching() -> None:
     action_item_repository = StubCompleteActionItemRepository()
@@ -172,6 +192,21 @@ async def test_schedule_service_complete_todo_by_id_returns_not_found() -> None:
 
     assert response.success is False
     assert response.result["status"] == "NOT_FOUND"
+
+
+@pytest.mark.anyio
+async def test_schedule_service_normalizes_todo_due_dates_for_manager() -> None:
+    service = ScheduleService(
+        orchestrator=StubScheduleOrchestrator(),
+        action_item_repository=StubTodoDateRepository(),
+    )
+
+    response = await service.list_todos(project_id="PRJ-001")
+
+    due_dates = {item.todo_id: item.due_date for item in response.items}
+    assert due_dates["TODO-EMPTY"] == date.today().isoformat()
+    assert due_dates["TODO-YEARLESS"] == f"{date.today().year}-01-17"
+    assert due_dates["TODO-EXPLICIT"] == "2025-01-17"
 
 
 @pytest.mark.anyio

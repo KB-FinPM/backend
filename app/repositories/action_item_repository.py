@@ -23,14 +23,18 @@ class ActionItemRepository:
         await ensure_project(self.session, project_id=project_id)
         saved_items: list[dict[str, Any]] = []
         for todo in todos:
+            due_date_text = self._normalize_due_date_text(
+                todo.get("due_date"),
+                default_today=True,
+            )
             action_item = ActionItemModel(
                 action_item_id=self._new_todo_id(),
                 project_id=project_id,
                 title=str(todo.get("title") or "").strip(),
                 description=todo.get("description"),
                 owner=todo.get("assignee"),
-                due_date=self._parse_iso_date(todo.get("due_date")),
-                due_date_text=todo.get("due_date"),
+                due_date=self._parse_iso_date(due_date_text),
+                due_date_text=due_date_text,
                 related_document=todo.get("related_document"),
                 source_type=todo.get("source_type") or "MEETING_MINUTES",
                 status=todo.get("status") or "TODO",
@@ -78,7 +82,10 @@ class ActionItemRepository:
             action_item.title = title
             action_item.description = todo.get("description")
             action_item.owner = todo.get("assignee")
-            due_date = todo.get("due_date") or todo.get("planned_end_date")
+            due_date = self._normalize_due_date_text(
+                todo.get("due_date") or todo.get("planned_end_date"),
+                default_today=True,
+            )
             action_item.due_date = self._parse_iso_date(due_date)
             action_item.due_date_text = due_date
             action_item.related_document = (
@@ -196,14 +203,18 @@ class ActionItemRepository:
             title = str(todo.get("title") or "").strip()
             if not title:
                 continue
+            due_date_text = self._normalize_due_date_text(
+                todo.get("due_date") or todo.get("due_date_text"),
+                default_today=True,
+            )
             action_item = ActionItemModel(
                 action_item_id=self._new_todo_id(),
                 project_id=project_id,
                 title=title,
                 description=todo.get("description") or todo.get("source_sentence"),
                 owner=todo.get("assignee"),
-                due_date=self._parse_iso_date(todo.get("due_date")),
-                due_date_text=todo.get("due_date") or todo.get("due_date_text"),
+                due_date=self._parse_iso_date(due_date_text),
+                due_date_text=due_date_text,
                 related_document=(
                     todo.get("source_document_name")
                     or todo.get("related_document")
@@ -242,7 +253,10 @@ class ActionItemRepository:
         if "description" in values:
             item.description = values.get("description")
         if "due_date" in values:
-            due_date_value = values.get("due_date")
+            due_date_value = self._normalize_due_date_text(
+                values.get("due_date"),
+                default_today=True,
+            )
             item.due_date = self._parse_iso_date(due_date_value)
             item.due_date_text = due_date_value
         if "status" in values and values["status"] is not None:
@@ -312,11 +326,66 @@ class ActionItemRepository:
         )
         return f"TODO-WBS-{uuid5(NAMESPACE_URL, identity).hex[:12].upper()}"
 
+    def _normalize_due_date_text(
+        self,
+        value: Any,
+        *,
+        default_today: bool = False,
+    ) -> str | None:
+        parsed_date = self._parse_iso_date(value)
+        if parsed_date is not None:
+            return parsed_date.isoformat()
+        if default_today:
+            return date.today().isoformat()
+        return None
+
     def _parse_iso_date(self, value: Any) -> date | None:
         if not value:
             return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.upper() in {"NONE", "NULL", "TBD", "N/A", "NA", "미정"}:
+            return None
         try:
-            return date.fromisoformat(str(value))
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            pass
+
+        year_first = re.search(
+            r"(?P<year>\d{4})\s*(?:[./-]|년)\s*"
+            r"(?P<month>\d{1,2})\s*(?:[./-]|월)\s*"
+            r"(?P<day>\d{1,2})",
+            text,
+        )
+        if year_first:
+            return self._safe_date(
+                int(year_first.group("year")),
+                int(year_first.group("month")),
+                int(year_first.group("day")),
+            )
+
+        yearless = re.search(
+            r"(?<!\d)(?P<month>\d{1,2})\s*(?:[./-]|월)\s*"
+            r"(?P<day>\d{1,2})\s*(?:일)?(?!\d)",
+            text,
+        )
+        if yearless:
+            today = date.today()
+            return self._safe_date(
+                today.year,
+                int(yearless.group("month")),
+                int(yearless.group("day")),
+            )
+        return None
+
+    def _safe_date(self, year: int, month: int, day: int) -> date | None:
+        try:
+            return date(year, month, day)
         except ValueError:
             return None
 

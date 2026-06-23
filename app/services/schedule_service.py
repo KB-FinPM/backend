@@ -1,5 +1,6 @@
 # EN: Business service for lightweight schedule/todo management.
 
+from datetime import date, datetime
 import re
 from typing import Any
 
@@ -398,6 +399,10 @@ class ScheduleService:
         document_names: dict[str, str] | None = None,
     ) -> TodoItem:
         source_document_id = todo.get("source_document_id")
+        due_date = self._normalize_due_date_text(
+            todo.get("due_date") or todo.get("due_date_text"),
+            default_today=True,
+        )
         source_document_name = (
             todo.get("source_document_name")
             or (document_names or {}).get(str(source_document_id or ""))
@@ -416,8 +421,8 @@ class ScheduleService:
             ),
             title=str(todo.get("title") or "").strip(),
             assignee=todo.get("assignee") or todo.get("owner"),
-            due_date=todo.get("due_date"),
-            due_date_text=todo.get("due_date_text") or todo.get("due_date"),
+            due_date=due_date,
+            due_date_text=due_date,
             status=self._ui_status(todo.get("status")),
             source_type=self._normalize_source_type(todo.get("source_type")),
             source_document_id=source_document_id,
@@ -665,6 +670,69 @@ class ScheduleService:
         left_text = str(left or "").strip()
         right_text = str(right or "").strip()
         return bool(left_text and right_text and left_text == right_text)
+
+    def _normalize_due_date_text(
+        self,
+        value: Any,
+        *,
+        default_today: bool = False,
+    ) -> str | None:
+        parsed_date = self._parse_due_date(value)
+        if parsed_date is not None:
+            return parsed_date.isoformat()
+        if default_today:
+            return date.today().isoformat()
+        return None
+
+    def _parse_due_date(self, value: Any) -> date | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.upper() in {"NONE", "NULL", "TBD", "N/A", "NA", "미정"}:
+            return None
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            pass
+
+        year_first = re.search(
+            r"(?P<year>\d{4})\s*(?:[./-]|년)\s*"
+            r"(?P<month>\d{1,2})\s*(?:[./-]|월)\s*"
+            r"(?P<day>\d{1,2})",
+            text,
+        )
+        if year_first:
+            return self._safe_date(
+                int(year_first.group("year")),
+                int(year_first.group("month")),
+                int(year_first.group("day")),
+            )
+
+        yearless = re.search(
+            r"(?<!\d)(?P<month>\d{1,2})\s*(?:[./-]|월)\s*"
+            r"(?P<day>\d{1,2})\s*(?:일)?(?!\d)",
+            text,
+        )
+        if yearless:
+            today = date.today()
+            return self._safe_date(
+                today.year,
+                int(yearless.group("month")),
+                int(yearless.group("day")),
+            )
+        return None
+
+    def _safe_date(self, year: int, month: int, day: int) -> date | None:
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
 
     def _ui_status(self, value: Any) -> str:
         status = str(value or "").strip().upper()
