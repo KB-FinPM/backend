@@ -216,6 +216,7 @@ def _clean_meeting_sentence(
     text = re.sub(r"\d{1,2}\s*[./]\s*\d{1,2}(?:\s*\([^)]+\))?", " ", text)
     text = re.sub(r"\d{1,2}월\s*\d{1,2}일", " ", text)
     text = re.sub(r"\d{1,2}월\s*중", " ", text)
+    text = re.sub(r"\s*(?:까지|까지는)\s*", " ", text)
     return _clean_text(text)
 
 

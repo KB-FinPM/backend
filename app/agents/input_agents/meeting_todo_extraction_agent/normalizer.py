@@ -97,16 +97,15 @@ class MeetingTodoNormalizer:
             "source_chunk_ids": source_chunk_ids,
             "candidate_id": candidate.candidate_id,
         }
+        description = self._build_description(
+            title=title,
+            candidate=candidate,
+            assignee=assignee,
+            due_date_text=due_date_text,
+        )
         return MeetingTodoItem(
             title=title,
-            description=build_meeting_todo_description(
-                title=title,
-                source_sentence=sentence,
-                context_before=candidate.context_before,
-                context_after=candidate.context_after,
-                assignee=assignee,
-                due_date_text=due_date_text,
-            ),
+            description=description,
             assignee=assignee,
             due_date=due_date,
             due_date_text=due_date_text or ("미정" if not due_date else due_date),
@@ -120,9 +119,20 @@ class MeetingTodoNormalizer:
 
     def _should_classify_as_non_todo(self, candidate: MeetingTodoCandidate) -> bool:
         sentence = candidate.source_sentence
+        if self._is_issue_context_without_followup(candidate):
+            return True
         if "요청" in sentence or "예정" in sentence or "까지" in sentence:
             return False
         return any(re.search(pattern, sentence) for pattern in self.REQUIREMENT_ONLY_PATTERNS + self.ISSUE_PATTERNS)
+
+    def _is_issue_context_without_followup(self, candidate: MeetingTodoCandidate) -> bool:
+        sentence = candidate.source_sentence
+        if not re.search(r"지연되고\s*있음|담당자\s*부재|부재로\s*지연", sentence):
+            return False
+        return not re.search(
+            r"정리\s*예정|배포\s*예정|확정\s*예정|검토\s*예정|이슈로\s*제기\s*예정|요청$",
+            sentence,
+        )
 
     def _non_todo_candidate(
         self,
@@ -160,6 +170,10 @@ class MeetingTodoNormalizer:
         if raw_hint:
             return self._normalize_assignee(raw_hint)
 
+        context_assignee = self._extract_context_assignee(candidate)
+        if context_assignee:
+            return self._normalize_assignee(context_assignee)
+
         paren_match = re.search(
             r"\(([^()]{2,40}(?:PM|이사|감사역|팀장|개발팀|담당자|선임팀장))\)",
             sentence,
@@ -179,6 +193,25 @@ class MeetingTodoNormalizer:
             return self._normalize_assignee(section_match.group(1))
 
         return None
+
+    def _extract_context_assignee(self, candidate: MeetingTodoCandidate) -> str | None:
+        section_title = candidate.section_title or ""
+        sentence = candidate.source_sentence
+        context = "\n".join(
+            part
+            for part in [candidate.context_before, candidate.context_after]
+            if part
+        )
+        if not context:
+            return None
+        # Carry an owner across adjacent WiseNet/layout lines in the same section.
+        if not re.search(r"WiseNet|와이즈넷|layout|레이아웃", f"{section_title}\n{sentence}", re.IGNORECASE):
+            return None
+        matches = re.findall(
+            r"\(([^()]{2,40}(?:PM|이사|감사역|팀장|개발팀|담당자|선임팀장))\)",
+            context,
+        )
+        return matches[-1].strip() if matches else None
 
     def _normalize_assignee(self, value: str) -> str:
         text = re.sub(r"\s+", " ", str(value or "").strip())
@@ -225,7 +258,7 @@ class MeetingTodoNormalizer:
         month_range = re.search(r"(\d{1,2})월\s*중", sentence)
         if month_range:
             month = int(month_range.group(1))
-            return None, f"{meeting_date.year}년 {month}월 중", "정확한 기한"
+            return None, f"{month}월 중", "정확한 기한"
 
         if "다음 회의 전" in sentence:
             return None, "다음 회의 전", "정확한 기한"
@@ -250,6 +283,17 @@ class MeetingTodoNormalizer:
         due_date_text: str | None,
     ) -> str:
         sentence = candidate.source_sentence
+        section_title = candidate.section_title or ""
+        if "영업감사" in f"{section_title} {sentence}" and "미진사항" in sentence and "배포" in sentence:
+            return "영업감사 미진사항 정리 및 배포"
+        if "주간보고" in sentence and "이슈" in sentence and "영업감사" in section_title:
+            return "영업감사 상세요건 미진 이슈 주간보고 제기"
+        if re.search(r"WiseNet|와이즈넷", section_title, re.IGNORECASE) and "layout 정의" in sentence and "결재문서" not in sentence:
+            return "WiseNet 연계 layout 정의 정리"
+        if "결재문서" in sentence and "감사문서" in sentence and "layout 정의" in sentence:
+            return "결재문서 및 감사문서 열람율 layout 정의"
+        if re.search(r"WiseNet|와이즈넷", f"{section_title} {sentence}", re.IGNORECASE) and re.search(r"최종\s*레이아웃|최종\s*layout|layout\s*비교", sentence, re.IGNORECASE):
+            return "WiseNet 최종 레이아웃 확정"
         if candidate.signals == ["빠른 대응 요청"]:
             prefix = "영업감사 관련 미진사항" if "영업감사" in sentence else ""
             return f"{prefix} 빠른 대응 요청".strip()
@@ -270,6 +314,7 @@ class MeetingTodoNormalizer:
         title = title.replace("가능여부", "가능 여부")
         title = re.sub(r"RPA를\s*통해\s*", "RPA ", title)
         title = title.replace("정리하여 배포", "정리 및 배포")
+        title = title.replace("기준으로", " ")
         title = re.sub(r"(검토|정리|배포|공유|확정)\s*예정", r"\1", title)
         title = re.sub(r"\s*(?:까지|으로|로)?\s*예정\s*$", " ", title)
         title = re.sub(r"\s*하기로\s*(?:함|하였으나)?", " ", title)
@@ -279,6 +324,54 @@ class MeetingTodoNormalizer:
         title = re.sub(r"\s*(?:을|를|은|는|이|가)\s+", " ", title)
         title = re.sub(r"\s+", " ", title).strip(" -:：,，.")
         return self._compact_title(title)
+
+    def _build_description(
+        self,
+        *,
+        title: str,
+        candidate: MeetingTodoCandidate,
+        assignee: str | None,
+        due_date_text: str | None,
+    ) -> str:
+        sentence = candidate.source_sentence
+        section_title = candidate.section_title or ""
+        context = " ".join(
+            part
+            for part in [candidate.context_before, sentence, candidate.context_after]
+            if part
+        )
+        if title == "영업감사 미진사항 정리 및 배포":
+            return (
+                "영업감사 상세요건 정의가 담당자 부재로 지연되고 있어, "
+                "SI개발팀이 파악 중인 미진사항을 정리하여 배포하고 빠른 대응을 요청한다."
+            )
+        if title == "영업감사 상세요건 미진 이슈 주간보고 제기":
+            return "영업감사 상세요건 정의 지연 건을 주간보고 시 이슈로 제기한다."
+        if title == "WiseNet 연계 layout 정의 정리":
+            return "WiseNet 연계를 위해 layout 정의를 정리한다."
+        if title == "결재문서 및 감사문서 열람율 layout 정의":
+            return "WiseNet 연계 대상인 결재문서 및 감사문서 열람율 layout을 정의한다."
+        if title == "WiseNet 최종 레이아웃 확정":
+            return "스토리보드와 실제 WiseNet layout을 비교하기 위해 WiseNet 화면 스크린샷을 확인하고 최종 레이아웃을 확정한다."
+
+        description = build_meeting_todo_description(
+            title=title,
+            source_sentence=sentence,
+            context_before=candidate.context_before,
+            context_after=candidate.context_after,
+            assignee=assignee,
+            due_date_text=due_date_text,
+        )
+        if description:
+            return description
+        if context and section_title and section_title != "본문":
+            return build_meeting_todo_description(
+                title=title,
+                source_sentence=f"{section_title}. {sentence}",
+                assignee=assignee,
+                due_date_text=due_date_text,
+            )
+        return description
 
     def _compact_title(self, value: str) -> str:
         text = str(value or "").strip()

@@ -1264,7 +1264,10 @@ class ScheduleManagementAgent:
             if self._matches_todo_filters(normalized_todo, filters, context=context):
                 todos.append(normalized_todo)
 
-        for task in self._context_wbs_tasks(context):
+        wbs_tasks = self._context_wbs_tasks(context)
+        for task in wbs_tasks:
+            if self._has_child_wbs_task(task, wbs_tasks):
+                continue
             normalized_task = self._normalize_wbs_task(task)
             if self._is_phase_title(str(normalized_task.get("title") or "")):
                 continue
@@ -1364,6 +1367,8 @@ class ScheduleManagementAgent:
         planned_tasks = []
         ongoing_management_tasks = []
         for task in wbs_tasks:
+            if self._has_child_wbs_task(task, wbs_tasks):
+                continue
             if not self._wbs_task_overlaps(task, week_start, week_end):
                 continue
             normalized_task = self._normalize_wbs_task(task)
@@ -1499,7 +1504,10 @@ class ScheduleManagementAgent:
                 overdue = normalized_todo
                 overdue["status"] = "OVERDUE"
                 todos.append(overdue)
-        for task in self._context_wbs_tasks(context):
+        wbs_tasks = self._context_wbs_tasks(context)
+        for task in wbs_tasks:
+            if self._has_child_wbs_task(task, wbs_tasks):
+                continue
             normalized_task = self._normalize_wbs_task(task)
             if not self._matches_source_filter(
                 normalized_task,
@@ -1968,6 +1976,34 @@ class ScheduleManagementAgent:
             str(self._task_value(task, "wbs_id", "id", "ID", "task_id") or ""),
             str(self._task_value(task, "title", "name", "task_name", "WBS명") or ""),
         )
+
+    def _has_child_wbs_task(
+        self,
+        task: dict[str, Any],
+        tasks: list[dict[str, Any]],
+    ) -> bool:
+        parent_id = str(self._task_value(task, "wbs_id", "id", "ID") or "").strip()
+        if not parent_id:
+            return False
+        parent_level = self._parse_int(self._task_value(task, "level", "레벨"))
+        for child in tasks:
+            if child is task:
+                continue
+            child_id = str(self._task_value(child, "wbs_id", "id", "ID") or "").strip()
+            if not child_id or child_id == parent_id:
+                continue
+            if not child_id.startswith(f"{parent_id}."):
+                continue
+            child_title = str(
+                self._task_value(child, "title", "name", "task_name", "WBS명") or ""
+            ).strip()
+            if not child_title:
+                continue
+            child_level = self._parse_int(self._task_value(child, "level", "레벨"))
+            if parent_level is not None and child_level is not None and child_level <= parent_level:
+                continue
+            return True
+        return False
 
     def _wbs_row_todo_id(
         self,

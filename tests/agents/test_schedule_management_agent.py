@@ -640,6 +640,51 @@ async def test_schedule_management_agent_keeps_duplicate_wbs_ids_by_row() -> Non
 
 
 @pytest.mark.anyio
+async def test_schedule_management_agent_skips_parent_wbs_when_child_tasks_exist() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "SHOW_ALL_TODOS",
+                "normalized_input": {
+                    "entities": {
+                        "source": "WBS",
+                        "status_filter": "ALL",
+                    }
+                },
+                "wbs_context": {
+                    "rows": [
+                        {
+                            "row_number": 10,
+                            "레벨": "2",
+                            "ID": "4.1",
+                            "WBS명": "화면 개발",
+                            "시작예정일": "2026.06.01",
+                            "종료예정일": "2026.06.30",
+                        },
+                        {
+                            "row_number": 11,
+                            "레벨": "3",
+                            "ID": "4.1.1",
+                            "WBS명": "고객 조회 화면 개발",
+                            "시작예정일": "2026.06.01",
+                            "종료예정일": "2026.06.14",
+                        },
+                    ],
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    assert [todo["title"] for todo in response.result["todos"]] == [
+        "고객 조회 화면 개발"
+    ]
+
+
+@pytest.mark.anyio
 async def test_schedule_management_agent_prepares_valid_status_update() -> None:
     agent = ScheduleManagementAgent()
 

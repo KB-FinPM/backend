@@ -17,10 +17,12 @@ class MeetingTodoCandidateCollector:
         "정리 예정",
         "배포 예정",
         "공유 예정",
+        "확인 요청",
         "요청",
         "대응 요청",
         "빠른 대응 요청",
         "이슈로 제기 예정",
+        "이슈 제기 예정",
         "확정 예정",
         "확인 필요",
         "협의 필요",
@@ -29,6 +31,7 @@ class MeetingTodoCandidateCollector:
         "필요",
         "우려",
         "완료하기로",
+        "완료 예정",
         "지연되고 있음",
         "까지",
         "담당",
@@ -50,6 +53,8 @@ class MeetingTodoCandidateCollector:
         r"^\s*(?:No\.?|실행항목|담당자|기한)\s*(?:\||$)",
         r"^\s*\|?\s*(?:No\.?|실행항목|담당자|기한|\-+|\s*)\s*\|?\s*$",
         r"^\s*이번\s*회의에서\s*도출된\s*실행항목\s*$",
+        r"^\s*(?:회의일시|회의일자|회의일|일시|장소|참석자)\s*[:：]",
+        r"^\s*(?:20\d{2}\s*[./-]\s*)?\d{1,2}\s*[./]\s*\d{1,2}\s*(?:\([^)]+\))?\s*$",
     )
 
     def structure(self, meeting_notes: str) -> StructuredMeetingDocument:
@@ -96,25 +101,10 @@ class MeetingTodoCandidateCollector:
                         candidate_id=f"CAND-{len(candidates) + 1:03d}",
                         section_title=section.title,
                         sentence=sentence,
-                        context_before=sentences[index - 1] if index > 0 else None,
-                        context_after=sentences[index + 1]
-                        if index + 1 < len(sentences)
-                        else None,
+                        context_before=self._nearby_context(sentences, index, -2, 0),
+                        context_after=self._nearby_context(sentences, index, 1, 3),
                     )
                 )
-                if "빠른 대응 요청" in sentence and sentence.strip() != "빠른 대응 요청":
-                    candidates.append(
-                        self._candidate_from_sentence(
-                            candidate_id=f"CAND-{len(candidates) + 1:03d}",
-                            section_title=section.title,
-                            sentence=sentence,
-                            context_before=sentences[index - 1] if index > 0 else None,
-                            context_after=sentences[index + 1]
-                            if index + 1 < len(sentences)
-                            else None,
-                            forced_signals=["빠른 대응 요청"],
-                        )
-                    )
 
         return document, candidates
 
@@ -208,7 +198,33 @@ class MeetingTodoCandidateCollector:
         for pattern in self.NON_TODO_PATTERNS:
             if re.search(pattern, sentence):
                 return False
-        return any(signal in sentence for signal in self.ACTION_SIGNALS)
+        return any(signal in sentence for signal in self.ACTION_SIGNALS) or self._has_due_date_pattern(sentence)
+
+    def _has_due_date_pattern(self, sentence: str) -> bool:
+        return bool(
+            re.search(
+                r"20\d{2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}"
+                r"|\d{1,2}\s*[./]\s*\d{1,2}\s*(?:\([^)]+\))?"
+                r"|\d{1,2}월\s*(?:중|\d{1,2}일)",
+                sentence,
+            )
+        )
+
+    def _nearby_context(
+        self,
+        sentences: list[str],
+        index: int,
+        start_offset: int,
+        end_offset: int,
+    ) -> str | None:
+        start = max(0, index + start_offset)
+        end = min(len(sentences), index + end_offset)
+        parts = [
+            sentence
+            for position, sentence in enumerate(sentences[start:end], start=start)
+            if position != index and sentence
+        ]
+        return "\n".join(parts) or None
 
     def _candidate_from_sentence(
         self,

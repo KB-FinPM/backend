@@ -148,6 +148,7 @@ class MeetingTodoExtractionAgent:
             call_label="meeting_todo_extraction",
         )
         payload = self._parse_json_response(response_text)
+        payload = self._normalize_llm_payload(payload)
         try:
             return MeetingTodoExtractionResult.model_validate(payload)
         except ValidationError as exc:
@@ -167,6 +168,44 @@ class MeetingTodoExtractionAgent:
         if not isinstance(payload, dict):
             raise ValueError("LLM response must be a JSON object")
         return payload
+
+    def _normalize_llm_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        if "todo_items" not in normalized and isinstance(normalized.get("items"), list):
+            normalized["todo_items"] = normalized["items"]
+        if "candidate_items" not in normalized and isinstance(
+            normalized.get("excluded_candidates"), list
+        ):
+            normalized["candidate_items"] = [
+                {
+                    "title": str(item.get("title") or item.get("text") or "")[:80],
+                    "classification": item.get("classification")
+                    if item.get("classification") in {"candidate", "issue_or_requirement", "not_todo"}
+                    else "issue_or_requirement",
+                    "reason": item.get("reason") or "할일로 확정하지 않았습니다.",
+                    "source_sentence": item.get("source_sentence")
+                    or item.get("text")
+                    or "",
+                }
+                for item in normalized["excluded_candidates"]
+                if isinstance(item, dict)
+            ]
+
+        todo_items = normalized.get("todo_items")
+        if isinstance(todo_items, list):
+            for item in todo_items:
+                if not isinstance(item, dict):
+                    continue
+                status = str(item.get("status") or "").strip().upper()
+                if status in {"진행전", "NOT_STARTED", "OPEN", "PENDING"}:
+                    item["status"] = "TODO"
+                elif status not in {"TODO", "NEEDS_CONFIRMATION"}:
+                    item["status"] = "NEEDS_CONFIRMATION"
+                item.setdefault("source_type", "MEETING_NOTE")
+                item.setdefault("classification", "todo")
+                item.setdefault("related_document", "")
+                item.setdefault("needs_confirmation", [])
+        return normalized
 
 
 meeting_todo_extraction_agent = MeetingTodoExtractionAgent()
