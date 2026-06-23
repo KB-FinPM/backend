@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
 from util.agent_generation_utils import (
+    RequirementAtom,
     classify_project_type,
     normalize_requirement_atoms,
     parse_json_array,
@@ -66,6 +67,13 @@ class WbsAgent:
     """Generates WBS artifacts from requirement-style structured context."""
 
     AGENT_NAME = "WbsAgent"
+
+    def __init__(self, *, model_invoker=None) -> None:
+        self.model_invoker = model_invoker
+
+    def with_model_invoker(self, model_invoker) -> "WbsAgent":
+        return WbsAgent(model_invoker=model_invoker)
+
     DEVELOPMENT_PHASE_ORDER = ("요구사항정의", "분석", "설계", "구현", "테스트", "이행", "안정화")
     DEVELOPMENT_PHASE_BASE_RATIOS = {
         "요구사항정의": 0.15,
@@ -75,6 +83,12 @@ class WbsAgent:
         "이행": 0.03,
         "안정화": 0.07,
     }
+    SCHEDULE_ANCHOR_DETAIL_ROWS = (
+        {"level": "3", "wbs_id": "3.3.5", "wbs_name": "테스트계획설계"},
+        {"level": "3", "wbs_id": "3.4.3", "wbs_name": "단위테스트"},
+        {"level": "3", "wbs_id": "3.5.1", "wbs_name": "통합테스트"},
+        {"level": "4", "wbs_id": "3.6.2.3", "wbs_name": "가동(오픈)"},
+    )
 
     @classmethod
     def _development_phase_ratios(cls) -> list[tuple[str, float]]:
@@ -131,10 +145,14 @@ class WbsAgent:
         end_text = self._format_date(end_value)
         if start_text:
             metadata["start_date"] = start_text
+            metadata["planned_start_date"] = start_value.isoformat() if start_value else start_text
             task["start_date"] = start_text
+            task["planned_start_date"] = metadata["planned_start_date"]
         if end_text:
             metadata["end_date"] = end_text
+            metadata["planned_end_date"] = end_value.isoformat() if end_value else end_text
             task["end_date"] = end_text
+            task["planned_end_date"] = metadata["planned_end_date"]
 
     def _resolve_project_schedule(self, request: AgentRequest) -> tuple[date | None, date | None, str | None]:
         context = request.context or {}
@@ -145,10 +163,8 @@ class WbsAgent:
             or context.get("contract_start_date")
         )
         start_date = self._normalize_date(start_date_value)
-        if start_date is None:
-            start_date = date.today()
 
-        project_period = self._extract_project_period(request.documents, {})
+        project_period = self._extract_project_period(request.documents, context)
         if project_period is None:
             project_period = {"value": 6, "unit": "개월"}
         end_date = None
@@ -178,10 +194,42 @@ class WbsAgent:
         except ValueError:
             return None
 
+    def _parse_start_date(self, value: object) -> date | None:
+        return self._normalize_date(value)
+
     def _format_date(self, value: date | None) -> str | None:
         if value is None:
             return None
         return value.strftime("%Y.%m.%d")
+
+    def _parse_period_value(self, value: object) -> dict[str, object] | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        match = re.search(
+            r"(\d+)\s*(개월간|개월|달간|달|months?|mos?|년간|년|years?|주간|주|weeks?|일간|일|days?)",
+            normalized,
+        )
+        if not match:
+            return None
+        unit = match.group(2)
+        if unit in {"개월간", "개월", "달간", "달", "month", "months", "mo", "mos"}:
+            normalized_unit = "개월"
+        elif unit in {"년간", "년", "year", "years"}:
+            normalized_unit = "년"
+        elif unit in {"주간", "주", "week", "weeks"}:
+            normalized_unit = "주"
+        else:
+            normalized_unit = "일"
+        return {"value": int(match.group(1)), "unit": normalized_unit}
+
+    def _parse_project_period(self, value: object, start_date: date) -> date | None:
+        period = self._parse_period_value(value)
+        if period is None:
+            return None
+        return self._add_duration(start_date, int(period["value"]), str(period["unit"]))
 
     def _extract_project_period(self, documents: list[dict] | None, context: dict | None) -> dict[str, object] | None:
         candidates: list[str] = []
@@ -202,20 +250,23 @@ class WbsAgent:
         for candidate in candidates:
             if not candidate:
                 continue
+            parsed_candidate = self._parse_period_value(candidate)
+            if parsed_candidate is not None:
+                return parsed_candidate
             joined_text = "\n".join(line.strip() for line in candidate.splitlines() if line.strip())
             if any(keyword in joined_text for keyword in ["추진 일정", "일정", "기간", "계약기간", "프로젝트 기간"]):
-                match = re.search(r"(\d+)\s*(개월|개월간|달|달간|주|일|년)", joined_text)
-                if match:
-                    return {"value": int(match.group(1)), "unit": match.group(2)}
+                parsed_period = self._parse_period_value(joined_text)
+                if parsed_period is not None:
+                    return parsed_period
             for line in candidate.splitlines():
                 line = line.strip()
                 if not line:
                     continue
                 if not any(keyword in line for keyword in ["추진 일정", "일정", "기간", "계약기간", "프로젝트 기간"]):
                     continue
-                match = re.search(r"(\d+)\s*(개월|개월간|달|달간|주|일|년)", line)
-                if match:
-                    return {"value": int(match.group(1)), "unit": match.group(2)}
+                parsed_period = self._parse_period_value(line)
+                if parsed_period is not None:
+                    return parsed_period
 
         return None
 
@@ -229,18 +280,19 @@ class WbsAgent:
         return f"{value}{unit}"
 
     def _add_duration(self, start_date: date, value: int, unit: str) -> date:
-        if unit in {"개월", "개월간", "달", "달간"}:
+        normalized_unit = str(unit or "").lower()
+        if normalized_unit in {"개월", "개월간", "달", "달간", "month", "months", "mo", "mos"}:
             year = start_date.year + (start_date.month - 1 + value) // 12
             month = (start_date.month - 1 + value) % 12 + 1
             day = min(start_date.day, monthrange(year, month)[1])
             return date(year, month, day)
-        if unit in {"년", "년간"}:
+        if normalized_unit in {"년", "년간", "year", "years"}:
             year = start_date.year + value
             day = min(start_date.day, monthrange(year, start_date.month)[1])
             return date(year, start_date.month, day)
-        if unit in {"주", "주간"}:
+        if normalized_unit in {"주", "주간", "week", "weeks"}:
             return start_date + timedelta(weeks=value)
-        if unit in {"일", "일간"}:
+        if normalized_unit in {"일", "일간", "day", "days"}:
             return start_date + timedelta(days=value)
         return start_date
 
@@ -319,10 +371,16 @@ class WbsAgent:
                 start_value = project_start
                 end_value = project_end or project_start
 
-            metadata["start_date"] = self._format_date(start_value) or metadata.get("start_date") or ""
-            metadata["end_date"] = self._format_date(end_value) or metadata.get("end_date") or ""
+            start_text = self._format_date(start_value) or metadata.get("start_date") or ""
+            end_text = self._format_date(end_value) or metadata.get("end_date") or ""
+            metadata["start_date"] = start_text
+            metadata["end_date"] = end_text
+            metadata["planned_start_date"] = start_value.isoformat() if start_value else start_text
+            metadata["planned_end_date"] = end_value.isoformat() if end_value else end_text
             task["start_date"] = metadata["start_date"]
             task["end_date"] = metadata["end_date"]
+            task["planned_start_date"] = metadata["planned_start_date"]
+            task["planned_end_date"] = metadata["planned_end_date"]
 
         self._apply_development_area_schedule(tasks, windows)
         self._apply_special_wbs_schedule(tasks, windows)
@@ -437,6 +495,112 @@ class WbsAgent:
             level = 0
         return wbs_id.startswith("3.") and level >= 3
 
+    def _has_explicit_schedule_context(self, context: dict | None) -> bool:
+        context = context or {}
+        schedule_keys = (
+            "start_date",
+            "project_start_date",
+            "contract_date",
+            "contract_start_date",
+            "project_period",
+            "project_duration",
+            "duration",
+            "period",
+            "contract_period",
+        )
+        return any(context.get(key) not in (None, "") for key in schedule_keys)
+
+    def _has_invalid_explicit_schedule_context(
+        self,
+        context: dict | None,
+    ) -> bool:
+        context = context or {}
+        date_keys = (
+            "start_date",
+            "project_start_date",
+            "contract_date",
+            "contract_start_date",
+        )
+        period_keys = (
+            "project_period",
+            "project_duration",
+            "duration",
+            "period",
+            "contract_period",
+        )
+        start_value = next(
+            (context.get(key) for key in date_keys if context.get(key) not in (None, "")),
+            None,
+        )
+        period_value = next(
+            (context.get(key) for key in period_keys if context.get(key) not in (None, "")),
+            None,
+        )
+        if start_value is not None and self._normalize_date(start_value) is None:
+            return True
+        if period_value is not None and self._parse_period_value(period_value) is None:
+            return True
+        return False
+
+    def _strip_schedule_fields(self, tasks: list[dict[str, object]]) -> None:
+        for task in tasks:
+            for key in (
+                "start_date",
+                "end_date",
+                "planned_start_date",
+                "planned_end_date",
+            ):
+                task.pop(key, None)
+            metadata = task.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            for key in (
+                "start_date",
+                "end_date",
+                "planned_start_date",
+                "planned_end_date",
+            ):
+                metadata.pop(key, None)
+
+    def _parent_wbs_id(self, wbs_id: str) -> str:
+        if "." not in wbs_id:
+            return ""
+        return wbs_id.rsplit(".", 1)[0]
+
+    def _build_schedule_anchor_tasks(
+        self,
+        *,
+        start_date_text: str,
+        end_date_text: str,
+    ) -> list[dict[str, object]]:
+        tasks: list[dict[str, object]] = []
+        for row in self.SCHEDULE_ANCHOR_DETAIL_ROWS:
+            wbs_id = str(row["wbs_id"])
+            name = str(row["wbs_name"])
+            phase_name = self._development_phase_from_wbs_id(wbs_id)
+            metadata = {
+                "level": str(row["level"]),
+                "phase": phase_name,
+                "deliverable": self._resolve_deliverable_local(name, phase_name),
+                "template_source": "wbs_schedule_anchors",
+                "wbs_id": wbs_id,
+                "id": wbs_id,
+                "parent_task_id": self._parent_wbs_id(wbs_id),
+                "worker": "작업자",
+                "start_date": start_date_text,
+                "end_date": end_date_text,
+            }
+            tasks.append(
+                {
+                    "task_id": f"WBS-{wbs_id}",
+                    "name": name,
+                    "description": self._detail_description_for_phase(phase_name, name),
+                    "source_requirement_ids": [],
+                    "metadata": metadata,
+                }
+            )
+        return tasks
+
     def _build_base_tasks(
         self,
         request: AgentRequest,
@@ -446,9 +610,8 @@ class WbsAgent:
         project_period: str | None,
     ) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
-        today_text = date.today().strftime("%Y.%m.%d")
-        start_date_text = self._format_date(start_date) or today_text
-        end_date_text = self._format_date(end_date) or today_text
+        start_date_text = self._format_date(start_date) or ""
+        end_date_text = self._format_date(end_date) or ""
         template_rows = load_wbs_common_rows()
         request_context = request.context or {}
         project_name = str(
@@ -501,7 +664,16 @@ class WbsAgent:
                 }
             )
 
-        self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
+        if self._has_explicit_schedule_context(request_context):
+            tasks.extend(
+                self._build_schedule_anchor_tasks(
+                    start_date_text=start_date_text,
+                    end_date_text=end_date_text,
+                )
+            )
+
+        if start_date is not None:
+            self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
         return tasks
 
     def _development_phase_from_wbs_id(self, wbs_id: str) -> str:
@@ -773,8 +945,8 @@ class WbsAgent:
         end_date: date | None,
         project_period: str | None,
     ) -> list[dict[str, object]]:
-        orchestrator = (request.context or {}).get("generation_orchestrator")
-        if orchestrator is None or not hasattr(orchestrator, "invoke_agent_llm"):
+        model_invoker = self.model_invoker
+        if model_invoker is None or not hasattr(model_invoker, "invoke_agent_llm"):
             return []
 
         context = request.context or {}
@@ -801,7 +973,7 @@ Project period: {project_period or ""}
 {json.dumps(self._build_deliverable_digest(), ensure_ascii=False, default=str)}
 """.strip()
 
-        llm_result = await orchestrator.invoke_agent_llm(
+        llm_result = await model_invoker.invoke_agent_llm(
             system_prompt=WBS_LLM_SYSTEM_PROMPT,
             user_prompt=prompt,
             call_index=1,
@@ -822,6 +994,7 @@ Project period: {project_period or ""}
             or parsed.get("data")
             or []
         )
+        insert_after_phase = bool(parsed.get("tasks")) and not bool(parsed.get("development_tasks"))
         if not isinstance(groups, list):
             groups = [groups]
 
@@ -868,6 +1041,7 @@ Project period: {project_period or ""}
                     "name": name,
                     "description": description,
                     "source_requirement_ids": [str(value) for value in source_requirement_ids if value],
+                    "_insert_after_phase": insert_after_phase,
                     "metadata": {
                         "phase": phase,
                         "deliverable": deliverable,
@@ -910,15 +1084,24 @@ Project period: {project_period or ""}
     ) -> list[dict[str, object]]:
         phase_buckets: dict[str, list[dict[str, object]]] = {phase: [] for phase in self.DEVELOPMENT_PHASE_ORDER}
         overflow_tasks: list[dict[str, object]] = []
+        append_tasks: list[dict[str, object]] = []
 
         for index, extra in enumerate(llm_tasks, start=1):
             phase = str(extra.get("phase") or "").strip()
             if phase == "개발":
                 phase = "구현"
+            materialized = self._materialize_llm_task(extra, phase=phase, index=index)
+            metadata = materialized.get("metadata") or {}
+            insert_after_phase = False
+            if isinstance(metadata, dict):
+                insert_after_phase = bool(metadata.pop("_insert_after_phase", False))
             if phase not in phase_buckets:
-                overflow_tasks.append(self._materialize_llm_task(extra, phase=phase, index=index))
+                overflow_tasks.append(materialized)
                 continue
-            phase_buckets[phase].append(self._materialize_llm_task(extra, phase=phase, index=index))
+            if insert_after_phase:
+                phase_buckets[phase].append(materialized)
+            else:
+                append_tasks.append(materialized)
 
         merged: list[dict[str, object]] = []
         for task in base_tasks:
@@ -932,6 +1115,7 @@ Project period: {project_period or ""}
             if phase_buckets[phase]:
                 merged.extend(phase_buckets[phase])
 
+        merged.extend(append_tasks)
         merged.extend(overflow_tasks)
         return merged
 
@@ -957,6 +1141,8 @@ Project period: {project_period or ""}
             self._resolve_deliverable_local(str(extra.get("name") or ""), phase),
         )
         extra_metadata.setdefault("generation_source", "llm")
+        if extra.get("_insert_after_phase"):
+            extra_metadata["_insert_after_phase"] = True
         level_text = str(extra.get("level") or extra_metadata.get("level") or "3").strip() or "3"
         extra_metadata["level"] = level_text
         if not extra_metadata.get("wbs_id"):
@@ -991,13 +1177,15 @@ Project period: {project_period or ""}
         for task in tasks:
             metadata = task.get("metadata") or {}
             phase = str(metadata.get("phase") or task.get("name") or "").strip()
+            generation_source = str(metadata.get("generation_source") or "").strip()
+            if generation_source not in {"llm", "fallback"}:
+                continue
             if phase in windows:
                 current_phase = phase
             elif current_phase not in windows:
                 continue
             start_value, end_value = windows[current_phase]
-            if str(metadata.get("generation_source") or "") == "llm" or phase in windows:
-                self._set_task_schedule(task, start_value=start_value, end_value=end_value)
+            self._set_task_schedule(task, start_value=start_value, end_value=end_value)
 
     async def generate(self, request: AgentRequest) -> AgentResponse:
         logger.info(
@@ -1009,12 +1197,10 @@ Project period: {project_period or ""}
                 self._context_requirement_artifact(request),
                 documents=request.documents,
             )
+            used_default_draft = False
             if not atoms:
-                return AgentResponse(
-                    success=False,
-                    agent_name=self.AGENT_NAME,
-                    error="No requirement context available for WBS generation",
-                )
+                atoms = self._fallback_atoms_from_request(request)
+                used_default_draft = True
 
             configured_type = str((request.context or {}).get("project_type") or "auto")
             project_type = classify_project_type(
@@ -1043,20 +1229,26 @@ Project period: {project_period or ""}
                 project_type=project_type,
                 existing_phase_counts=self._phase_counts(llm_tasks),
             )
-            if not llm_tasks:
+            if llm_tasks:
+                generated_tasks = list(llm_tasks)
+            else:
                 logger.warning(
                     f"[{self.AGENT_NAME}] LLM generation produced no tasks; "
                     "falling back to deterministic development detail rows"
                 )
-            llm_tasks = list(llm_tasks or []) + detail_tasks
+                generated_tasks = detail_tasks
 
-            tasks = self._merge_llm_development_tasks(base_tasks, llm_tasks)
+            tasks = self._merge_llm_development_tasks(base_tasks, generated_tasks)
 
             self._apply_llm_development_schedule(
                 tasks,
                 project_start=start_date,
                 project_end=end_date,
             )
+            if self.model_invoker is None and self._has_invalid_explicit_schedule_context(
+                request.context
+            ):
+                self._strip_schedule_fields(tasks)
 
             if not tasks:
                 return AgentResponse(
@@ -1076,16 +1268,80 @@ Project period: {project_period or ""}
                         "generated_by": self.AGENT_NAME,
                         "project_type": project_type,
                         "source_requirement_count": len(atoms),
-                        "project_start_date": self._format_date(start_date) or date.today().strftime("%Y.%m.%d"),
-                        "project_end_date": self._format_date(end_date) or date.today().strftime("%Y.%m.%d"),
+                        "project_start_date": self._format_date(start_date) or "",
+                        "project_end_date": self._format_date(end_date) or "",
                         "project_period": project_period,
                         "process_rule": "Common WBS template rows plus LLM-generated development tasks",
+                        **(self._default_draft_metadata() if used_default_draft else {}),
                     },
                 },
             )
         except Exception as exc:
             logger.error(f"[{self.AGENT_NAME}] error: {exc}")
             return AgentResponse(success=False, agent_name=self.AGENT_NAME, error=str(exc))
+
+    def _fallback_atoms_from_request(self, request: AgentRequest) -> list[RequirementAtom]:
+        context = request.context or {}
+        query = str(context.get("query") or "").strip()
+        project_name = str(
+            context.get("project_name")
+            or context.get("project_nm")
+            or request.project_id
+            or "프로젝트"
+        ).strip()
+        subject = truncate_text(query or f"{project_name} WBS 생성", 100)
+        common_metadata = {
+            "generation_source": "default_draft",
+            "assumptions": [
+                "참고 문서가 없어 일반적인 PM WBS 구조를 기준으로 초안을 작성했습니다.",
+            ],
+            "additional_check_required": [
+                "실제 프로젝트 시작일, 종료일, 담당자, 상세 산출물은 확인이 필요합니다.",
+            ],
+        }
+        return [
+            RequirementAtom(
+                requirement_id="REQ-00001",
+                title=subject,
+                requirement_name=subject,
+                description=f"{project_name} 요청을 기준으로 전체 WBS 작업 구조를 작성한다.",
+                biz_requirement_name="프로젝트관리",
+                domain="프로젝트관리",
+                feature="WBS 초안",
+                metadata=common_metadata,
+            ),
+            RequirementAtom(
+                requirement_id="REQ-00002",
+                title="분석 및 설계 작업",
+                requirement_name="분석 및 설계 작업",
+                description="업무 분석, 요구사항 정리, 설계 산출물 작성을 위한 작업을 구성한다.",
+                biz_requirement_name="분석설계",
+                domain="분석설계",
+                feature="분석/설계",
+                metadata=common_metadata,
+            ),
+            RequirementAtom(
+                requirement_id="REQ-00003",
+                title="구현 및 검증 작업",
+                requirement_name="구현 및 검증 작업",
+                description="개발, 테스트, 이행 준비와 안정화 작업을 WBS에 포함한다.",
+                biz_requirement_name="구현검증",
+                domain="구현검증",
+                feature="구현/검증",
+                metadata=common_metadata,
+            ),
+        ]
+
+    def _default_draft_metadata(self) -> dict[str, object]:
+        return {
+            "generation_source": "default_draft",
+            "가정사항": [
+                "참고 문서가 없어 일반적인 PM WBS 구조를 기준으로 초안을 작성했습니다.",
+            ],
+            "추가 확인 필요 항목": [
+                "실제 프로젝트 시작일, 종료일, 담당자, 상세 산출물은 확인이 필요합니다.",
+            ],
+        }
 
     def _context_requirement_artifact(self, request: AgentRequest):
         context = request.context or {}
@@ -1097,9 +1353,8 @@ Project period: {project_period or ""}
 
     def _build_tasks(self, atoms, request, start_date: date | None, end_date: date | None, project_period: str | None):
         tasks = []
-        today_text = date.today().strftime("%Y.%m.%d")
-        start_date_text = self._format_date(start_date) or today_text
-        end_date_text = self._format_date(end_date) or today_text
+        start_date_text = self._format_date(start_date) or ""
+        end_date_text = self._format_date(end_date) or ""
 
         # The workbook template is the source of truth for the common prefix rows.
         template_rows = load_wbs_common_rows()
@@ -1144,7 +1399,8 @@ Project period: {project_period or ""}
                     "metadata": task_metadata,
                 }
             )
-        self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
+        if start_date is not None:
+            self._apply_development_phase_schedule(tasks, project_start=start_date, project_end=end_date)
         return tasks
 
 

@@ -50,6 +50,7 @@ class StubDocumentRepository:
         storage_path: str,
         file_bytes: bytes,
         parsed_context: dict | None = None,
+        progress_reporter=None,
     ) -> DocumentMetadata:
         self.received_document_id = document_id
         self.received_project_id = project_id
@@ -58,6 +59,22 @@ class StubDocumentRepository:
         self.received_storage_path = storage_path
         self.received_file_bytes = file_bytes
         self.received_parsed_context = parsed_context
+        if progress_reporter is not None:
+            await progress_reporter(
+                {
+                    "stage": "INPUT_AGENT_DOCUMENT_ANALYSIS",
+                    "stage_label": "Input Agent 문서 분석 중",
+                    "progress": 40,
+                    "progress_text": "인덱싱 처리 중",
+                    "sub_progress": {
+                        "type": "INDEXING",
+                        "label": "인덱싱 처리",
+                        "current": 2,
+                        "total": 2,
+                        "unit": "chunks",
+                    },
+                }
+            )
         return DocumentMetadata(
             document_id=document_id,
             project_id=project_id,
@@ -98,9 +115,11 @@ class FailingInputOrchestrator:
 class StubOutputOrchestrator:
     def __init__(self) -> None:
         self.received_response_type: str | None = None
+        self.received_result_json: dict | None = None
 
     async def format(self, request):
         self.received_response_type = request.response_type
+        self.received_result_json = request.result_json
         return OutputAgentResponse(
             agent_name="StubOutputOrchestrator",
             display_payload={"formatted": True},
@@ -166,6 +185,10 @@ def test_upload_document_returns_document_metadata(
     }
     assert stub_input_orchestrator.received_file_name == "construction-requirements.pdf"
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
+    assert stub_output_orchestrator.received_result_json is not None
+    progress = stub_output_orchestrator.received_result_json["generation_progress"]
+    assert progress["sub_progress"]["type"] == "INDEXING"
+    assert progress["sub_progress"]["current"] == 2
 
 
 def test_upload_document_rejects_empty_file(
@@ -184,6 +207,28 @@ def test_upload_document_rejects_empty_file(
     body = response.json()
     assert body["success"] is False
     assert body["error_code"] == "EMPTY_UPLOAD_FILE"
+
+
+def test_upload_document_rejects_oversized_file(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("app.api.upload.settings.UPLOAD_MAX_BYTES", 4)
+    monkeypatch.setattr("app.api.upload.settings.UPLOAD_READ_CHUNK_BYTES", 2)
+
+    response = client.post(
+        "/api/upload",
+        data={
+            "project_id": "PRJ-001",
+            "document_type": "REQUIREMENT_SPEC",
+        },
+        files={"file": ("requirements.txt", b"12345", "text/plain")},
+    )
+
+    assert response.status_code == 413
+    body = response.json()
+    assert body["success"] is False
+    assert body["error_code"] == "UPLOAD_FILE_TOO_LARGE"
 
 
 def test_upload_document_returns_422_when_input_normalization_fails(

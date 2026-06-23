@@ -9,6 +9,10 @@ from app.agents.input_agents.chat_input_agent.agent import (
     ChatInputAgent,
     chat_input_agent,
 )
+from app.agents.input_agents.meeting_todo_extraction_agent.agent import (
+    MeetingTodoExtractionAgent,
+    meeting_todo_extraction_agent,
+)
 from app.schemas.io_agent import (
     InputAgentRequest,
     InputAgentResponse,
@@ -24,9 +28,13 @@ class InputOrchestrator:
         self,
         document_parser: DocumentParserAgent = document_parser_agent,
         chat_input: ChatInputAgent = chat_input_agent,
+        meeting_todo_extractor: MeetingTodoExtractionAgent = (
+            meeting_todo_extraction_agent
+        ),
     ) -> None:
         self.document_parser = document_parser
         self.chat_input = chat_input
+        self.meeting_todo_extractor = meeting_todo_extractor
 
     async def normalize(self, request: InputAgentRequest) -> InputAgentResponse:
         if request.input_type == InputType.TEXT:
@@ -48,6 +56,15 @@ class InputOrchestrator:
             )
 
         if request.input_type == InputType.MEETING_NOTES:
+            meeting_notes = request.raw_payload.get("meeting_notes")
+            source_document_ids = request.context.get("source_document_ids") or []
+            extraction = await self.meeting_todo_extractor.extract(
+                project_id=request.project_id,
+                meeting_notes=str(meeting_notes or ""),
+                permission_scope=request.permission_scope,
+                source_document_ids=source_document_ids,
+                context=request.context,
+            )
             return InputAgentResponse(
                 agent_name="InputOrchestrator",
                 normalized_request_type=NormalizedRequestType.SCHEDULE_TODO_EXTRACTION,
@@ -56,7 +73,9 @@ class InputOrchestrator:
                     "context": request.context,
                     "permission_scope": request.permission_scope,
                     "user_id": request.user_id,
-                    "meeting_notes": request.raw_payload.get("meeting_notes"),
+                    "meeting_notes": meeting_notes,
+                    "source_document_ids": source_document_ids,
+                    "meeting_todo_extraction": extraction,
                 },
             )
 

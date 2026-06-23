@@ -133,6 +133,7 @@ class UploadDocumentService:
         storage_path: str,
         file_bytes: bytes,
         parsed_context: dict | None = None,
+        progress_reporter=None,
     ) -> DocumentMetadata:
         self.received_document_id = document_id
         self.received_parsed_context = parsed_context
@@ -244,25 +245,14 @@ async def test_user_flow_uploads_rfp_then_generates_requirement_spec(
         )
     )
 
-    assert first_response.state == "WAITING_CONFIRMATION"
-    assert first_response.pending_action is not None
-    assert_user_facing_message(first_response.message)
-
-    completed_response = await orchestrator.handle_message(
-        confirm_request(
-            first_response.conversation_id,
-            first_response.pending_action.action_id,
-        )
-    )
-
-    assert completed_response.state == "COMPLETED"
-    assert completed_response.download_files
-    assert completed_response.download_files[0]["artifact_id"].startswith(
+    assert first_response.state == "COMPLETED"
+    assert first_response.download_files
+    assert first_response.download_files[0]["artifact_id"].startswith(
         "ART-REQUIREMENT_SPEC"
     )
     assert generation_service.requests[-1].target_artifact_type == "REQUIREMENT_SPEC"
     assert generation_service.requests[-1].source_document_ids == ["DOC-RFP-001"]
-    assert_user_facing_message(completed_response.message)
+    assert_user_facing_message(first_response.message)
 
 
 @pytest.mark.anyio
@@ -279,6 +269,7 @@ async def test_user_flow_generates_wbs_from_requirement_spec(
             message="요구사항 정의서를 기준으로 WBS 만들어줘",
             context={
                 "project_name": PROJECT_NAME,
+                "start_date": "2025-01-20",
                 "selected_document_ids": ["DOC-REQ-001"],
                 "selected_documents": [
                     {
@@ -292,22 +283,12 @@ async def test_user_flow_generates_wbs_from_requirement_spec(
         )
     )
 
-    assert first_response.state == "WAITING_CONFIRMATION"
-    assert first_response.pending_action is not None
-
-    completed_response = await orchestrator.handle_message(
-        confirm_request(
-            first_response.conversation_id,
-            first_response.pending_action.action_id,
-        )
-    )
-
-    assert completed_response.state == "COMPLETED"
-    assert completed_response.download_files
-    assert completed_response.download_files[0]["artifact_id"].startswith("ART-WBS")
+    assert first_response.state == "COMPLETED"
+    assert first_response.download_files
+    assert first_response.download_files[0]["artifact_id"].startswith("ART-WBS")
     assert generation_service.requests[-1].target_artifact_type == "WBS"
     assert generation_service.requests[-1].source_document_ids == ["DOC-REQ-001"]
-    assert_user_facing_message(completed_response.message)
+    assert_user_facing_message(first_response.message)
 
 
 @pytest.mark.anyio

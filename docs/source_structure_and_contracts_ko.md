@@ -210,7 +210,7 @@ Output:
   MarkdownOutputAgent
 ```
 
-현재 placeholder adapter:
+활성 전문 Agent:
 
 ```text
 WbsAgent
@@ -218,7 +218,7 @@ ScreenDesignAgent
 ScheduleManagementAgent
 ```
 
-즉, 라우트와 계약은 존재하지만 WBS, 화면설계, 일정/todo 생성 Agent의 실제 구현은 아직 필요합니다.
+라우트와 계약은 공유 `ArtifactAgent` 및 일정 orchestration 경계를 통해 이 Agent들로 dispatch됩니다.
 
 ### Repository 계층
 
@@ -286,7 +286,7 @@ POST /api/generate/wbs
 현재 상태:
 
 ```text
-WbsAgent는 placeholder이며 success=False를 반환한다.
+WbsAgent는 요구사항 문맥으로 WBS task JSON을 만들며, 사용 가능한 경우 LLM runtime boundary를 사용한다.
 ```
 
 ### 화면설계 생성
@@ -302,7 +302,7 @@ POST /api/generate/screen-design
 현재 상태:
 
 ```text
-ScreenDesignAgent는 placeholder이며 success=False를 반환한다.
+ScreenDesignAgent는 요구사항 문맥으로 생성 산출물인 SCREEN_DESIGN JSON을 만들며, 사용 가능한 경우 LLM runtime boundary를 사용한다.
 ```
 
 ### 일정 Todo 추출
@@ -320,7 +320,7 @@ POST /api/schedule/todos
 현재 상태:
 
 ```text
-ScheduleManagementAgent는 placeholder이며 success=False를 반환한다.
+ScheduleManagementAgent는 회의록 기반 action item 추출과 WBS todo/status 조회 흐름을 지원한다.
 ```
 
 ## 4. API Request 계약
@@ -423,7 +423,7 @@ class AgentResponse(BaseModel):
 return AgentResponse(
     success=False,
     agent_name="WbsAgent",
-    error="WBS generation agent is not implemented yet",
+    error="WBS generation failed validation",
 )
 ```
 
@@ -463,8 +463,7 @@ backend/app/core/llm.py
 현재 상태:
 
 ```text
-LLMService는 아직 mock wrapper다.
-실제 Bedrock invocation은 TODO 상태다.
+LLMService는 boto3를 통해 Amazon Bedrock을 호출한다. 테스트는 client를 monkeypatch하며, 비운영 agent fallback으로 로컬 테스트를 결정적으로 유지한다.
 ```
 
 ## 8. Core Agent 입력 형태
@@ -694,25 +693,20 @@ Requirement generation:
   RequirementAgent와 mock LLM fallback 동작이 구현되어 있다.
 
 WBS generation:
-  API와 orchestration은 존재한다.
-  WbsAgent는 아직 placeholder다.
+  API, orchestration, deterministic fallback, LLM runtime boundary가 존재한다.
 
 Screen design generation:
-  API와 orchestration은 존재한다.
-  ScreenDesignAgent는 아직 placeholder다.
+  API, orchestration, deterministic fallback, LLM runtime boundary가 존재한다.
 
 Schedule todo extraction:
-  API와 orchestration은 존재한다.
-  ScheduleManagementAgent는 아직 placeholder다.
+  API, orchestration, 회의록 추출, WBS todo 처리가 존재한다.
 
 Real Bedrock:
-  LLMService wrapper는 존재한다.
-  실제 Bedrock 호출은 TODO다.
+  LLMService wrapper가 Bedrock을 호출하며 system prompt를 provider system field로 전달한다.
 
 Vector search:
   RetrievalService boundary는 존재한다.
-  현재 검색은 keyword 기반 DB chunk search다.
-  pgvector/OpenSearch 연동은 TODO다.
+  사용 가능한 경우 pgvector 기반 repository search를 사용하고, 같은 계약 아래 repository text/ranking 동작으로 fallback한다.
 ```
 
 ## 14. 팀 공통 규칙 요약

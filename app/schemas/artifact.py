@@ -12,6 +12,7 @@ class DocumentType(StrEnum):
     CONSTRUCTION_REQUIREMENT_DEFINITION = "CONSTRUCTION_REQUIREMENT_DEFINITION"
     CONSTRUCTION_UNITTEST_DEFINITION = "CONSTRUCTION_UNITTEST_DEFINITION"
     REQUIREMENT_SPEC = "REQUIREMENT_SPEC"
+    SCREEN_DESIGN = "SCREEN_DESIGN"
     MEETING_NOTES = "MEETING_NOTES"
     WBS = "WBS"
     UNKNOWN = "UNKNOWN"
@@ -70,6 +71,7 @@ class DocumentMetadata(BaseModel):
     project_id: str = Field(..., description="Project ID")
     document_type: DocumentType = Field(..., description="Uploaded document type")
     file_name: str = Field(..., description="Original uploaded file name")
+    file_size: Optional[int] = Field(None, description="Stored file size in bytes")
     storage_path: str = Field(..., description="Object storage path")
     status: DocumentStatus = Field(
         DocumentStatus.UPLOADED,
@@ -85,6 +87,7 @@ class ArtifactMetadata(BaseModel):
     artifact_type: ArtifactType = Field(..., description="Generated artifact type")
     name: str = Field(..., description="Artifact display name")
     file_name: Optional[str] = Field(None, description="Generated file name")
+    file_size: Optional[int] = Field(None, description="Stored file size in bytes")
     version: int = Field(1, description="Artifact version")
     source_document_ids: list[str] = Field(
         default_factory=list,
@@ -94,7 +97,13 @@ class ArtifactMetadata(BaseModel):
     template_version: Optional[str] = Field(None, description="Template version")
     result_json: dict = Field(default_factory=dict, description="Artifact result JSON")
     storage_path: Optional[str] = Field(None, description="Exported artifact path")
+    generated_document_id: Optional[str] = Field(
+        None,
+        description="Generated document ID registered for downstream source use",
+    )
     status: ArtifactStatus = Field(
         ArtifactStatus.CREATED,
         description="Current artifact status",
     )
+    created_at: Optional[datetime] = Field(None, description="Created timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last updated timestamp")

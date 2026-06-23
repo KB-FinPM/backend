@@ -6,6 +6,7 @@ from typing import Any
 import re
 from datetime import date, datetime
 
+from app.core.config import settings
 from app.core.supported_files import (
     SUPPORTED_FILE_EXTENSIONS,
     SUPPORTED_FILE_TYPE_MESSAGE,
@@ -69,7 +70,11 @@ class DocumentParserAgent:
                     file_payload.file_name,
                 )
             else:
-                text = self._extract_text(file_payload.file_bytes, extension)
+                text = self._extract_text(
+                    file_payload.file_bytes,
+                    extension,
+                    document_type=str(request.context.get("document_type") or ""),
+                )
         except Exception as exc:
             error_message = self._parse_failure_message(extension, exc)
             return InputAgentResponse(
@@ -114,11 +119,19 @@ class DocumentParserAgent:
             },
         )
 
-    def _extract_text(self, file_bytes: bytes, extension: str) -> str:
+    def _extract_text(
+        self,
+        file_bytes: bytes,
+        extension: str,
+        *,
+        document_type: str | None = None,
+    ) -> str:
         if extension == ".pdf":
             return self._extract_pdf_text(file_bytes)
         if extension == ".docx":
-            return self._extract_docx_text(file_bytes)
+            return self._extract_docx_text(file_bytes, document_type=document_type)
+        if extension == ".pptx":
+            return self._extract_pptx_text(file_bytes)
         return self._decode_text(file_bytes)
 
     def _extract_pdf_text(self, file_bytes: bytes) -> str:
@@ -144,6 +157,7 @@ class DocumentParserAgent:
         if pdfplumber is not None:
             try:
                 with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+                    self._ensure_pdf_page_limit(len(pdf.pages))
                     return "\n".join(
                         page.extract_text() or "" for page in pdf.pages
                     )
@@ -157,6 +171,7 @@ class DocumentParserAgent:
         if fitz is not None:
             try:
                 with fitz.open(stream=file_bytes, filetype="pdf") as document:
+                    self._ensure_pdf_page_limit(getattr(document, "page_count", len(document)))
                     return "\n".join(page.get_text("text") or "" for page in document)
             except Exception as exc:
                 errors.append(exc)
@@ -179,7 +194,13 @@ class DocumentParserAgent:
                 raise ValueError("encrypted PDF")
 
         pages = getattr(reader, "pages", [])
+        self._ensure_pdf_page_limit(len(pages))
         return "\n".join(page.extract_text() or "" for page in pages)
+
+    def _ensure_pdf_page_limit(self, page_count: int) -> None:
+        max_pages = max(int(settings.UPLOAD_MAX_PDF_PAGES or 0), 1)
+        if page_count > max_pages:
+            raise ValueError(f"PDF page count exceeds limit: {page_count}/{max_pages}")
 
     def _parse_failure_message(self, extension: str, exc: Exception) -> str:
         if extension == ".pdf":
@@ -201,7 +222,11 @@ class DocumentParserAgent:
             )
         return f"문서를 읽는 중 오류가 발생했습니다. 파일 형식과 내용을 확인해주세요. ({type(exc).__name__})"
 
-    def _extract_docx_text(self, file_bytes: bytes) -> str:
+    def _extract_docx_text(
+        self,
+        file_bytes: bytes,
+        document_type: str | None = None,
+    ) -> str:
         try:
             from docx import Document
         except ImportError as exc:
@@ -218,18 +243,71 @@ class DocumentParserAgent:
                 lines.append(text)
 
         numbering_levels = self._docx_numbering_levels(document)
+        collapse_merged_cells = str(document_type or "").upper() == "MEETING_NOTES"
         for table in document.tables:
             for row in table.rows:
                 # sample_0605 preserved table column positions, including empty cells.
                 # Removing empty cells shifts columns such as Biz요건ID/요구사항ID and
                 # causes requirement extraction to map the wrong values.
-                cells = [self._extract_docx_cell_text(cell, numbering_levels) for cell in row.cells]
+                seen_cells: set[int] = set()
+                cells: list[str] = []
+                for cell in row.cells:
+                    if collapse_merged_cells:
+                        cell_key = id(cell._tc)
+                        if cell_key in seen_cells:
+                            continue
+                        seen_cells.add(cell_key)
+
+                    cell_text = self._extract_docx_cell_text(
+                        cell,
+                        numbering_levels,
+                        paragraph_separator="\n" if collapse_merged_cells else "\\n",
+                    )
+                    if cell_text or not collapse_merged_cells:
+                        cells.append(cell_text)
+
                 if any(cells):
-                    lines.append(" | ".join(cells))
+                    lines.append("\n".join(cells) if collapse_merged_cells else " | ".join(cells))
 
         return "\n".join(lines)
 
-    def _extract_docx_cell_text(self, cell, numbering_levels: dict[tuple[str, str], str]) -> str:
+    def _extract_pptx_text(self, file_bytes: bytes) -> str:
+        try:
+            from pptx import Presentation
+        except ImportError as exc:
+            raise RuntimeError(
+                "python-pptx is required for .pptx uploads. Run `pip install python-pptx`."
+            ) from exc
+
+        presentation = Presentation(BytesIO(file_bytes))
+        lines: list[str] = []
+        for slide_index, slide in enumerate(presentation.slides, start=1):
+            slide_lines: list[str] = []
+            for shape in slide.shapes:
+                if getattr(shape, "has_text_frame", False):
+                    text = str(shape.text or "").strip()
+                    if text:
+                        slide_lines.append(text)
+                if getattr(shape, "has_table", False):
+                    for row in shape.table.rows:
+                        cells = [
+                            str(cell.text or "").strip()
+                            for cell in row.cells
+                            if str(cell.text or "").strip()
+                        ]
+                        if cells:
+                            slide_lines.append(" | ".join(cells))
+            if slide_lines:
+                lines.append(f"[Slide {slide_index}] " + "\n".join(slide_lines))
+        return "\n\n".join(lines)
+
+    def _extract_docx_cell_text(
+        self,
+        cell,
+        numbering_levels: dict[tuple[str, str], str],
+        *,
+        paragraph_separator: str = "\\n",
+    ) -> str:
         paragraphs: list[str] = []
         for paragraph in cell.paragraphs:
             text = paragraph.text.strip()
@@ -238,7 +316,7 @@ class DocumentParserAgent:
             paragraphs.append(self._preserve_docx_list_marker(paragraph, text, numbering_levels))
         # Keep the table row as one physical line while preserving cell-internal
         # paragraph boundaries for downstream table extraction.
-        return "\\n".join(paragraphs).strip()
+        return paragraph_separator.join(paragraphs).strip()
 
     def _preserve_docx_list_marker(
         self,
@@ -395,11 +473,15 @@ class DocumentParserAgent:
         workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
         workbook_rows: list[tuple[str, list[list[str]]]] = []
         try:
+            self._ensure_spreadsheet_sheet_limit(len(workbook.worksheets))
             for worksheet in workbook.worksheets:
-                rows = [
-                    [self._cell_to_text(value) for value in row]
-                    for row in worksheet.iter_rows(values_only=True)
-                ]
+                rows = []
+                for row_number, row in enumerate(
+                    worksheet.iter_rows(values_only=True),
+                    start=1,
+                ):
+                    self._ensure_spreadsheet_row_limit(row_number)
+                    rows.append([self._cell_to_text(value) for value in row])
                 workbook_rows.append((worksheet.title, rows))
         finally:
             workbook.close()
@@ -415,13 +497,29 @@ class DocumentParserAgent:
 
         workbook = xlrd.open_workbook(file_contents=file_bytes)
         workbook_rows: list[tuple[str, list[list[str]]]] = []
+        self._ensure_spreadsheet_sheet_limit(workbook.nsheets)
         for worksheet in workbook.sheets():
+            self._ensure_spreadsheet_row_limit(worksheet.nrows)
             rows = [
                 [self._cell_to_text(worksheet.cell_value(row_index, column_index)) for column_index in range(worksheet.ncols)]
                 for row_index in range(worksheet.nrows)
             ]
             workbook_rows.append((worksheet.name, rows))
         return workbook_rows
+
+    def _ensure_spreadsheet_sheet_limit(self, sheet_count: int) -> None:
+        max_sheets = max(int(settings.UPLOAD_MAX_SPREADSHEET_SHEETS or 0), 1)
+        if sheet_count > max_sheets:
+            raise ValueError(
+                f"spreadsheet sheet count exceeds limit: {sheet_count}/{max_sheets}"
+            )
+
+    def _ensure_spreadsheet_row_limit(self, row_count: int) -> None:
+        max_rows = max(int(settings.UPLOAD_MAX_SPREADSHEET_ROWS or 0), 1)
+        if row_count > max_rows:
+            raise ValueError(
+                f"spreadsheet row count exceeds limit: {row_count}/{max_rows}"
+            )
 
     def _cell_to_text(self, value: Any) -> str:
         if value is None:

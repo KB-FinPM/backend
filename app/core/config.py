@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     SQLALCHEMY_ECHO: bool = False
     SQLALCHEMY_HIDE_PARAMETERS: bool = True
 
+    UPLOAD_MAX_BYTES: int = 25 * 1024 * 1024
+    UPLOAD_READ_CHUNK_BYTES: int = 1024 * 1024
+    UPLOAD_MAX_PDF_PAGES: int = 200
+    UPLOAD_MAX_SPREADSHEET_SHEETS: int = 20
+    UPLOAD_MAX_SPREADSHEET_ROWS: int = 10000
+
     @field_validator("DEBUG", mode="before")
     @classmethod
     def parse_debug_flag(cls, value: Any) -> Any:

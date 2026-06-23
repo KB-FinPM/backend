@@ -1,18 +1,36 @@
-# EN: Common request and response envelopes for all agents.
-# KO: 모든 Agent가 공유하는 요청 및 응답 Envelope 스키마입니다.
+"""Common request and response envelopes for all agents."""
 
-from pydantic import BaseModel, Field
+import json
 from typing import Any, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class AgentRequest(BaseModel):
-    project_id: str = Field(..., description="프로젝트 ID")
-    documents: list[dict] = Field(default=[], description="RAG 검색 결과 문서 청크")
-    context: Optional[dict] = Field(None, description="추가 컨텍스트")
+    project_id: str = Field(..., description="Project ID")
+    documents: list[dict] = Field(
+        default_factory=list,
+        description="Retrieved RAG/document chunks",
+    )
+    context: Optional[dict] = Field(
+        None,
+        description="Additional JSON-serializable context",
+    )
+
+    @field_validator("context")
+    @classmethod
+    def validate_json_serializable_context(cls, value):
+        if value is None:
+            return value
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("context must be JSON-serializable") from exc
+        return value
 
 
 class AgentResponse(BaseModel):
     success: bool = True
-    agent_name: str = Field(..., description="수행한 Agent 이름")
-    result: Any = Field(None, description="Agent 처리 결과 JSON")
+    agent_name: str = Field(..., description="Agent name")
+    result: Any = Field(None, description="Agent result JSON")
     error: Optional[str] = None

@@ -4,13 +4,15 @@
 from pathlib import PurePath
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 from fastapi.responses import Response
 
+from app.core.auth import CurrentUser, assert_project_access
 from app.core.exceptions import ApiError
-from app.dependencies import get_artifact_service
+from app.dependencies import get_artifact_service, get_current_user
 from app.schemas.artifact import ArtifactMetadata, ArtifactType
-from app.schemas.response import ErrorResponse
+from app.schemas.request import ArtifactRenameRequest
+from app.schemas.response import BaseResponse, ErrorResponse
 from app.services.artifact_service import ArtifactService
 from app.storage.s3 import s3_service
 
@@ -31,10 +33,15 @@ ARTIFACT_ERROR_RESPONSES = {
 )
 async def list_artifacts(
     project_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     artifact_service: ArtifactService = Depends(get_artifact_service),
 ) -> list[ArtifactMetadata]:
     """List generated artifacts that belong to a project."""
-    return await artifact_service.list_artifacts(project_id=project_id)
+    assert_project_access(current_user, project_id, "artifact:read")
+    return [
+        await _with_file_size(artifact)
+        for artifact in await artifact_service.list_artifacts(project_id=project_id)
+    ]
 
 
 @router.get(
@@ -45,9 +52,11 @@ async def list_artifacts(
 async def get_artifact(
     project_id: str,
     artifact_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     artifact_service: ArtifactService = Depends(get_artifact_service),
 ) -> ArtifactMetadata:
     """Read one project-scoped artifact metadata record."""
+    assert_project_access(current_user, project_id, "artifact:read")
     artifact = await artifact_service.get_artifact(
         project_id=project_id,
         artifact_id=artifact_id,
@@ -60,7 +69,44 @@ async def get_artifact(
             detail={"project_id": project_id, "artifact_id": artifact_id},
         )
 
-    return artifact
+    return await _with_file_size(artifact)
+
+
+@router.patch(
+    "/projects/{project_id}/artifacts/{artifact_id}",
+    response_model=ArtifactMetadata,
+    responses=ARTIFACT_ERROR_RESPONSES,
+)
+async def update_artifact(
+    project_id: str,
+    artifact_id: str,
+    request: ArtifactRenameRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> ArtifactMetadata:
+    """Update generated artifact display/download file metadata."""
+    assert_project_access(current_user, project_id, "artifact:write")
+    try:
+        artifact = await artifact_service.rename_artifact_file(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            file_name=request.file_name,
+        )
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="INVALID_ARTIFACT_FILE_NAME",
+            message=str(exc),
+            detail={"project_id": project_id, "artifact_id": artifact_id},
+        ) from exc
+    if artifact is None:
+        raise ApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_code="ARTIFACT_NOT_FOUND",
+            message="artifact not found",
+            detail={"project_id": project_id, "artifact_id": artifact_id},
+        )
+    return await _with_file_size(artifact)
 
 
 @router.get(
@@ -70,9 +116,11 @@ async def get_artifact(
 async def download_artifact(
     project_id: str,
     artifact_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     artifact_service: ArtifactService = Depends(get_artifact_service),
 ) -> Response:
     """Download one generated artifact as a browser attachment."""
+    assert_project_access(current_user, project_id, "artifact:read")
     artifact = await artifact_service.get_artifact(
         project_id=project_id,
         artifact_id=artifact_id,
@@ -122,7 +170,47 @@ async def download_artifact(
     )
 
 
+@router.delete(
+    "/projects/{project_id}/artifacts/{artifact_id}",
+    response_model=BaseResponse,
+    responses=ARTIFACT_ERROR_RESPONSES,
+)
+async def delete_artifact(
+    project_id: str,
+    artifact_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> BaseResponse:
+    assert_project_access(current_user, project_id, "artifact:write")
+    deleted = await artifact_service.delete_artifact(
+        project_id=project_id,
+        artifact_id=artifact_id,
+    )
+    if not deleted:
+        raise ApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_code="ARTIFACT_NOT_FOUND",
+            message="artifact not found",
+            detail={"project_id": project_id, "artifact_id": artifact_id},
+        )
+    return BaseResponse(message="artifact deleted")
+
+
+async def _with_file_size(artifact: ArtifactMetadata) -> ArtifactMetadata:
+    return artifact.model_copy(
+        update={
+            "file_size": await s3_service.get_size_by_storage_path(
+                artifact.storage_path,
+            )
+        }
+    )
+
+
 def _download_file_name(artifact: ArtifactMetadata) -> str:
+    if artifact.file_name:
+        return PurePath(artifact.file_name).name or artifact.file_name
+    if artifact.name:
+        return PurePath(artifact.name).name or artifact.name
     if artifact.storage_path:
         file_name = PurePath(artifact.storage_path).name
         if file_name:
@@ -134,6 +222,8 @@ def _download_file_name(artifact: ArtifactMetadata) -> str:
 
 def _content_type_for_artifact(artifact_type: ArtifactType) -> str:
     if artifact_type == ArtifactType.REQUIREMENT_SPEC:
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if artifact_type in {ArtifactType.WBS, ArtifactType.UNITTEST_SPEC}:
         return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     if artifact_type == ArtifactType.SCREEN_DESIGN:
         return "application/vnd.openxmlformats-officedocument.presentationml.presentation"

@@ -25,13 +25,15 @@ class S3Service:
         self.backend = settings.S3_STORAGE_BACKEND.lower()
         self.client = None
         if self.backend == "s3":
-            self.client = boto3.client(
-                "s3",
-                region_name=settings.AWS_REGION,
-                aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
-                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
-                verify=self._ssl_verify_setting(),
-            )
+            client_kwargs = {
+                "region_name": settings.AWS_REGION,
+                "verify": self._ssl_verify_setting(),
+            }
+            if settings.AWS_ACCESS_KEY_ID:
+                client_kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
+            if settings.AWS_SECRET_ACCESS_KEY:
+                client_kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+            self.client = boto3.client("s3", **client_kwargs)
 
     def _ssl_verify_setting(self) -> bool | str:
         if settings.AWS_CA_BUNDLE:
@@ -113,6 +115,38 @@ class S3Service:
         except (BotoCoreError, ClientError) as exc:
             logger.exception("S3 delete failed")
             raise RuntimeError(f"S3 delete failed: {type(exc).__name__}: {exc}") from exc
+
+    async def get_size_by_storage_path(self, storage_path: str | None) -> int | None:
+        if not storage_path:
+            return None
+
+        key = self._key_from_storage_path(storage_path)
+        if self.client is None:
+            if key in _mock_storage:
+                return len(_mock_storage[key][0])
+            mock_path = self._mock_object_path(key)
+            if not mock_path.exists():
+                return None
+            stat_result = await asyncio.to_thread(mock_path.stat)
+            return int(stat_result.st_size)
+
+        try:
+            response = await asyncio.to_thread(
+                self.client.head_object,
+                Bucket=self.bucket,
+                Key=key,
+            )
+            content_length = response.get("ContentLength")
+            return int(content_length) if content_length is not None else None
+        except ClientError as exc:
+            error_code = str((exc.response.get("Error") or {}).get("Code") or "")
+            if error_code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            logger.exception("S3 head failed")
+            raise RuntimeError(f"S3 head failed: {type(exc).__name__}: {exc}") from exc
+        except BotoCoreError as exc:
+            logger.exception("S3 head failed")
+            raise RuntimeError(f"S3 head failed: {type(exc).__name__}: {exc}") from exc
 
     def _key_from_storage_path(self, storage_path: str) -> str:
         parsed = urlparse(storage_path)

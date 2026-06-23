@@ -1,9 +1,51 @@
 # EN: Tests for natural chat input intent normalization.
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agents.input_agents.chat_input_agent.agent import ChatInputAgent
 from app.schemas.io_agent import InputAgentRequest, InputType
+
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def _load_input_golden_cases() -> list[dict]:
+    return json.loads(
+        (FIXTURE_DIR / "input_agent_commands.json").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", _load_input_golden_cases(), ids=lambda case: case["message"])
+async def test_chat_input_agent_real_korean_golden_matrix(case: dict) -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": case["message"]},
+            context=case.get("context") or {},
+        )
+    )
+
+    assert response.success is True
+    context = response.structured_context
+    assert context["intent"] == case["expected_intent"]
+    if "expected_artifact_type" in case:
+        assert context["artifact_type"] == case["expected_artifact_type"]
+        assert context["target_artifact_type"] == case["expected_artifact_type"]
+    if "expected_schedule_action" in case:
+        assert context["schedule_action"] == case["expected_schedule_action"]
+    if "expected_missing_slots" in case:
+        assert context["missing_slots"] == case["expected_missing_slots"]
+    if "expected_topic" in case:
+        assert context["topic"] == case["expected_topic"]
+    if "expected_status" in case:
+        assert context["entities"]["status"] == case["expected_status"]
+    assert context.get("normalized_query") is not None
 
 
 @pytest.mark.anyio
@@ -256,7 +298,7 @@ async def test_chat_input_agent_requirement_generation_variants(
     assert response.structured_context["intent"] == "GENERATE_ARTIFACT"
     assert response.structured_context["action"] == "CREATE"
     assert response.structured_context["artifact_type"] == "REQUIREMENT_SPEC"
-    assert response.structured_context["missing_slots"] == ["source_document_ids"]
+    assert response.structured_context["missing_slots"] == []
     assert "normalized_query" in response.structured_context
 
 
@@ -553,3 +595,81 @@ async def test_chat_input_agent_asks_clarification_for_low_confidence_command() 
     assert response.structured_context["intent"] == "CLARIFICATION_REQUIRED"
     assert response.structured_context["clarification_required"] is True
     assert response.structured_context["semantic_slots"]["clarification_required"] is True
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_extracts_download_request_from_recent_artifact() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "download latest WBS as xlsx"},
+            context={
+                "generated_artifacts": [
+                    {
+                        "artifact_id": "ART-WBS-001",
+                        "artifact_type": "WBS",
+                        "name": "Project WBS",
+                    }
+                ]
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["intent"] == "DOWNLOAD_ARTIFACT"
+    assert response.structured_context["action"] == "DOWNLOAD"
+    assert response.structured_context["artifact_id"] == "ART-WBS-001"
+    assert response.structured_context["artifact_type"] == "WBS"
+    assert response.structured_context["export_format"] == "xlsx"
+    assert response.structured_context["missing_slots"] == []
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_requires_artifact_for_ambiguous_download() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "download export file"},
+        )
+    )
+
+    assert response.success is True
+    assert response.structured_context["intent"] == "DOWNLOAD_ARTIFACT"
+    assert response.structured_context["action"] == "DOWNLOAD"
+    assert response.structured_context["artifact_id"] is None
+    assert response.structured_context["missing_slots"] == ["artifact_id"]
+
+
+@pytest.mark.anyio
+async def test_chat_input_agent_flags_large_source_document_context() -> None:
+    agent = ChatInputAgent()
+
+    response = await agent.parse(
+        InputAgentRequest(
+            project_id="PRJ-001",
+            input_type=InputType.TEXT,
+            raw_payload={"message": "요구사항 명세서 생성해줘"},
+            context={
+                "selected_documents": [
+                    {
+                        "document_id": "DOC-LARGE-001",
+                        "document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION",
+                        "file_name": "large-rfp.pdf",
+                        "metadata": {"chunk_count": 236},
+                    }
+                ]
+            },
+        )
+    )
+
+    hint = response.structured_context["large_document_hint"]
+    assert response.success is True
+    assert response.structured_context["intent"] == "GENERATE_ARTIFACT"
+    assert hint["is_large_document"] is True
+    assert hint["chunk_count"] == 236

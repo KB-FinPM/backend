@@ -210,7 +210,7 @@ Output:
   MarkdownOutputAgent
 ```
 
-Current placeholder adapters:
+Active specialized agents:
 
 ```text
 WbsAgent
@@ -218,8 +218,8 @@ ScreenDesignAgent
 ScheduleManagementAgent
 ```
 
-This means the routes and contracts exist, but the real WBS, screen design, and
-schedule/todo generation agents still need implementation.
+The routes and contracts dispatch through these agents via the shared
+`ArtifactAgent` and schedule orchestration boundaries.
 
 ### Repository Layer
 
@@ -288,7 +288,8 @@ POST /api/generate/wbs
 Current status:
 
 ```text
-WbsAgent is a placeholder and returns success=False.
+WbsAgent builds WBS task JSON from requirement context and can use the LLM
+runtime boundary when available.
 ```
 
 ### Screen Design Generation
@@ -304,7 +305,8 @@ POST /api/generate/screen-design
 Current status:
 
 ```text
-ScreenDesignAgent is a placeholder and returns success=False.
+ScreenDesignAgent builds generated SCREEN_DESIGN artifact JSON from requirement
+context and can use the LLM runtime boundary when available.
 ```
 
 ### Schedule Todo Extraction
@@ -322,7 +324,8 @@ POST /api/schedule/todos
 Current status:
 
 ```text
-ScheduleManagementAgent is a placeholder and returns success=False.
+ScheduleManagementAgent supports meeting-note action item extraction and WBS
+todo/status query flows through ScheduleService/ScheduleOrchestrator.
 ```
 
 ## 4. API Request Contracts
@@ -425,7 +428,7 @@ Expected failure style:
 return AgentResponse(
     success=False,
     agent_name="WbsAgent",
-    error="WBS generation agent is not implemented yet",
+    error="WBS generation failed validation",
 )
 ```
 
@@ -465,8 +468,8 @@ backend/app/core/llm.py
 Current status:
 
 ```text
-LLMService is still a mock wrapper.
-Real Bedrock invocation is marked TODO.
+LLMService invokes Amazon Bedrock through boto3. Tests monkeypatch the client,
+and non-production agent fallbacks keep local tests deterministic.
 ```
 
 ## 8. Core Agent Input Shape
@@ -696,25 +699,22 @@ Requirement generation:
   Implemented with RequirementAgent and mock LLM fallback behavior.
 
 WBS generation:
-  API and orchestration exist.
-  WbsAgent is still placeholder.
+  API, orchestration, deterministic fallback, and LLM runtime boundary exist.
 
 Screen design generation:
-  API and orchestration exist.
-  ScreenDesignAgent is still placeholder.
+  API, orchestration, deterministic fallback, and LLM runtime boundary exist.
 
 Schedule todo extraction:
-  API and orchestration exist.
-  ScheduleManagementAgent is still placeholder.
+  API, orchestration, meeting-note extraction, and WBS todo handling exist.
 
 Real Bedrock:
-  LLMService wrapper exists.
-  Actual Bedrock call is TODO.
+  LLMService wrapper invokes Bedrock and passes system prompts through the
+  provider system field.
 
 Vector search:
   RetrievalService boundary exists.
-  Current search is keyword-based DB chunk search.
-  pgvector/OpenSearch integration is TODO.
+  It uses pgvector-backed repository search when available and falls back to
+  repository text/ranking behavior under the same contract.
 ```
 
 ## 14. Team Rules Summary

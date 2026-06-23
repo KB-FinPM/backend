@@ -12,6 +12,7 @@ from app.schemas.artifact import (
 from app.schemas.chat import (
     ChatActionStatus,
     ChatActionType,
+    ChatCommandType,
     ChatMessageRequest,
     ChatRole,
 )
@@ -233,22 +234,83 @@ async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> No
             project_id="PRJ-001",
             user_id="USER-001",
             message="이 요구사항으로 WBS 만들어줘",
-            context={"selected_document_ids": ["DOC-REQ-001"]},
+            context={
+                "selected_document_ids": ["DOC-REQ-001"],
+                "start_date": "2025-01-20",
+                "requirements_confirmed": True,
+            },
         )
     )
-    second_response = await orchestrator.handle_message(
+    assert first_response.state == "COMPLETED"
+    assert generation_service.received_request is not None
+    assert generation_service.received_request.target_artifact_type == "WBS"
+
+
+@pytest.mark.anyio
+async def test_chat_orchestrator_returns_download_file_for_recent_artifact() -> None:
+    orchestrator = ChatOrchestrator(
+        conversation_repository=StubConversationRepository(),
+        generation_service=StubGenerationService(),
+        schedule_service=StubScheduleService(),
+        document_service=StubDocumentService(),
+        artifact_service=StubArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+    )
+
+    response = await orchestrator.handle_message(
         ChatMessageRequest(
             project_id="PRJ-001",
-            conversation_id=first_response.conversation_id,
             user_id="USER-001",
-            message="생성해",
+            message="download latest WBS as xlsx",
         )
     )
 
-    assert first_response.state == "WAITING_CONFIRMATION"
-    assert second_response.state == "COMPLETED"
-    assert generation_service.received_request is not None
-    assert generation_service.received_request.target_artifact_type == "WBS"
+    assert response.state == "COMPLETED"
+    assert response.download_files == [
+        {
+            "artifact_id": "ART-WBS-001",
+            "artifact_type": "WBS",
+            "file_name": "WBS.xlsx",
+            "mime_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            "content_type": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_chat_orchestrator_requests_artifact_for_ambiguous_download() -> None:
+    class EmptyArtifactService:
+        async def list_artifacts(self, *, project_id):
+            return []
+
+    orchestrator = ChatOrchestrator(
+        conversation_repository=StubConversationRepository(),
+        generation_service=StubGenerationService(),
+        schedule_service=StubScheduleService(),
+        document_service=StubDocumentService(),
+        artifact_service=EmptyArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+    )
+
+    response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            user_id="USER-001",
+            message="download export file",
+        )
+    )
+
+    assert response.state == "WAITING_REQUIRED_INFO"
+    assert response.download_files == []
+    assert response.result["missing_fields"] == ["artifact_id"]
 
 
 @pytest.mark.anyio
@@ -312,3 +374,54 @@ async def test_chat_orchestrator_enriches_input_agent_project_context() -> None:
     assert context["pending_action"]["action_id"] == pending_action.action_id
     assert context["last_agent_response_summary"]["action"] == "SHOW_THIS_WEEK_TODOS"
     assert context["last_agent_response_summary"]["todo_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_chat_orchestrator_cancel_meeting_todo_action_requests_upload() -> None:
+    repository = StubConversationRepository()
+    conversation = await repository.create_conversation(
+        conversation_id="CONV-MEETING-001",
+        project_id="PRJ-001",
+        user_id="USER-001",
+    )
+    pending_action = await repository.create_action(
+        action_id="ACT-MEETING-001",
+        conversation_id=conversation.conversation_id,
+        project_id=conversation.project_id,
+        action_type=ChatActionType.EXTRACT_ACTION_ITEMS,
+        status=ChatActionStatus.WAITING_CONFIRMATION,
+        payload={
+            "project_id": "PRJ-001",
+            "schedule_action": "EXTRACT_TODOS_FROM_MEETING",
+            "source_document_ids": ["DOC-MEETING-001"],
+        },
+    )
+    orchestrator = ChatOrchestrator(
+        conversation_repository=repository,
+        generation_service=StubGenerationService(),
+        schedule_service=StubScheduleService(),
+        document_service=StubDocumentService(),
+        artifact_service=StubArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+    )
+
+    response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            conversation_id=conversation.conversation_id,
+            user_id="USER-001",
+            message="다른 회의록 업로드",
+            action={
+                "type": ChatCommandType.CANCEL_PENDING_ACTION,
+                "action_id": pending_action.action_id,
+                "payload": {"action_id": pending_action.action_id},
+            },
+        )
+    )
+
+    assert response.state == "WAITING_REQUIRED_INFO"
+    assert repository.actions[pending_action.action_id].status == ChatActionStatus.CANCELLED
+    assert "회의록" in response.message
+    assert response.result["upload_request"]["documentType"] == "MEETING_NOTES"
+    assert response.result["upload_request"]["resumeAfterUpload"] is True

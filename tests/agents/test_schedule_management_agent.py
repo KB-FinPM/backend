@@ -1,6 +1,9 @@
 # EN: Tests for schedule management MVP todo extraction.
 # KO: 일정관리 Agent MVP todo 추출 동작 테스트입니다.
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agents.core_agents.schedule_management_agent.agent import (
@@ -8,6 +11,44 @@ from app.agents.core_agents.schedule_management_agent.agent import (
 )
 from app.schemas.agent import AgentRequest
 from app.schemas.schedule import ScheduleTodoList
+
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def _load_schedule_meeting_cases() -> list[dict]:
+    return json.loads(
+        (FIXTURE_DIR / "schedule_meeting_notes.json").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", _load_schedule_meeting_cases(), ids=lambda case: case["name"])
+async def test_schedule_management_agent_real_korean_meeting_note_golden_cases(
+    case: dict,
+) -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "EXTRACT_TODOS_FROM_MEETING",
+                "meeting_notes": case["meeting_notes"],
+                "current_date": case["current_date"],
+            },
+        )
+    )
+
+    assert response.success is True
+    todo_list = ScheduleTodoList.model_validate(response.result)
+    assert len(todo_list.todos) == case["expected_count"]
+    todo = todo_list.todos[0]
+    assert todo.assignee == case["expected_assignee"]
+    assert todo.due_date == case["expected_due_date"]
+    assert case["expected_title_contains"] in todo.title
+    assert todo.status == case["expected_status"]
+    if case.get("expected_unparsed_due"):
+        assert todo.metadata["unparsed_due_date_text"] == case["expected_unparsed_due"]
 
 
 @pytest.mark.anyio
@@ -46,6 +87,65 @@ async def test_schedule_management_agent_extracts_todos_from_meeting_notes() -> 
     assert todo_list.todos[0].due_date == "2026-06-10"
     assert todo_list.todos[0].source_document_id == "DOC-MEETING-001"
     assert todo_list.todos[0].source_chunk_ids == ["CHUNK-001"]
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_uses_input_agent_meeting_todo_extraction_first() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[{"chunk_id": "CHUNK-001", "document_id": "DOC-MEETING-001"}],
+            context={
+                "action": "EXTRACT_TODOS_FROM_MEETING",
+                "meeting_notes": "비즈플랫폼에서 대응 개발이 필요",
+                "source_document_ids": ["DOC-MEETING-001"],
+                "normalized_input": {
+                    "meeting_todo_extraction": {
+                        "todo_items": [
+                            {
+                                "title": "법제처 자료 RPA 축적 가능 여부 검토",
+                                "description": "근거: 법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)",
+                                "assignee": "임태운 감사역",
+                                "due_date": None,
+                                "due_date_text": "미정",
+                                "status": "NEEDS_CONFIRMATION",
+                                "related_document": "회의록 기반 신규 TODO",
+                                "source_type": "MEETING_NOTE",
+                                "source_section": "외규관련",
+                                "source_sentence": "법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)",
+                                "confidence": 0.86,
+                                "needs_confirmation": ["기한"],
+                                "classification": "todo",
+                            }
+                        ],
+                        "candidate_items": [
+                            {
+                                "title": "비즈플랫폼 대응 개발 필요",
+                                "classification": "issue_or_requirement",
+                                "reason": "TODO로 확정하지 않음",
+                                "source_sentence": "비즈플랫폼에서 대응 개발이 필요",
+                            }
+                        ],
+                        "metadata": {
+                            "extraction_strategy": "hybrid_rule_llm_rag",
+                            "fallback_used": True,
+                            "llm_used": False,
+                        },
+                    }
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    todo_list = ScheduleTodoList.model_validate(response.result)
+    assert len(todo_list.todos) == 1
+    assert todo_list.todos[0].title == "법제처 자료 RPA 축적 가능 여부 검토"
+    assert todo_list.todos[0].metadata["source_section"] == "외규관련"
+    assert response.result["candidates"][0]["classification"] == "issue_or_requirement"
+    assert response.result["metadata"]["extraction_strategy"] == "hybrid_rule_llm_rag"
 
 
 @pytest.mark.anyio
@@ -534,6 +634,95 @@ async def test_schedule_management_agent_keeps_duplicate_wbs_ids_by_row() -> Non
         "업무인스턴스및코드설계",
         "데이터클린징설계",
     }
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_prepares_valid_status_update() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "UPDATE_TODO_STATUS",
+                "todo_id": "TODO-001",
+                "status": "BLOCKED",
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "Review requirement spec",
+                        "status": "TODO",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "READY_TO_UPDATE"
+    assert response.result["matched_todo"]["todo_id"] == "TODO-001"
+    assert response.result["matched_todo"]["next_status"] == "BLOCKED"
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_rejects_invalid_status_update() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "UPDATE_TODO_STATUS",
+                "todo_id": "TODO-001",
+                "status": "MAYBE_LATER",
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "Review requirement spec",
+                        "status": "TODO",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "INVALID_STATUS"
+    assert response.result["message_key"] == "INVALID_TODO_STATUS"
+    assert response.result["allowed_statuses"] == [
+        "TODO",
+        "IN_PROGRESS",
+        "DONE",
+        "BLOCKED",
+        "CANCELLED",
+    ]
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_status_update_is_idempotent() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "UPDATE_TODO_STATUS",
+                "todo_id": "TODO-001",
+                "status": "DONE",
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "Review requirement spec",
+                        "status": "DONE",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["status"] == "ALREADY_UP_TO_DATE"
+    assert response.result["matched_todo"]["todo_id"] == "TODO-001"
 
 
 @pytest.mark.anyio

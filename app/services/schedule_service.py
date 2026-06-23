@@ -369,6 +369,8 @@ class ScheduleService:
         ]
         if not wbs_todos:
             return result
+        if not hasattr(self.action_item_repository, "upsert_wbs_todos"):
+            return result
 
         saved_wbs_todos = await self.action_item_repository.upsert_wbs_todos(
             project_id=project_id,

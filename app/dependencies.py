@@ -2,8 +2,9 @@
 # KO: Repository 및 공통 리소스를 제공하는 FastAPI 의존성 팩토리입니다.
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
+from fastapi import Depends, Header
 
+from app.core.auth import CurrentUser
 from app.db.session import get_session
 from app.orchestrator.input_orchestrator import InputOrchestrator, input_orchestrator
 from app.orchestrator.chat_orchestrator import ChatOrchestrator
@@ -30,6 +31,15 @@ from app.services.schedule_service import ScheduleService
 from app.services.template_service import TemplateService
 from app.services.traceability_service import TraceabilityService
 from app.storage.s3 import s3_service
+
+
+def get_current_user(
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+) -> CurrentUser:
+    # MVP auth shim. Production should validate a JWT/session and derive this
+    # value from trusted claims, not from a user-editable frontend constant.
+    user_id = str(x_user_id or "local-dev-user").strip() or "local-dev-user"
+    return CurrentUser(user_id=user_id)
 
 
 def get_document_repository(
@@ -89,7 +99,7 @@ def get_project_service(
 def get_artifact_service(
     artifact_repository: ArtifactRepository = Depends(get_artifact_repository),
 ) -> ArtifactService:
-    return ArtifactService(artifact_repository)
+    return ArtifactService(artifact_repository, s3_service)
 
 
 def get_generation_service() -> GenerationService:
