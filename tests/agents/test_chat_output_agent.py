@@ -478,9 +478,7 @@ async def test_chat_output_agent_renders_schedule_table_metadata() -> None:
     assert "이번 주 진행해야 할 TODO는 1건" in response.message
     assert result["items"][0]["status"] == "TODO"
     assert result["items"][0]["status_code"] == "TODO"
-    assert result["items"][0]["actions"] == [
-        {"type": "COMPLETE_TODO", "label": "완료", "todo_id": "TODO-001"}
-    ]
+    assert result["items"][0]["actions"] == []
     assert result["schedule_table"]["columns"] == [
         "할 일",
         "담당자",

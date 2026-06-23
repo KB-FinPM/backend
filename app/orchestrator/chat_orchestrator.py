@@ -193,12 +193,13 @@ class ChatOrchestrator:
                 structured_context=structured_context,
             )
 
-        if intent == "COMPLETE_TODO":
-            return await self._complete_todo_action(
+        if intent in {"COMPLETE_TODO", "UPDATE_TODO_STATUS", "MARK_TODO_DONE"}:
+            return await self._run_schedule_query(
                 conversation=conversation,
-                project_id=request.project_id,
-                title_query=structured_context.get("todo_title_query")
-                or request.message,
+                request=request,
+                structured_context=self._blocked_todo_mutation_context(
+                    structured_context
+                ),
             )
 
         if intent == "DOWNLOAD_ARTIFACT":
@@ -883,6 +884,22 @@ class ChatOrchestrator:
                 "result": response.result if isinstance(response.result, dict) else {},
             },
         )
+
+    def _blocked_todo_mutation_context(
+        self,
+        structured_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        entities = dict(structured_context.get("entities") or {})
+        entities.setdefault("status_filter", "NOT_DONE")
+        return {
+            **structured_context,
+            "intent": "SCHEDULE_QUERY",
+            "action": "QUERY",
+            "schedule_action": "SHOW_ALL_TODOS",
+            "schedule_intent": "SCHEDULE_ASSISTANT",
+            "todo_mutation_blocked": True,
+            "entities": entities,
+        }
 
     async def _run_schedule_query(
         self,

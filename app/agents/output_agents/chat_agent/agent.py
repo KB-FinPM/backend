@@ -260,6 +260,7 @@ class ChatOutputAgent:
         if action == "SHOW_CURRENT_WEEK":
             return self._current_week_payload(result)
         if action in {
+            "SHOW_ALL_TODOS",
             "SHOW_THIS_WEEK_TODOS",
             "SHOW_NEXT_WEEK_TODOS",
             "SHOW_TODAY_TODOS",
@@ -705,6 +706,27 @@ class ChatOutputAgent:
         action = result.get("action")
         if result.get("assistant_message"):
             message = str(result.get("assistant_message"))
+        elif action == "SHOW_ALL_TODOS":
+            metadata = result.get("metadata") or {}
+            source_filter = metadata.get("source_filter")
+            if source_filter == "MEETING":
+                message = (
+                    f"회의록에서 등록된 TODO가 {len(items)}건입니다."
+                    if items
+                    else "회의록에서 등록된 TODO가 없습니다."
+                )
+            elif source_filter == "WBS":
+                message = (
+                    f"WBS에서 등록된 TODO가 {len(items)}건입니다."
+                    if items
+                    else "WBS에서 등록된 TODO가 없습니다."
+                )
+            else:
+                message = (
+                    f"현재 등록된 TODO가 {len(items)}건입니다."
+                    if items
+                    else "현재 등록된 TODO가 없습니다."
+                )
         elif action == "SHOW_OVERDUE_TODOS":
             message = (
                 f"기한이 지난 TODO는 {len(items)}건입니다."
@@ -822,9 +844,6 @@ class ChatOutputAgent:
                 due_date,
             )
             status_key = str(status).upper()
-            is_completed = status_key in {"DONE", "COMPLETED"} or str(
-                status_display
-            ) == "완료"
             source_type = todo.get("source_type") or todo.get("source_artifact_type")
             related_document = (
                 todo.get("related_artifact")
@@ -834,17 +853,6 @@ class ChatOutputAgent:
                 or ("WBS" if str(source_type or "").upper() == "WBS" else "회의록 기반 신규 TODO")
             )
             todo_id = todo.get("todo_id")
-            actions = (
-                []
-                if is_completed or not todo_id
-                else [
-                    {
-                        "type": "COMPLETE_TODO",
-                        "label": "완료",
-                        "todo_id": todo_id,
-                    }
-                ]
-            )
             items.append(
                 {
                     "todo_id": todo_id,
@@ -857,7 +865,7 @@ class ChatOutputAgent:
                     "status": status_display,
                     "status_code": status_key,
                     "description": todo.get("description") or "",
-                    "actions": actions,
+                    "actions": [],
                 }
             )
         return items

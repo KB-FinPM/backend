@@ -314,9 +314,9 @@ async def test_schedule_management_agent_requests_wbs_when_this_week_needs_wbs()
     )
 
     assert response.success is True
-    assert response.result["status"] == "REQUIRED_INFO"
-    assert response.result["missing_fields"] == ["wbs"]
-    assert response.result["metadata"]["required_context"] == "WBS"
+    assert response.result["status"] == "SUCCESS"
+    assert response.result["todos"] == []
+    assert response.result["metadata"]["todo_count"] == 0
 
 
 @pytest.mark.anyio
@@ -336,8 +336,8 @@ async def test_schedule_management_agent_requests_wbs_before_project_date_when_w
 
     assert response.success is True
     assert response.result["status"] == "REQUIRED_INFO"
-    assert response.result["missing_fields"] == ["wbs"]
-    assert response.result["metadata"]["required_context"] == "WBS"
+    assert response.result["missing_fields"] == ["project.start_date"]
+    assert response.result["metadata"]["required_context"] == "PROJECT_SCHEDULE"
 
 
 @pytest.mark.anyio
@@ -723,6 +723,114 @@ async def test_schedule_management_agent_status_update_is_idempotent() -> None:
     assert response.success is True
     assert response.result["status"] == "ALREADY_UP_TO_DATE"
     assert response.result["matched_todo"]["todo_id"] == "TODO-001"
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_show_all_filters_meeting_todos() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "SHOW_ALL_TODOS",
+                "normalized_input": {
+                    "entities": {
+                        "source": "MEETING_NOTES",
+                        "status_filter": "ALL",
+                    }
+                },
+                "todos": [
+                    {
+                        "todo_id": "TODO-MEETING",
+                        "title": "Meeting action",
+                        "source_type": "MEETING_NOTES",
+                        "status": "TODO",
+                    },
+                    {
+                        "todo_id": "TODO-WBS",
+                        "title": "WBS action",
+                        "source_type": "WBS",
+                        "status": "TODO",
+                    },
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert [todo["todo_id"] for todo in response.result["todos"]] == ["TODO-MEETING"]
+    assert response.result["metadata"]["source_filter"] == "MEETING"
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_show_all_filters_wbs_todos() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "SHOW_ALL_TODOS",
+                "normalized_input": {
+                    "entities": {
+                        "source": "WBS",
+                        "status_filter": "ALL",
+                    }
+                },
+                "todos": [
+                    {
+                        "todo_id": "TODO-MEETING",
+                        "title": "Meeting action",
+                        "source_type": "MEETING_NOTES",
+                        "status": "TODO",
+                    },
+                    {
+                        "todo_id": "TODO-WBS",
+                        "title": "WBS action",
+                        "source_type": "WBS",
+                        "status": "TODO",
+                    },
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert [todo["todo_id"] for todo in response.result["todos"]] == ["TODO-WBS"]
+    assert response.result["metadata"]["source_filter"] == "WBS"
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_show_all_defaults_to_not_done() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "SHOW_ALL_TODOS",
+                "todos": [
+                    {
+                        "todo_id": "TODO-OPEN",
+                        "title": "Open action",
+                        "source_type": "MEETING_NOTES",
+                        "status": "IN_PROGRESS",
+                    },
+                    {
+                        "todo_id": "TODO-DONE",
+                        "title": "Done action",
+                        "source_type": "WBS",
+                        "status": "DONE",
+                    },
+                ],
+            },
+        )
+    )
+
+    assert response.success is True
+    assert [todo["todo_id"] for todo in response.result["todos"]] == ["TODO-OPEN"]
+    assert response.result["metadata"]["status_filter"] == "NOT_DONE"
 
 
 @pytest.mark.anyio

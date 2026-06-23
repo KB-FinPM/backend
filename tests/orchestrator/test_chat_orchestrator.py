@@ -17,7 +17,7 @@ from app.schemas.chat import (
     ChatRole,
 )
 from app.schemas.io_agent import InputAgentResponse, NormalizedRequestType
-from app.schemas.response import GenerationResponse
+from app.schemas.response import GenerationResponse, ScheduleTodoResponse
 from app.services.generation_service import GenerationSourceValidationResult
 
 
@@ -173,6 +173,55 @@ class StubScheduleService:
     pass
 
 
+class SpyScheduleServiceForTodoMutation:
+    def __init__(self) -> None:
+        self.complete_calls = 0
+        self.query_calls = []
+
+    async def complete_todo(self, **kwargs):
+        self.complete_calls += 1
+        raise AssertionError("chat flow must not complete TODOs")
+
+    async def run_query(
+        self,
+        *,
+        project_id,
+        schedule_action,
+        context,
+        permission_scope=None,
+    ):
+        self.query_calls.append(
+            {
+                "project_id": project_id,
+                "schedule_action": schedule_action,
+                "context": context,
+                "permission_scope": permission_scope,
+            }
+        )
+        return ScheduleTodoResponse(
+            project_id=project_id,
+            message="todo query",
+            result={
+                "artifact_type": "SCHEDULE_TODO_LIST",
+                "action": schedule_action,
+                "status": "SUCCESS",
+                "todos": [
+                    {
+                        "todo_id": "TODO-001",
+                        "title": "Review requirement",
+                        "source_type": "MEETING_NOTES",
+                        "status": "TODO",
+                    }
+                ],
+                "assistant_message": "채팅에서는 TODO 완료처리를 지원하지 않습니다.",
+                "metadata": {
+                    "source_filter": "ALL",
+                    "status_filter": "NOT_DONE",
+                },
+            },
+        )
+
+
 class StubArtifactService:
     async def list_artifacts(self, *, project_id):
         return [
@@ -213,6 +262,52 @@ class SpyInputNormalizer:
             normalized_request_type=NormalizedRequestType.CHAT_MESSAGE,
             structured_context={"intent": "GENERAL_QA"},
         )
+
+
+class CompleteTodoInputNormalizer:
+    async def normalize(self, request):
+        return InputAgentResponse(
+            agent_name="CompleteTodoInputNormalizer",
+            normalized_request_type=NormalizedRequestType.CHAT_MESSAGE,
+            structured_context={
+                "intent": "COMPLETE_TODO",
+                "action": "UPDATE",
+                "schedule_action": "COMPLETE_TODO",
+                "todo_title_query": "Review requirement",
+                "entities": {"todo_title": "Review requirement"},
+            },
+        )
+
+
+@pytest.mark.anyio
+async def test_chat_orchestrator_blocks_chat_todo_completion_and_queries_todos() -> None:
+    schedule_service = SpyScheduleServiceForTodoMutation()
+    orchestrator = ChatOrchestrator(
+        conversation_repository=StubConversationRepository(),
+        generation_service=StubGenerationService(),
+        schedule_service=schedule_service,
+        document_service=StubDocumentService(),
+        artifact_service=StubArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+        input_normalizer=CompleteTodoInputNormalizer(),
+    )
+
+    response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            user_id="USER-001",
+            message="Review requirement 완료했어",
+        )
+    )
+
+    assert response.state == "COMPLETED"
+    assert schedule_service.complete_calls == 0
+    assert schedule_service.query_calls[0]["schedule_action"] == "SHOW_ALL_TODOS"
+    normalized_input = schedule_service.query_calls[0]["context"]["normalized_input"]
+    assert normalized_input["todo_mutation_blocked"] is True
+    assert normalized_input["entities"]["status_filter"] == "NOT_DONE"
+    assert response.result["action"] == "SHOW_ALL_TODOS"
 
 
 @pytest.mark.anyio
