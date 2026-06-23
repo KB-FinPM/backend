@@ -298,7 +298,7 @@ async def test_chat_output_agent_renders_schedule_todo_result() -> None:
     )
 
     assert response.success is True
-    assert "할 일 1건" in response.message
+    assert "할일 1건" in response.message
     assert response.display_payload["items"] == [
         {
             "todo_id": "TODO-001",
@@ -475,13 +475,14 @@ async def test_chat_output_agent_renders_schedule_table_metadata() -> None:
 
     result = response.display_payload["result"]
     assert response.success is True
-    assert "이번 주 진행해야 할 TODO는 1건" in response.message
+    assert "이번 주 진행해야 할 할일은 1건" in response.message
     assert result["items"][0]["status"] == "TODO"
+    assert result["items"][0]["status_code"] == "TODO"
+    assert result["items"][0]["actions"] == []
     assert result["schedule_table"]["columns"] == [
-        "할 일",
+        "할일",
         "담당자",
         "기한",
-        "관련 산출물",
         "상태",
     ]
 
@@ -571,7 +572,7 @@ async def test_chat_output_agent_schedule_confirmation_offers_meeting_upload() -
 
     assert response.success is True
     actions = response.display_payload["suggested_actions"]
-    assert actions[0]["label"] == "TODO 추출하기"
+    assert actions[0]["label"] == "할일 추출하기"
     assert actions[1]["label"] == "다른 회의록 업로드"
 
 
@@ -650,6 +651,38 @@ async def test_chat_output_agent_renders_download_ready_with_korean_filename() -
             "name": "요구사항 명세서",
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_chat_output_agent_hides_complete_action_for_done_todo() -> None:
+    agent = ChatOutputAgent()
+
+    response = await agent.render(
+        OutputAgentRequest(
+            project_id="PRJ-001",
+            response_type=OutputResponseType.CHAT_RESPONSE,
+            result_json={
+                "event": "SCHEDULE_RESULT",
+                "result": {
+                    "artifact_type": "SCHEDULE_TODO_LIST",
+                    "action": "SHOW_THIS_WEEK_TODOS",
+                    "status": "SUCCESS",
+                    "todos": [
+                        {
+                            "todo_id": "TODO-001",
+                            "title": "요구사항 정의서 초안 검토",
+                            "status": "DONE",
+                        }
+                    ],
+                },
+            },
+        )
+    )
+
+    result = response.display_payload["result"]
+    assert response.success is True
+    assert result["items"][0]["status_code"] == "DONE"
+    assert result["items"][0]["actions"] == []
 
 
 @pytest.mark.anyio

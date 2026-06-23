@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+import zipfile
 from io import BytesIO
 
 import pytest
@@ -171,6 +172,48 @@ async def test_document_parser_agent_extracts_wbs_xlsx_rows() -> None:
     assert wbs_rows[0]["title"] == "Integration test design"
     assert wbs_rows[0]["planned_start_date"] == "2026.05.21"
     assert wbs_rows[0]["raw_assignee"] == "QA"
+
+
+@pytest.mark.anyio
+async def test_document_parser_agent_falls_back_to_openxml_docx_text(
+    monkeypatch,
+) -> None:
+    class BrokenDocument:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise NotImplementedError("unsupported docx structure")
+
+    monkeypatch.setitem(sys.modules, "docx", types.SimpleNamespace(Document=BrokenDocument))
+
+    document_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:body>
+        <w:p><w:r><w:t>회의록 본문</w:t></w:r></w:p>
+        <w:tbl>
+          <w:tr>
+            <w:tc><w:p><w:r><w:t>법제처 자료 검토예정</w:t></w:r></w:p></w:tc>
+            <w:tc><w:p><w:r><w:t>임태운 감사역</w:t></w:r></w:p></w:tc>
+          </w:tr>
+        </w:tbl>
+      </w:body>
+    </w:document>
+    """
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("word/document.xml", document_xml)
+
+    parser = DocumentParserAgent()
+    response = await parser.parse(
+        _file_request(
+            "meeting.docx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            context={"document_type": "MEETING_NOTES"},
+        )
+    )
+
+    assert response.success is True
+    assert "회의록 본문" in response.structured_context["text"]
+    assert "법제처 자료 검토예정 | 임태운 감사역" in response.structured_context["text"]
 
 
 @pytest.mark.anyio

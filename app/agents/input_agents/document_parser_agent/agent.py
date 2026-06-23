@@ -4,6 +4,8 @@
 from io import BytesIO
 from typing import Any
 import re
+import zipfile
+from xml.etree import ElementTree
 from datetime import date, datetime
 
 from app.core.config import settings
@@ -33,6 +35,10 @@ class DocumentParserAgent:
     )
     EMPTY_TEXT_MESSAGE = (
         "문서에서 텍스트를 추출하지 못했습니다. 내용이 비어 있거나 텍스트 추출이 어려운 파일입니다."
+    )
+    GENERIC_PARSE_ERROR_MESSAGE = (
+        "문서를 읽지 못했습니다. 파일이 손상되었거나 지원하지 않는 구조일 수 있습니다. "
+        "DOCX, XLSX, PDF, TXT 파일로 다시 업로드해 주세요."
     )
     AGENT_NAME = "DocumentParserAgent"
 
@@ -217,10 +223,10 @@ class DocumentParserAgent:
             )
         if extension in {".xlsx", ".xls"}:
             return (
-                "엑셀 문서를 읽는 중 오류가 발생했습니다. 파일 형식과 시트 내용을 확인해주세요. "
-                f"({type(exc).__name__})"
+                "엑셀 문서를 읽지 못했습니다. 파일이 손상되었거나 지원하지 않는 구조일 수 있습니다. "
+                "XLSX, XLS, CSV 파일로 다시 업로드해 주세요."
             )
-        return f"문서를 읽는 중 오류가 발생했습니다. 파일 형식과 내용을 확인해주세요. ({type(exc).__name__})"
+        return self.GENERIC_PARSE_ERROR_MESSAGE
 
     def _extract_docx_text(
         self,
@@ -229,46 +235,96 @@ class DocumentParserAgent:
     ) -> str:
         try:
             from docx import Document
-        except ImportError as exc:
-            raise RuntimeError(
-                "python-docx is required for .docx uploads. Run `pip install python-docx`."
-            ) from exc
+            document = Document(BytesIO(file_bytes))
+            lines: list[str] = []
 
-        document = Document(BytesIO(file_bytes))
+            for paragraph in document.paragraphs:
+                text = paragraph.text.strip()
+                if text:
+                    lines.append(text)
+
+            numbering_levels = self._docx_numbering_levels(document)
+            collapse_merged_cells = str(document_type or "").upper() == "MEETING_NOTES"
+            for table in document.tables:
+                for row in table.rows:
+                    # sample_0605 preserved table column positions, including empty cells.
+                    # Removing empty cells shifts columns such as Biz요건ID/요구사항ID and
+                    # causes requirement extraction to map the wrong values.
+                    seen_cells: set[int] = set()
+                    cells: list[str] = []
+                    for cell in row.cells:
+                        if collapse_merged_cells:
+                            cell_key = id(cell._tc)
+                            if cell_key in seen_cells:
+                                continue
+                            seen_cells.add(cell_key)
+
+                        cell_text = self._extract_docx_cell_text(
+                            cell,
+                            numbering_levels,
+                            paragraph_separator="\n" if collapse_merged_cells else "\\n",
+                        )
+                        if cell_text or not collapse_merged_cells:
+                            cells.append(cell_text)
+
+                    if any(cells):
+                        lines.append("\n".join(cells) if collapse_merged_cells else " | ".join(cells))
+
+            extracted_text = "\n".join(lines)
+            if extracted_text.strip():
+                return extracted_text
+            fallback_text = self._extract_docx_openxml_text(file_bytes)
+            return fallback_text or extracted_text
+        except Exception as exc:
+            fallback_text = self._extract_docx_openxml_text(file_bytes)
+            if fallback_text.strip():
+                return fallback_text
+            if isinstance(exc, ImportError):
+                raise RuntimeError(
+                    "python-docx is required for .docx uploads. Run `pip install python-docx`."
+                ) from exc
+            raise
+
+    def _extract_docx_openxml_text(self, file_bytes: bytes) -> str:
+        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        try:
+            with zipfile.ZipFile(BytesIO(file_bytes)) as archive:
+                document_xml = archive.read("word/document.xml")
+        except (KeyError, OSError, zipfile.BadZipFile):
+            return ""
+
+        try:
+            root = ElementTree.fromstring(document_xml)
+        except ElementTree.ParseError:
+            return ""
+
+        def paragraph_text(paragraph) -> str:
+            return "".join(text_node.text or "" for text_node in paragraph.findall(".//w:t", ns)).strip()
+
         lines: list[str] = []
-
-        for paragraph in document.paragraphs:
-            text = paragraph.text.strip()
-            if text:
-                lines.append(text)
-
-        numbering_levels = self._docx_numbering_levels(document)
-        collapse_merged_cells = str(document_type or "").upper() == "MEETING_NOTES"
-        for table in document.tables:
-            for row in table.rows:
-                # sample_0605 preserved table column positions, including empty cells.
-                # Removing empty cells shifts columns such as Biz요건ID/요구사항ID and
-                # causes requirement extraction to map the wrong values.
-                seen_cells: set[int] = set()
-                cells: list[str] = []
-                for cell in row.cells:
-                    if collapse_merged_cells:
-                        cell_key = id(cell._tc)
-                        if cell_key in seen_cells:
-                            continue
-                        seen_cells.add(cell_key)
-
-                    cell_text = self._extract_docx_cell_text(
-                        cell,
-                        numbering_levels,
-                        paragraph_separator="\n" if collapse_merged_cells else "\\n",
-                    )
-                    if cell_text or not collapse_merged_cells:
-                        cells.append(cell_text)
-
-                if any(cells):
-                    lines.append("\n".join(cells) if collapse_merged_cells else " | ".join(cells))
-
+        body = root.find("w:body", ns)
+        if body is None:
+            return ""
+        for child in list(body):
+            if child.tag.endswith("}p"):
+                text = paragraph_text(child)
+                if text:
+                    lines.append(text)
+            elif child.tag.endswith("}tbl"):
+                for row in child.findall(".//w:tr", ns):
+                    cells = [
+                        "\n".join(
+                            text
+                            for text in (
+                                paragraph_text(paragraph)
+                                for paragraph in cell.findall(".//w:p", ns)
+                            )
+                            if text
+                        )
+                        for cell in row.findall(".//w:tc", ns)
+                    ]
+                    if any(cells):
+                        lines.append(" | ".join(cells))
         return "\n".join(lines)
 
     def _extract_pptx_text(self, file_bytes: bytes) -> str:

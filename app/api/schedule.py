@@ -1,6 +1,6 @@
 # EN: Schedule-management API routes.
 
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import APIRouter, Body, Depends, Query, status
 
 from app.core.auth import CurrentUser, assert_project_access
 from app.core.exceptions import ApiError
@@ -122,6 +122,55 @@ async def extract_action_items(
         output_orchestrator=output_orchestrator,
         current_user=current_user,
     )
+
+
+@router.post(
+    "/todos/{todo_id}/complete",
+    response_model=ScheduleTodoResponse,
+    responses={
+        **SCHEDULE_ERROR_RESPONSES,
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorResponse},
+    },
+)
+async def complete_schedule_todo(
+    todo_id: str,
+    project_id: str = Query(..., min_length=1),
+    schedule_service: ScheduleService = Depends(get_schedule_service),
+    output_orchestrator: OutputOrchestrator = Depends(get_output_orchestrator),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ScheduleTodoResponse:
+    """Mark one stored TODO complete by stable todo_id."""
+    logger.info(
+        f"complete_schedule_todo | project_id={project_id} | todo_id={todo_id}"
+    )
+    assert_project_access(
+        current_user,
+        project_id,
+        "schedule:write",
+    )
+    response = await schedule_service.complete_todo_by_id(
+        project_id=project_id,
+        todo_id=todo_id,
+    )
+    if not response.success:
+        result = response.result if isinstance(response.result, dict) else {}
+        result_status = result.get("status")
+        if result_status == "NOT_FOUND":
+            raise ApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="TODO_NOT_FOUND",
+                message="완료 처리할 TODO를 찾지 못했습니다.",
+                detail={"project_id": project_id, "todo_id": todo_id},
+            )
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="TODO_STORAGE_UNAVAILABLE",
+            message="TODO 저장소를 사용할 수 없습니다.",
+            detail={"project_id": project_id, "todo_id": todo_id},
+        )
+
+    return await _format_schedule_response(response, output_orchestrator)
 
 
 async def _format_schedule_response(

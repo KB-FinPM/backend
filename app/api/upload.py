@@ -39,6 +39,18 @@ from app.services.document_service import DocumentService
 logger = get_logger(__name__)
 router = APIRouter()
 
+DOCUMENT_READ_FAILURE_MESSAGE = (
+    "문서를 읽지 못했습니다. 파일이 손상되었거나 지원하지 않는 구조일 수 있습니다. "
+    "DOCX, XLSX, PDF, TXT 파일로 다시 업로드해 주세요."
+)
+INTERNAL_ERROR_MESSAGE_MARKERS = (
+    "NotImplementedError",
+    "Traceback",
+    "Exception",
+    "python-docx is required",
+    "openpyxl is required",
+)
+
 UPLOAD_ERROR_RESPONSES = {
     status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},
     status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: {"model": ErrorResponse},
@@ -144,14 +156,20 @@ async def upload_document(
         )
         if not input_response.success:
             await _cleanup_uploaded_object(document_service, storage_path)
+            error_message = _friendly_document_normalization_message(
+                input_response.error
+            )
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 error_code="DOCUMENT_INPUT_NORMALIZATION_FAILED",
-                message=input_response.error or "document input normalization failed",
+                message=error_message,
                 detail={
                     "file_name": safe_file_name,
                     "content_type": file.content_type,
-                    "errors": input_response.validation_errors,
+                    "errors": [
+                        _friendly_document_normalization_message(error)
+                        for error in input_response.validation_errors
+                    ],
                 },
             )
 
@@ -241,6 +259,15 @@ def _validate_content_type(
             "extension": extension,
         },
     )
+
+
+def _friendly_document_normalization_message(value: object) -> str:
+    message = str(value or "").strip()
+    if not message:
+        return DOCUMENT_READ_FAILURE_MESSAGE
+    if any(marker in message for marker in INTERNAL_ERROR_MESSAGE_MARKERS):
+        return DOCUMENT_READ_FAILURE_MESSAGE
+    return message
 
 
 async def _read_upload_file_limited(
