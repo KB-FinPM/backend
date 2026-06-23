@@ -102,13 +102,22 @@ class StubInputOrchestrator:
 
 
 class FailingInputOrchestrator:
+    def __init__(
+        self,
+        *,
+        error: str = "input failed",
+        validation_errors: list[str] | None = None,
+    ) -> None:
+        self.error = error
+        self.validation_errors = validation_errors or ["unsupported file"]
+
     async def normalize(self, request):
         return InputAgentResponse(
             success=False,
             agent_name="FailingInputOrchestrator",
             normalized_request_type=NormalizedRequestType.UNKNOWN,
-            error="input failed",
-            validation_errors=["unsupported file"],
+            error=self.error,
+            validation_errors=self.validation_errors,
         )
 
 
@@ -253,3 +262,32 @@ def test_upload_document_returns_422_when_input_normalization_fails(
     body = response.json()
     assert body["success"] is False
     assert body["error_code"] == "DOCUMENT_INPUT_NORMALIZATION_FAILED"
+
+
+def test_upload_document_hides_internal_parser_exception_name(
+    client: TestClient,
+) -> None:
+    client.app.dependency_overrides[get_input_orchestrator] = (
+        lambda: FailingInputOrchestrator(
+            error="문서를 읽는 중 오류가 발생했습니다. (NotImplementedError)",
+            validation_errors=["NotImplementedError"],
+        )
+    )
+    try:
+        response = client.post(
+            "/api/upload",
+            data={
+                "project_id": "PRJ-001",
+                "document_type": "MEETING_NOTES",
+            },
+            files={"file": ("meeting.docx", b"docx bytes", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "DOCUMENT_INPUT_NORMALIZATION_FAILED"
+    assert "NotImplementedError" not in body["message"]
+    assert "NotImplementedError" not in response.text
+    assert "문서를 읽지 못했습니다" in body["message"]
