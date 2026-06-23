@@ -18,6 +18,7 @@ from app.schemas.response import ScheduleTodoResponse
 class StubScheduleService:
     def __init__(self) -> None:
         self.received_context: dict | None = None
+        self.completed_todo_id: str | None = None
 
     async def extract_todos(self, request, *, structured_context=None):
         self.received_context = structured_context
@@ -27,6 +28,37 @@ class StubScheduleService:
             result={
                 "artifact_type": "SCHEDULE_TODO_LIST",
                 "todos": [{"todo_id": "TODO-001", "title": "Confirm scope"}],
+            },
+        )
+
+    async def complete_todo_by_id(self, *, project_id: str, todo_id: str):
+        self.completed_todo_id = todo_id
+        if todo_id == "TODO-404":
+            return ScheduleTodoResponse(
+                success=False,
+                project_id=project_id,
+                message="matching todo not found",
+                result={"action": "COMPLETE_TODO", "status": "NOT_FOUND"},
+            )
+        return ScheduleTodoResponse(
+            project_id=project_id,
+            message="todo completed",
+            result={
+                "artifact_type": "SCHEDULE_TODO_LIST",
+                "action": "COMPLETE_TODO",
+                "status": "SUCCESS",
+                "matched_todo": {
+                    "todo_id": todo_id,
+                    "title": "Confirm scope",
+                    "next_status": "DONE",
+                },
+                "todos": [
+                    {
+                        "todo_id": todo_id,
+                        "title": "Confirm scope",
+                        "status": "DONE",
+                    }
+                ],
             },
         )
 
@@ -155,3 +187,46 @@ def test_extract_schedule_todos_returns_422_when_input_normalization_fails(
     body = response.json()
     assert body["success"] is False
     assert body["error_code"] == "SCHEDULE_INPUT_NORMALIZATION_FAILED"
+
+
+def test_complete_schedule_todo_uses_todo_id_route(client: TestClient) -> None:
+    schedule_service = StubScheduleService()
+    output_orchestrator = StubOutputOrchestrator()
+    client.app.dependency_overrides[get_schedule_service] = lambda: schedule_service
+    client.app.dependency_overrides[get_output_orchestrator] = (
+        lambda: output_orchestrator
+    )
+
+    try:
+        response = client.post(
+            "/api/schedule/todos/TODO-001/complete?project_id=PRJ-001",
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["result"]["matched_todo"]["todo_id"] == "TODO-001"
+    assert body["result"]["matched_todo"]["next_status"] == "DONE"
+    assert body["display"] == {"formatted": True}
+    assert schedule_service.completed_todo_id == "TODO-001"
+
+
+def test_complete_schedule_todo_returns_404_for_other_project_or_missing(
+    client: TestClient,
+) -> None:
+    schedule_service = StubScheduleService()
+    client.app.dependency_overrides[get_schedule_service] = lambda: schedule_service
+
+    try:
+        response = client.post(
+            "/api/schedule/todos/TODO-404/complete?project_id=PRJ-001",
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["success"] is False
+    assert body["error_code"] == "TODO_NOT_FOUND"

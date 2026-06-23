@@ -416,6 +416,7 @@ class ChatInputAgent:
             artifact_target=artifact_target,
         )
         time_range = self._detect_time_range(normalized, compact_message)
+        status_filter = self._detect_status_filter(normalized, compact_message)
         assignee = self._extract_assignee_query(normalized_query)
         todo_target = (
             self._todo_completion_query(normalized_query)
@@ -466,6 +467,7 @@ class ChatInputAgent:
             "target_type": target_type,
             "action": action,
             "time_range": time_range,
+            "status_filter": status_filter,
             "assignee": assignee,
             "artifact_type": artifact_type,
             "artifact_id": download_artifact.get("artifact_id"),
@@ -1137,13 +1139,9 @@ class ChatInputAgent:
             self.TODO_TERMS + self.KO_TODO_TERMS,
         )
         has_meeting = source_type == "MEETING_NOTES"
-        if has_meeting and has_todo and self._contains_any(
+        if has_meeting and has_todo and self._looks_like_todo_extraction(
             normalized_message,
             compact_message,
-            self.EXTRACT_TERMS
-            + self.SHOW_TERMS
-            + self.KO_EXTRACT_TERMS
-            + self.KO_SHOW_TERMS,
         ):
             return "EXTRACT"
         if artifact_target is not None and self._has_generation_signal(
@@ -1236,6 +1234,12 @@ class ChatInputAgent:
         if self._contains_any(
             normalized_message,
             compact_message,
+            ("전체기간", "전체 기간", "전체", "all period"),
+        ):
+            return "ALL_PERIOD"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
             self.OVERDUE_TERMS + self.KO_OVERDUE_TERMS,
         ):
             return "OVERDUE"
@@ -1273,6 +1277,50 @@ class ChatInputAgent:
             return "UPCOMING"
         return None
 
+    def _detect_status_filter(
+        self,
+        normalized_message: str,
+        compact_message: str,
+    ) -> str | None:
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            (
+                "완료하지 못한",
+                "완료 안 된",
+                "완료 안된",
+                "미완료",
+                "남은",
+                "남아있는",
+                "안 끝난",
+                "안끝난",
+                "not done",
+                "incomplete",
+                "open",
+                "pending",
+            ),
+        ):
+            return "NOT_DONE"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            (
+                "완료된",
+                "완료한",
+                "끝난",
+                "done",
+                "completed",
+            ),
+        ):
+            return "DONE"
+        if self._contains_any(
+            normalized_message,
+            compact_message,
+            ("전체기간", "전체 기간", "전체", "all period"),
+        ):
+            return "ALL"
+        return None
+
     def _schedule_action_from_slots(
         self,
         normalized_message: str,
@@ -1291,12 +1339,22 @@ class ChatInputAgent:
         if (
             source_type == "MEETING_NOTES"
             and target_type == "TODO"
-            and action in {"EXTRACT", "SHOW", "GENERATE"}
+            and action in {"EXTRACT", "GENERATE"}
         ):
             return "EXTRACT_TODOS_FROM_MEETING"
         detected = self._detect_schedule_action(normalized_message, compact_message)
         if detected == "EXTRACT_TODOS_FROM_MEETING" and source_type != "MEETING_NOTES":
             return None
+        if detected == "ASSISTANT_BRIEFING" and target_type in {"TODO", "SCHEDULE"}:
+            if time_range == "TODAY":
+                return "SHOW_TODAY_TODOS"
+            if time_range == "NEXT_WEEK":
+                return "SHOW_NEXT_WEEK_TODOS"
+            if time_range == "OVERDUE":
+                return "SHOW_OVERDUE_TODOS"
+            if time_range == "THIS_WEEK":
+                return "SHOW_THIS_WEEK_TODOS"
+            return "SHOW_ALL_TODOS"
         if detected:
             return detected
         if assignee and target_type in {"TODO", "SCHEDULE"}:
@@ -1310,10 +1368,9 @@ class ChatInputAgent:
                 return "SHOW_OVERDUE_TODOS"
             if time_range == "CURRENT_WEEK":
                 return "SHOW_CURRENT_WEEK"
-            if time_range in {"THIS_WEEK", None} and source_type == "WBS":
-                return "ASSISTANT_BRIEFING"
-            if time_range in {"THIS_WEEK", None}:
+            if time_range == "THIS_WEEK":
                 return "SHOW_THIS_WEEK_TODOS"
+            return "SHOW_ALL_TODOS"
         if target_type in {"TODO", "SCHEDULE"} and action is None:
             if time_range == "TODAY":
                 return "SHOW_TODAY_TODOS"
@@ -1323,11 +1380,11 @@ class ChatInputAgent:
                 return "SHOW_OVERDUE_TODOS"
             if time_range == "CURRENT_WEEK":
                 return "SHOW_CURRENT_WEEK"
-            if source_type == "WBS":
-                return "ASSISTANT_BRIEFING"
-            return "SHOW_THIS_WEEK_TODOS"
+            if time_range == "THIS_WEEK":
+                return "SHOW_THIS_WEEK_TODOS"
+            return "SHOW_ALL_TODOS"
         if source_type == "WBS" and action == "SHOW":
-            return "ASSISTANT_BRIEFING"
+            return "SHOW_ALL_TODOS"
         return None
 
     def _semantic_confidence(
@@ -1367,6 +1424,7 @@ class ChatInputAgent:
             "target_type": slots.get("target_type"),
             "action": slots.get("action"),
             "time_range": slots.get("time_range"),
+            "status_filter": slots.get("status_filter"),
             "assignee": slots.get("assignee"),
             "artifact_type": slots.get("artifact_type"),
             "todo_target": slots.get("todo_target"),
@@ -1383,6 +1441,7 @@ class ChatInputAgent:
             "source_type": slots.get("source_type"),
             "target_type": slots.get("target_type"),
             "time_range": slots.get("time_range"),
+            "status_filter": slots.get("status_filter"),
             "artifact_type_slot": slots.get("artifact_type"),
             "corrections": slots.get("corrections") or [],
         }
@@ -1397,6 +1456,9 @@ class ChatInputAgent:
             entities["export_format"] = slots.get("export_format")
         if slots.get("time_range"):
             entities["time_range"] = slots.get("time_range")
+            entities["time_filter"] = slots.get("time_range")
+        if slots.get("status_filter"):
+            entities["status_filter"] = slots.get("status_filter")
         if slots.get("assignee"):
             entities["assignee"] = slots.get("assignee")
         if slots.get("todo_target"):
@@ -1961,14 +2023,9 @@ class ChatInputAgent:
             self.KO_OVERDUE_TERMS,
         ):
             return "SHOW_OVERDUE_TODOS"
-        if self._contains_any(
+        if self._looks_like_todo_extraction(
             normalized_message,
             compact_message,
-            self.KO_MEETING_TERMS,
-        ) and self._contains_any(
-            normalized_message,
-            compact_message,
-            self.KO_TODO_TERMS,
         ):
             return "EXTRACT_TODOS_FROM_MEETING"
         if self._contains_any(
@@ -2103,6 +2160,11 @@ class ChatInputAgent:
         entities: dict[str, Any] = {}
         if schedule_action in {"SHOW_THIS_WEEK_TODOS", "ASSISTANT_BRIEFING"}:
             entities["time_range"] = "THIS_WEEK"
+        elif schedule_action == "SHOW_ALL_TODOS":
+            time_range = self._detect_time_range(normalized, compact_message)
+            if time_range:
+                entities["time_range"] = time_range
+                entities["time_filter"] = time_range
         elif schedule_action == "SHOW_NEXT_WEEK_TODOS":
             entities["time_range"] = "NEXT_WEEK"
         elif schedule_action == "SHOW_TODAY_TODOS":
@@ -2129,6 +2191,8 @@ class ChatInputAgent:
             "ASSISTANT_BRIEFING",
         }:
             return ["WBS", "MEETING_NOTES", "TODO_LIST"]
+        if schedule_action == "SHOW_ALL_TODOS":
+            return ["TODO_LIST"]
         if schedule_action == "COMPARE_WEEKLY_MEETING_TODOS":
             return ["MEETING_NOTES", "TODO_LIST"]
         return ["TODO_LIST"]
@@ -2282,8 +2346,13 @@ class ChatInputAgent:
             compact_message,
             self.TODO_TRIGGER_PHRASES,
         )
+        has_explicit_extract_action = self._contains_any(
+            normalized_message,
+            compact_message,
+            self.EXTRACT_TERMS + self.KO_EXTRACT_TERMS + ("extract",),
+        )
         return (has_todo_target or has_todo_trigger) and (
-            has_meeting_source
+            (has_meeting_source and has_explicit_extract_action)
             or self._has_generation_signal(normalized_message, compact_message)
             or has_todo_trigger
         )

@@ -487,13 +487,12 @@ async def test_chat_input_agent_routes_meeting_todo_semantics_before_weekly_sche
     )
 
     assert response.success is True
-    assert response.structured_context["intent"] == "EXTRACT_ACTION_ITEMS"
-    assert response.structured_context["schedule_action"] == "EXTRACT_TODOS_FROM_MEETING"
-    assert response.structured_context["source_document_ids"] == ["DOC-MEETING-001"]
-    assert response.structured_context["missing_slots"] == []
+    assert response.structured_context["intent"] == "SCHEDULE_QUERY"
+    assert response.structured_context["schedule_action"] == "SHOW_THIS_WEEK_TODOS"
     assert response.structured_context["semantic_slots"]["source_type"] == "MEETING_NOTES"
     assert response.structured_context["semantic_slots"]["target_type"] == "TODO"
     assert response.structured_context["semantic_slots"]["time_range"] == "THIS_WEEK"
+    assert response.structured_context["entities"]["source"] == "MEETING_NOTES"
 
 
 @pytest.mark.anyio
@@ -519,9 +518,10 @@ async def test_chat_input_agent_uses_generated_wbs_context_for_schedule_query() 
 
     assert response.success is True
     assert response.structured_context["intent"] == "SCHEDULE_QUERY"
-    assert response.structured_context["schedule_action"] == "ASSISTANT_BRIEFING"
+    assert response.structured_context["schedule_action"] == "SHOW_ALL_TODOS"
     assert response.structured_context["semantic_slots"]["source_type"] == "WBS"
     assert response.structured_context["semantic_slots"]["target_type"] == "TODO"
+    assert response.structured_context["entities"]["source"] == "WBS"
     assert response.structured_context["context_snapshot"]["generated_artifact_types"] == [
         "WBS"
     ]

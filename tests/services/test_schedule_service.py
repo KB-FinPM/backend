@@ -1,5 +1,6 @@
 # EN: Tests for schedule service delegation behavior.
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -116,6 +117,98 @@ class StubNestedArtifactRepository:
         ]
 
 
+class StubCompleteActionItemRepository:
+    def __init__(self) -> None:
+        self.completed_ids: list[str] = []
+        self.todos = [
+            {"todo_id": "TODO-001", "title": "회의록 TODO", "status": "TODO"},
+            {"todo_id": "TODO-002", "title": "WBS TODO", "status": "TODO"},
+        ]
+
+    async def complete_todo_by_id(self, *, project_id: str, todo_id: str):
+        self.completed_ids.append(todo_id)
+        for todo in self.todos:
+            if todo["todo_id"] == todo_id:
+                todo["status"] = "DONE"
+                return {**todo}
+        return None
+
+    async def list_project_todos(self, *, project_id: str) -> list[dict]:
+        return [{**todo} for todo in self.todos]
+
+
+class StubTodoDateRepository:
+    async def list_project_todos(self, *, project_id: str) -> list[dict]:
+        return [
+            {"todo_id": "TODO-EMPTY", "title": "Empty due date", "status": "TODO"},
+            {
+                "todo_id": "TODO-YEARLESS",
+                "title": "Yearless due date",
+                "status": "TODO",
+                "due_date": "01.17",
+            },
+            {
+                "todo_id": "TODO-EXPLICIT",
+                "title": "Explicit due date",
+                "status": "TODO",
+                "due_date": "2025.01.17",
+            },
+        ]
+
+
+@pytest.mark.anyio
+async def test_schedule_service_completes_todo_by_id_without_matching() -> None:
+    action_item_repository = StubCompleteActionItemRepository()
+    service = ScheduleService(
+        orchestrator=StubScheduleOrchestrator(),
+        action_item_repository=action_item_repository,
+    )
+
+    response = await service.complete_todo_by_id(
+        project_id="PRJ-001",
+        todo_id="TODO-002",
+    )
+
+    assert response.success is True
+    assert action_item_repository.completed_ids == ["TODO-002"]
+    assert response.result["matched_todo"]["todo_id"] == "TODO-002"
+    assert response.result["matched_todo"]["next_status"] == "DONE"
+    assert [todo["todo_id"] for todo in response.result["remaining_todos"]] == [
+        "TODO-001"
+    ]
+
+
+@pytest.mark.anyio
+async def test_schedule_service_complete_todo_by_id_returns_not_found() -> None:
+    service = ScheduleService(
+        orchestrator=StubScheduleOrchestrator(),
+        action_item_repository=StubCompleteActionItemRepository(),
+    )
+
+    response = await service.complete_todo_by_id(
+        project_id="PRJ-001",
+        todo_id="TODO-404",
+    )
+
+    assert response.success is False
+    assert response.result["status"] == "NOT_FOUND"
+
+
+@pytest.mark.anyio
+async def test_schedule_service_normalizes_todo_due_dates_for_manager() -> None:
+    service = ScheduleService(
+        orchestrator=StubScheduleOrchestrator(),
+        action_item_repository=StubTodoDateRepository(),
+    )
+
+    response = await service.list_todos(project_id="PRJ-001")
+
+    due_dates = {item.todo_id: item.due_date for item in response.items}
+    assert due_dates["TODO-EMPTY"] == date.today().isoformat()
+    assert due_dates["TODO-YEARLESS"] == f"{date.today().year}-01-17"
+    assert due_dates["TODO-EXPLICIT"] == "2025-01-17"
+
+
 @pytest.mark.anyio
 async def test_schedule_service_uses_generated_wbs_artifact_without_upload() -> None:
     action_item_repository = StubActionItemRepository()
@@ -138,6 +231,8 @@ async def test_schedule_service_uses_generated_wbs_artifact_without_upload() -> 
     assert response.result["status"] == "SUCCESS"
     assert response.result["todos"][0]["todo_id"] == "TODO-WBS-001"
     assert response.result["todos"][0]["title"] == "설계 및 테스트"
+    assert response.result["todos"][0]["description"] != "WBS 기준 이번 기간 작업"
+    assert "설계 및 테스트" in response.result["todos"][0]["description"]
     assert response.result["metadata"]["wbs_todos_saved"] is True
     assert action_item_repository.saved_wbs_todos
 
@@ -164,3 +259,44 @@ async def test_schedule_service_reads_generated_wbs_rows_from_nested_artifact() 
     assert response.result["status"] == "SUCCESS"
     assert response.result["todos"][0]["title"] == "개발 및 테스트"
     assert response.result["todos"][0]["source_artifact_id"] == "ART-WBS-002"
+
+
+def test_schedule_service_duplicate_score_uses_description_context() -> None:
+    service = ScheduleService(orchestrator=StubScheduleOrchestrator())
+
+    score = service._duplicate_score(
+        {
+            "title": "법제처 자료 RPA 검토",
+            "description": "법제처 자료를 RPA로 축적할 수 있는지 검토한다.",
+            "assignee": "임태운 감사역",
+            "due_date": "2025-01-17",
+        },
+        {
+            "title": "법제처 자료 RPA 축적 가능 여부 검토",
+            "description": "법제처 자료를 RPA로 축적할 수 있는지 검토한다.",
+            "owner": "임태운 감사역",
+            "due_date": "2025-01-17",
+        },
+    )
+
+    assert score >= 0.55
+
+
+def test_schedule_service_todo_item_hides_generic_description() -> None:
+    service = ScheduleService(orchestrator=StubScheduleOrchestrator())
+
+    item = service._todo_item(
+        {
+            "todo_id": "TODO-001",
+            "title": "법제처 자료 RPA 축적 가능 여부 검토",
+            "description": "회의록에서 추출된 TODO",
+            "source_sentence": "법제처 자료를 RPA를 통해 축적 가능여부 검토예정 (임태운 감사역)",
+            "assignee": "임태운 감사역",
+            "source_type": "MEETING_NOTES",
+        }
+    )
+
+    assert item.description
+    assert "회의록" not in item.description
+    assert "TODO" not in item.description
+    assert "RPA" in item.description

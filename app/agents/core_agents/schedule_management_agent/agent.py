@@ -1,5 +1,5 @@
 # EN: Core agent adapter for lightweight schedule/todo management.
-# KO: 회의록 기반 TODO와 주차 조회를 위한 Core Agent adapter입니다.
+# KO: 회의록 기반 할일과 주차 조회를 위한 Core Agent adapter입니다.
 
 from __future__ import annotations
 
@@ -9,6 +9,10 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.core.todo_description import (
+    build_meeting_todo_description,
+    build_wbs_todo_description,
+)
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
 
@@ -24,6 +28,7 @@ class ScheduleManagementAgent:
         "EXTRACT_TODOS_FROM_MEETING",
         "SHOW_CURRENT_WEEK",
         "SHOW_THIS_WEEK_TODOS",
+        "SHOW_ALL_TODOS",
         "SHOW_NEXT_WEEK_TODOS",
         "SHOW_TODAY_TODOS",
         "SHOW_OVERDUE_TODOS",
@@ -236,6 +241,8 @@ class ScheduleManagementAgent:
                 return self._generate_todo_extraction(request, context)
             if action == "SHOW_CURRENT_WEEK":
                 return self._success(self._current_week_result(context))
+            if action == "SHOW_ALL_TODOS":
+                return self._success(self._all_todos_result(context))
             if action == "SHOW_THIS_WEEK_TODOS":
                 return self._success(self._this_week_todos_result(context))
             if action == "SHOW_NEXT_WEEK_TODOS":
@@ -392,11 +399,16 @@ class ScheduleManagementAgent:
                     "todo_id": f"TODO-TEMP-{len(todos) + 1:03d}",
                     "project_id": "",
                     "title": title,
-                    "description": "회의록에서 추출된 TODO",
+                    "description": build_meeting_todo_description(
+                        title=title,
+                        source_sentence=sentence,
+                        assignee=assignee,
+                        due_date_text=due_metadata.get("raw_text"),
+                    ),
                     "assignee": assignee,
                     "due_date": due_date,
                     "related_artifact": related_artifact,
-                    "related_document": related_artifact or "회의록 기반 신규 TODO",
+                    "related_document": related_artifact,
                     "source_type": "MEETING_NOTE",
                     "status": status,
                     "confidence": confidence,
@@ -457,13 +469,17 @@ class ScheduleManagementAgent:
                     "todo_id": f"TODO-TEMP-{len(todos) + 1:03d}",
                     "project_id": "",
                     "title": title,
-                    "description": item.get("description")
-                    or f"근거: {source_sentence}",
+                    "description": build_meeting_todo_description(
+                        title=title,
+                        description=item.get("description"),
+                        source_sentence=source_sentence,
+                        assignee=item.get("assignee"),
+                        due_date_text=item.get("due_date_text") or item.get("due_date"),
+                    ),
                     "assignee": item.get("assignee"),
                     "due_date": item.get("due_date"),
                     "related_artifact": item.get("related_artifact"),
-                    "related_document": item.get("related_document")
-                    or "회의록 기반 신규 TODO",
+                    "related_document": item.get("related_document"),
                     "source_type": item.get("source_type") or "MEETING_NOTE",
                     "status": status,
                     "confidence": item.get("confidence"),
@@ -488,6 +504,7 @@ class ScheduleManagementAgent:
         for todo in todos:
             key = (
                 self._normalize_match_text(str(todo.get("title") or "")),
+                self._normalize_match_text(str(todo.get("description") or "")),
                 str(todo.get("assignee") or ""),
                 str(todo.get("due_date") or ""),
             )
@@ -1237,12 +1254,63 @@ class ScheduleManagementAgent:
     def _this_week_todos_result(self, context: dict[str, Any]) -> dict[str, Any]:
         return self._period_todos_result(context, "SHOW_THIS_WEEK_TODOS", "THIS_WEEK")
 
+    def _all_todos_result(self, context: dict[str, Any]) -> dict[str, Any]:
+        filters = self._todo_query_filters(context)
+        todos = []
+        wbs_todos = []
+
+        for todo in self._context_todos(context):
+            normalized_todo = self._normalize_todo(todo)
+            if self._matches_todo_filters(normalized_todo, filters, context=context):
+                todos.append(normalized_todo)
+
+        wbs_tasks = self._context_wbs_tasks(context)
+        for task in wbs_tasks:
+            if self._has_child_wbs_task(task, wbs_tasks):
+                continue
+            normalized_task = self._normalize_wbs_task(task)
+            if self._is_phase_title(str(normalized_task.get("title") or "")):
+                continue
+            if self._matches_todo_filters(normalized_task, filters, context=context):
+                wbs_todos.append(normalized_task)
+
+        all_todos = [*todos, *wbs_todos]
+        metadata = {
+            "todo_count": len(all_todos),
+            "meeting_todo_count": sum(
+                1 for todo in all_todos if self._todo_source_group(todo) == "MEETING"
+            ),
+            "wbs_todo_count": sum(
+                1 for todo in all_todos if self._todo_source_group(todo) == "WBS"
+            ),
+            "source_filter": filters["source_filter"],
+            "time_filter": filters["time_filter"],
+            "status_filter": filters["status_filter"],
+        }
+        assistant_message = (
+            "채팅에서는 할일 완료처리를 지원하지 않습니다.\n"
+            "현재 등록된 할일 목록을 조회해드릴게요."
+            if self._todo_mutation_blocked(context)
+            else None
+        )
+        return {
+            "artifact_type": "SCHEDULE_TODO_LIST",
+            "action": "SHOW_ALL_TODOS",
+            "status": "SUCCESS",
+            "todos": all_todos,
+            "needs_confirmation": [],
+            "missing_fields": [],
+            "assistant_message": assistant_message,
+            "metadata": metadata,
+        }
+
     def _period_todos_result(
         self,
         context: dict[str, Any],
         action: str,
         period: str,
     ) -> dict[str, Any]:
+        filters = self._todo_query_filters(context)
         wbs_tasks = self._context_wbs_tasks(context)
         week_context, missing_fields, status = self._project_week_context(context)
         if self._requires_wbs_context(context, action) and not wbs_tasks:
@@ -1281,6 +1349,14 @@ class ScheduleManagementAgent:
         for todo in self._context_todos(context):
             due_date = self._parse_date(todo.get("due_date"))
             normalized_todo = self._normalize_todo(todo)
+            if not self._matches_source_filter(
+                normalized_todo,
+                filters["source_filter"],
+            ) or not self._matches_status_filter(
+                normalized_todo,
+                filters["status_filter"],
+            ):
+                continue
             if due_date and week_start <= due_date <= week_end:
                 todos.append(normalized_todo)
             elif not due_date and normalized_todo.get("status") == "NEEDS_CONFIRMATION":
@@ -1291,9 +1367,19 @@ class ScheduleManagementAgent:
         planned_tasks = []
         ongoing_management_tasks = []
         for task in wbs_tasks:
+            if self._has_child_wbs_task(task, wbs_tasks):
+                continue
             if not self._wbs_task_overlaps(task, week_start, week_end):
                 continue
             normalized_task = self._normalize_wbs_task(task)
+            if not self._matches_source_filter(
+                normalized_task,
+                filters["source_filter"],
+            ) or not self._matches_status_filter(
+                normalized_task,
+                filters["status_filter"],
+            ):
+                continue
             if self._is_phase_title(str(normalized_task.get("title") or "")):
                 continue
             if self._is_ongoing_management_task(normalized_task, project_bounds):
@@ -1334,6 +1420,8 @@ class ScheduleManagementAgent:
                 "wbs_task_count": len(planned_tasks),
                 "ongoing_management_task_count": len(ongoing_management_tasks),
                 "period": period,
+                "source_filter": filters["source_filter"],
+                "status_filter": filters["status_filter"],
             },
         }
 
@@ -1401,16 +1489,31 @@ class ScheduleManagementAgent:
         }
 
     def _overdue_todos_result(self, context: dict[str, Any]) -> dict[str, Any]:
+        filters = self._todo_query_filters(context)
         current_date = self._current_date(context)
         todos = []
         for todo in self._context_todos(context):
+            normalized_todo = self._normalize_todo(todo)
+            if not self._matches_source_filter(
+                normalized_todo,
+                filters["source_filter"],
+            ) or not self._matches_status_filter(normalized_todo, "NOT_DONE"):
+                continue
             due_date = self._parse_date(todo.get("due_date"))
             if due_date and due_date < current_date and todo.get("status") != "DONE":
-                overdue = self._normalize_todo(todo)
+                overdue = normalized_todo
                 overdue["status"] = "OVERDUE"
                 todos.append(overdue)
-        for task in self._context_wbs_tasks(context):
+        wbs_tasks = self._context_wbs_tasks(context)
+        for task in wbs_tasks:
+            if self._has_child_wbs_task(task, wbs_tasks):
+                continue
             normalized_task = self._normalize_wbs_task(task)
+            if not self._matches_source_filter(
+                normalized_task,
+                filters["source_filter"],
+            ) or not self._matches_status_filter(normalized_task, "NOT_DONE"):
+                continue
             planned_end_date = self._parse_date(normalized_task.get("planned_end_date"))
             if (
                 planned_end_date
@@ -1427,7 +1530,12 @@ class ScheduleManagementAgent:
             "todos": todos,
             "needs_confirmation": [],
             "missing_fields": [],
-            "metadata": {"todo_count": len(todos)},
+            "metadata": {
+                "todo_count": len(todos),
+                "source_filter": filters["source_filter"],
+                "time_filter": "OVERDUE",
+                "status_filter": "NOT_DONE",
+            },
         }
 
     def _required_context_result(
@@ -1480,7 +1588,7 @@ class ScheduleManagementAgent:
     def _missing_period_context_message(self, missing_fields: list[str]) -> str:
         if "wbs.task_period" in missing_fields:
             return (
-                "WBS는 확인했지만 작업 기간 정보가 없어 이번 주 할 일을 계산할 수 없습니다. "
+                "WBS는 확인했지만 작업 기간 정보가 없어 이번 주 할일을 계산할 수 없습니다. "
                 "작업 시작일과 종료일이 포함된 WBS를 사용해 주세요."
             )
         return (
@@ -1517,17 +1625,191 @@ class ScheduleManagementAgent:
             return next_week_start, next_week_start + timedelta(days=6)
         return week_start, week_end
 
+    def _todo_query_filters(self, context: dict[str, Any]) -> dict[str, str]:
+        normalized_input = context.get("normalized_input") or {}
+        semantic_slots = normalized_input.get("semantic_slots") or {}
+        entities = normalized_input.get("entities") or {}
+        source_value = (
+            entities.get("source_filter")
+            or entities.get("source")
+            or semantic_slots.get("source_type")
+            or normalized_input.get("source_type")
+        )
+        time_value = (
+            entities.get("time_filter")
+            or entities.get("time_range")
+            or semantic_slots.get("time_range")
+            or normalized_input.get("time_range")
+        )
+        status_value = (
+            entities.get("status_filter")
+            or semantic_slots.get("status_filter")
+            or normalized_input.get("status_filter")
+        )
+        return {
+            "source_filter": self._normalize_source_filter(source_value),
+            "time_filter": self._normalize_time_filter(time_value),
+            "status_filter": self._normalize_status_filter(status_value),
+        }
+
+    def _normalize_source_filter(self, value: Any) -> str:
+        text = str(value or "").strip().upper()
+        if not text:
+            return "ALL"
+        if "WBS" in text:
+            return "WBS"
+        if text in {
+            "MEETING",
+            "MEETING_NOTE",
+            "MEETING_NOTES",
+            "MEETING_TODO",
+            "EXTRACTED_FROM_MEETING",
+        }:
+            return "MEETING"
+        return "ALL"
+
+    def _normalize_time_filter(self, value: Any) -> str:
+        text = str(value or "").strip().upper()
+        if text in {"TODAY", "THIS_WEEK", "NEXT_WEEK", "OVERDUE", "ALL_PERIOD"}:
+            return text
+        if text == "CURRENT_WEEK":
+            return "THIS_WEEK"
+        return "NONE"
+
+    def _normalize_status_filter(self, value: Any) -> str:
+        text = str(value or "").strip().upper()
+        if text in {"ALL", "ANY"}:
+            return "ALL"
+        if text in {"DONE", "COMPLETED", "COMPLETE"}:
+            return "DONE"
+        if text in {
+            "NOT_DONE",
+            "INCOMPLETE",
+            "TODO",
+            "PENDING",
+            "OPEN",
+            "IN_PROGRESS",
+            "DELAYED",
+            "OVERDUE",
+        }:
+            return "NOT_DONE"
+        return "NOT_DONE"
+
+    def _matches_todo_filters(
+        self,
+        todo: dict[str, Any],
+        filters: dict[str, str],
+        *,
+        context: dict[str, Any],
+    ) -> bool:
+        return (
+            self._matches_source_filter(todo, filters["source_filter"])
+            and self._matches_status_filter(todo, filters["status_filter"])
+            and self._matches_time_filter(todo, filters["time_filter"], context)
+        )
+
+    def _matches_source_filter(self, todo: dict[str, Any], source_filter: str) -> bool:
+        if source_filter == "ALL":
+            return True
+        return self._todo_source_group(todo) == source_filter
+
+    def _todo_source_group(self, todo: dict[str, Any]) -> str:
+        source_type = str(
+            todo.get("source_type")
+            or todo.get("source_artifact_type")
+            or todo.get("document_type")
+            or ""
+        ).upper()
+        related = str(
+            todo.get("related_artifact")
+            or todo.get("related_document")
+            or todo.get("source_document_name")
+            or ""
+        ).upper()
+        if source_type in {"WBS", "WBS_TASK", "GENERATED_FROM_WBS"} or related == "WBS":
+            return "WBS"
+        if source_type in {
+            "MEETING",
+            "MEETING_NOTE",
+            "MEETING_NOTES",
+            "MEETING_TODO",
+            "EXTRACTED_FROM_MEETING",
+        }:
+            return "MEETING"
+        return "MEETING"
+
+    def _matches_status_filter(self, todo: dict[str, Any], status_filter: str) -> bool:
+        if status_filter == "ALL":
+            return True
+        is_done = self._is_done_todo_status(todo)
+        if status_filter == "DONE":
+            return is_done
+        return not is_done
+
+    def _is_done_todo_status(self, todo: dict[str, Any]) -> bool:
+        status = str(todo.get("status") or "").strip().upper()
+        status_display = str(todo.get("status_display") or "").strip()
+        return status in {"DONE", "COMPLETED", "COMPLETE"} or status_display == "완료"
+
+    def _matches_time_filter(
+        self,
+        todo: dict[str, Any],
+        time_filter: str,
+        context: dict[str, Any],
+    ) -> bool:
+        if time_filter in {"NONE", "ALL_PERIOD"}:
+            return True
+        current_date = self._current_date(context)
+        due_date = self._parse_date(
+            todo.get("due_date")
+            or todo.get("planned_end_date")
+            or todo.get("planned_date")
+        )
+        if time_filter == "OVERDUE":
+            return bool(
+                due_date and due_date < current_date
+            ) and not self._is_done_todo_status(todo)
+        if time_filter == "TODAY":
+            return due_date == current_date
+
+        week_context, _, _ = self._project_week_context(context)
+        period = "NEXT_WEEK" if time_filter == "NEXT_WEEK" else "THIS_WEEK"
+        period_start, period_end = self._period_bounds(
+            week_context,
+            period,
+            wbs_tasks=self._context_wbs_tasks(context),
+        )
+        start_date = self._parse_date(todo.get("planned_start_date")) or due_date
+        end_date = self._parse_date(todo.get("planned_end_date")) or due_date
+        if start_date and end_date:
+            return start_date <= period_end and end_date >= period_start
+        if due_date:
+            return period_start <= due_date <= period_end
+        return False
+
+    def _todo_mutation_blocked(self, context: dict[str, Any]) -> bool:
+        normalized_input = context.get("normalized_input") or {}
+        return bool(
+            context.get("todo_mutation_blocked")
+            or normalized_input.get("todo_mutation_blocked")
+        )
+
     def _requires_wbs_context(self, context: dict[str, Any], action: str) -> bool:
         normalized_input = context.get("normalized_input") or {}
         needs_context = normalized_input.get("needs_context") or []
         entities = normalized_input.get("entities") or {}
-        if entities.get("source") == "WBS":
-            return True
+        if self._normalize_source_filter(entities.get("source")) == "WBS":
+            return False
         if action in {
-            "SHOW_CURRENT_WEEK",
             "SHOW_THIS_WEEK_TODOS",
             "SHOW_NEXT_WEEK_TODOS",
             "SHOW_TODAY_TODOS",
+            "SHOW_OVERDUE_TODOS",
+            "SHOW_ALL_TODOS",
+        }:
+            return False
+        if action in {
+            "SHOW_CURRENT_WEEK",
             "ASSISTANT_BRIEFING",
         }:
             return "WBS" in needs_context
@@ -1630,6 +1912,14 @@ class ScheduleManagementAgent:
             or task.get("task_id")
             or self._wbs_row_todo_id(row_number=row_number, wbs_id=wbs_id, title=title)
         )
+        description_context = {
+            **task,
+            "title": title,
+            "assignee": assignee_display or assignee,
+            "planned_start_date": start_date.isoformat() if start_date else None,
+            "planned_end_date": end_date.isoformat() if end_date else None,
+            "artifact": self._task_value(task, "artifact", "deliverable", "산출물"),
+        }
         return {
             "todo_id": todo_id,
             "project_id": task.get("project_id"),
@@ -1638,7 +1928,11 @@ class ScheduleManagementAgent:
             "row_number": row_number,
             "wbs_id": wbs_id,
             "title": title,
-            "description": task.get("description") or "WBS 기준 이번 기간 작업",
+            "description": build_wbs_todo_description(
+                description_context,
+                title=title,
+                description=task.get("description"),
+            ),
             "raw_assignee": raw_assignee,
             "assignee": assignee,
             "assignee_display": assignee_display,
@@ -1682,6 +1976,34 @@ class ScheduleManagementAgent:
             str(self._task_value(task, "wbs_id", "id", "ID", "task_id") or ""),
             str(self._task_value(task, "title", "name", "task_name", "WBS명") or ""),
         )
+
+    def _has_child_wbs_task(
+        self,
+        task: dict[str, Any],
+        tasks: list[dict[str, Any]],
+    ) -> bool:
+        parent_id = str(self._task_value(task, "wbs_id", "id", "ID") or "").strip()
+        if not parent_id:
+            return False
+        parent_level = self._parse_int(self._task_value(task, "level", "레벨"))
+        for child in tasks:
+            if child is task:
+                continue
+            child_id = str(self._task_value(child, "wbs_id", "id", "ID") or "").strip()
+            if not child_id or child_id == parent_id:
+                continue
+            if not child_id.startswith(f"{parent_id}."):
+                continue
+            child_title = str(
+                self._task_value(child, "title", "name", "task_name", "WBS명") or ""
+            ).strip()
+            if not child_title:
+                continue
+            child_level = self._parse_int(self._task_value(child, "level", "레벨"))
+            if parent_level is not None and child_level is not None and child_level <= parent_level:
+                continue
+            return True
+        return False
 
     def _wbs_row_todo_id(
         self,
@@ -1937,7 +2259,7 @@ class ScheduleManagementAgent:
 
         if action == "ASSISTANT_BRIEFING":
             lines.append("")
-            lines.append("회의록 TODO가 함께 있으면 계획 대비 실제 진행 상황까지 이어서 확인할 수 있습니다.")
+            lines.append("회의록 할일이 함께 있으면 계획 대비 실제 진행 상황까지 이어서 확인할 수 있습니다.")
 
         return "\n".join(lines)
 

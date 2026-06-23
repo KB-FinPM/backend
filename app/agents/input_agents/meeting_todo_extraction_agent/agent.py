@@ -22,6 +22,10 @@ from app.agents.input_agents.meeting_todo_extraction_agent.prompts import (
 from app.agents.input_agents.meeting_todo_extraction_agent.schemas import (
     MeetingTodoExtractionResult,
 )
+from app.core.todo_description import (
+    build_meeting_todo_description,
+    is_generic_todo_description,
+)
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -148,6 +152,7 @@ class MeetingTodoExtractionAgent:
             call_label="meeting_todo_extraction",
         )
         payload = self._parse_json_response(response_text)
+        payload = self._normalize_llm_payload(payload, document=document)
         try:
             return MeetingTodoExtractionResult.model_validate(payload)
         except ValidationError as exc:
@@ -167,6 +172,129 @@ class MeetingTodoExtractionAgent:
         if not isinstance(payload, dict):
             raise ValueError("LLM response must be a JSON object")
         return payload
+
+    def _normalize_llm_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        document: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized = dict(payload)
+        if "todo_items" not in normalized and isinstance(normalized.get("items"), list):
+            normalized["todo_items"] = normalized["items"]
+        if "candidate_items" not in normalized and isinstance(
+            normalized.get("excluded_candidates"), list
+        ):
+            normalized["candidate_items"] = [
+                {
+                    "title": str(item.get("title") or item.get("text") or "")[:80],
+                    "classification": item.get("classification")
+                    if item.get("classification")
+                    in {
+                        "candidate",
+                        "issue_or_requirement",
+                        "requirement_candidate",
+                        "issue",
+                        "not_todo",
+                    }
+                    else "issue_or_requirement",
+                    "reason": item.get("reason") or "할일로 확정하지 않았습니다.",
+                    "source_sentence": item.get("source_sentence")
+                    or item.get("text")
+                    or "",
+                }
+                for item in normalized["excluded_candidates"]
+                if isinstance(item, dict)
+            ]
+
+        todo_items = normalized.get("todo_items")
+        if isinstance(todo_items, list):
+            normalized_items: list[dict[str, Any]] = []
+            for item in todo_items:
+                if not isinstance(item, dict):
+                    continue
+                title = self._compact_llm_title(item.get("title"))
+                if not title:
+                    continue
+                item["title"] = title
+                status = str(item.get("status") or "").strip().upper()
+                if status in {"진행전", "NOT_STARTED", "OPEN", "PENDING"}:
+                    item["status"] = "TODO"
+                elif status not in {"TODO", "NEEDS_CONFIRMATION"}:
+                    item["status"] = "NEEDS_CONFIRMATION"
+                item["confidence"] = self._normalize_confidence(item.get("confidence"))
+                item.setdefault("source_type", "MEETING_NOTE")
+                item.setdefault("classification", "todo")
+                item.setdefault("related_document", "")
+                item["due_date"] = self._normalize_empty_string(item.get("due_date"))
+                item["due_date_text"] = (
+                    str(item.get("due_date_text") or "").strip()
+                    or ("미정" if item.get("due_date") in (None, "") else str(item.get("due_date")))
+                )
+                item["needs_confirmation"] = self._normalize_confirmation_list(
+                    item.get("needs_confirmation"),
+                    due_date=item.get("due_date"),
+                    due_date_text=item.get("due_date_text"),
+                )
+                item["description"] = self._normalize_llm_description(item)
+                item["source_sentence"] = str(item.get("source_sentence") or "").strip()
+                if not item["source_sentence"]:
+                    item["source_sentence"] = str(item.get("description") or title)
+                normalized_items.append(item)
+            normalized["todo_items"] = normalized_items
+        if document:
+            normalized.setdefault("meeting_date", document.get("meeting_date"))
+        return normalized
+
+    def _compact_llm_title(self, value: Any) -> str:
+        title = re.sub(r"\s+", " ", str(value or "")).strip(" -:：,，.")
+        if len(title) <= 60:
+            return title
+        for delimiter in ("에 대해", " 관련", " 기준"):
+            if delimiter in title[:80]:
+                title = title.split(delimiter, 1)[0].strip()
+                break
+        return title[:60].rstrip(" -:：,，.")
+
+    def _normalize_confidence(self, value: Any) -> float:
+        if isinstance(value, (int, float)):
+            return max(0.0, min(float(value), 1.0))
+        text = str(value or "").strip().lower()
+        return {"high": 0.9, "medium": 0.7, "low": 0.5}.get(text, 0.6)
+
+    def _normalize_empty_string(self, value: Any) -> Any | None:
+        if value in ("", "미정", "null", "None"):
+            return None
+        return value
+
+    def _normalize_confirmation_list(
+        self,
+        value: Any,
+        *,
+        due_date: Any,
+        due_date_text: Any,
+    ) -> list[str]:
+        if isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+        elif value:
+            items = [str(value).strip()]
+        else:
+            items = []
+        if not due_date and str(due_date_text or "").strip() in {"", "미정"} and "기한" not in items:
+            items.append("기한")
+        return items
+
+    def _normalize_llm_description(self, item: dict[str, Any]) -> str:
+        description = str(item.get("description") or "").strip()
+        if description and not is_generic_todo_description(description):
+            return description
+        return build_meeting_todo_description(
+            title=item.get("title"),
+            source_sentence=item.get("source_sentence"),
+            description=description,
+            assignee=item.get("assignee"),
+            due_date_text=item.get("due_date_text") or item.get("due_date"),
+        )
 
 
 meeting_todo_extraction_agent = MeetingTodoExtractionAgent()
