@@ -57,6 +57,47 @@ def test_wbs_export_fills_hierarchical_display_ids(monkeypatch) -> None:
     assert actual_ids == expected_ids
 
 
+def test_wbs_export_orders_rows_by_wbs_hierarchy(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "util.agent_template_utils.settings.S3_STORAGE_BACKEND",
+        "mock",
+    )
+    result_json = {
+        "artifact_type": "WBS",
+        "tasks": [
+            {
+                "task_id": "WBS-004",
+                "name": "이행 상세",
+                "metadata": {"level": "4", "wbs_id": "3.6.2.3"},
+            },
+            {
+                "task_id": "WBS-002",
+                "name": "요구사항 정의 상세 2",
+                "metadata": {"level": "4", "wbs_id": "3.1.2"},
+            },
+            {
+                "task_id": "WBS-003",
+                "name": "설계 상세",
+                "metadata": {"level": "4", "wbs_id": "3.3.5"},
+            },
+            {
+                "task_id": "WBS-001",
+                "name": "요구사항 정의 상세 1",
+                "metadata": {"level": "4", "wbs_id": "3.1.1"},
+            },
+        ],
+        "metadata": {"project_id": "PRJ-TEST-001", "author": "Tester"},
+    }
+
+    file_bytes = ArtifactExportService()._build_wbs_xlsx(result_json)
+    workbook = load_workbook(BytesIO(file_bytes), data_only=False)
+    sheet = workbook["WBS"]
+
+    actual_ids = [sheet.cell(row=row, column=3).value for row in range(2, 6)]
+
+    assert actual_ids == ["3.1.1", "3.1.2", "3.3.5", "3.6.2.3"]
+
+
 def test_wbs_export_fills_planned_date_columns(monkeypatch) -> None:
     monkeypatch.setattr(
         "util.agent_template_utils.settings.S3_STORAGE_BACKEND",
@@ -233,9 +274,10 @@ async def test_requirement_export_uses_unprefixed_file_name() -> None:
     )
 
     assert result is not None
-    assert result.file_name == "요구사항명세서.xlsx"
+    assert result.file_name.startswith("[KB Star Banking Process] 요구사항명세서_")
+    assert result.file_name.endswith("_v1.xlsx")
     assert storage_service.uploaded_keys[0].endswith(
-        "/REQUIREMENT_SPEC/ART-REQ-001/요구사항명세서.xlsx"
+        f"/REQUIREMENT_SPEC/ART-REQ-001/{result.file_name}"
     )
 
 

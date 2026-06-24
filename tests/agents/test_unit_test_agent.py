@@ -9,7 +9,7 @@ from app.schemas.agent import AgentRequest
 
 
 @pytest.mark.anyio
-async def test_unit_test_agent_creates_cases_from_requirements() -> None:
+async def test_unit_test_agent_creates_one_case_per_screen_description() -> None:
     agent = UnitTestAgent()
 
     response = await agent.generate(
@@ -18,36 +18,22 @@ async def test_unit_test_agent_creates_cases_from_requirements() -> None:
             context={
                 "project_name": "테스트 구축 프로젝트",
                 "author": "김국민",
-                "requirement_artifact": {
-                    "requirements": [
+                "screen_artifact": {
+                    "artifact_type": "SCREEN_DESIGN",
+                    "screens": [
                         {
-                            "requirement_id": "BSR-00001",
-                            "title": "회원 조회",
-                            "description": "- 회원 목록을 조회한다.\\n- 회원 상세를 조회한다.",
-                            "metadata": {
-                                "requirement_name": "회원 조회",
-                                "biz_requirement_id": "Biz-0001",
-                            },
+                            "screen_id": "SCR-001",
+                            "name": "회원 조회",
+                            "description": "회원 목록을 조회하고 상세를 확인한다.",
+                            "source_requirement_ids": ["BSR-00001"],
                         },
                         {
-                            "requirement_id": "BSR-00002",
-                            "title": "회원 등록",
-                            "description": "회원 정보를 등록한다.",
-                            "metadata": {
-                                "requirement_name": "회원 등록",
-                                "biz_requirement_id": "Biz-0001",
-                            },
+                            "screen_id": "SCR-002",
+                            "name": "회원 등록",
+                            "description": "회원 정보를 등록하고 저장 결과를 확인한다.",
+                            "source_requirement_ids": ["BSR-00002"],
                         },
-                        {
-                            "requirement_id": "BSR-00003",
-                            "title": "권한 변경",
-                            "description": "권한을 변경한다.",
-                            "metadata": {
-                                "requirement_name": "권한 변경",
-                                "biz_requirement_id": "Biz-0002",
-                            },
-                        },
-                    ]
+                    ],
                 },
             },
         )
@@ -57,29 +43,25 @@ async def test_unit_test_agent_creates_cases_from_requirements() -> None:
     assert response.result["artifact_type"] == "UNITTEST_SPEC"
     assert response.result["metadata"]["project_name"] == "테스트 구축 프로젝트"
     assert response.result["metadata"]["author"] == "김국민"
+    assert response.result["metadata"]["source_screen_count"] == 2
     assert [case["test_case_id"] for case in response.result["test_cases"]] == [
-        "TEST-0001-001",
-        "TEST-0001-002",
-        "TEST-0001-003",
-        "TEST-0001-004",
-        "TEST-0002-001",
-        "TEST-0002-002",
-        "TEST-0002-003",
+        "TEST-0001",
+        "TEST-0002",
     ]
     assert response.result["test_cases"][0]["requirement_id"] == "BSR-00001"
     assert response.result["test_cases"][0]["requirement_name"] == "회원 조회"
-    assert response.result["test_cases"][0]["scenario_id"] == "Biz-0001-01"
-    assert response.result["test_cases"][0]["test_case_name"] == "회원 조회 정상"
-    assert response.result["test_cases"][0]["test_content"] == (
-        "1. 정상 회원 조회의 정상 처리 결과를 검증한다.\n"
-        "2. 회원 조회의 예외/경계 조건 및 입력값 검증을 확인한다.\n"
-        "3. 회원 목록을 조회한다.\n"
-        "4. 회원 상세를 조회한다."
-    )
+    assert response.result["test_cases"][0]["scenario_id"] == "SCN-001"
+    assert response.result["test_cases"][0]["test_case_name"] == "회원 조회 기본 검증"
+    test_content_lines = response.result["test_cases"][0]["test_content"].splitlines()
+    assert len(test_content_lines) >= 3
+    assert test_content_lines[0].startswith("1. ")
+    assert test_content_lines[1].startswith("2. ")
+    assert any("조회 조건 입력" in line for line in test_content_lines)
+    assert "회원 목록을 조회하고 상세를 확인한다" in test_content_lines[0]
 
 
 @pytest.mark.anyio
-async def test_unit_test_agent_reads_requirement_metadata_from_documents() -> None:
+async def test_unit_test_agent_reads_screen_artifact_from_documents() -> None:
     agent = UnitTestAgent()
 
     response = await agent.generate(
@@ -89,16 +71,47 @@ async def test_unit_test_agent_reads_requirement_metadata_from_documents() -> No
                 {
                     "chunk_id": "CHUNK-001",
                     "document_id": "DOC-001",
-                    "text": "회원 조회",
+                    "text": (
+                        '{"artifact_type":"SCREEN_DESIGN","screens":['
+                        '{"screen_id":"SCR-001","name":"회원 조회","description":"회원 목록을 조회한다.","source_requirement_ids":["BSR-00001"]}'
+                        "]}"
+                    ),
+                }
+            ],
+        )
+    )
+
+    assert response.success is True
+    assert len(response.result["test_cases"]) == 1
+    assert response.result["test_cases"][0]["requirement_name"] == "회원 조회"
+    assert response.result["test_cases"][0]["metadata"]["screen_id"] == "SCR-001"
+
+
+@pytest.mark.anyio
+async def test_unit_test_agent_reads_screen_artifact_from_chunk_metadata() -> None:
+    agent = UnitTestAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[
+                {
+                    "chunk_id": "CHUNK-001",
+                    "document_id": "DOC-001",
+                    "chunk_index": 2,
+                    "section_title": "회원 조회",
+                    "text": "SCR-003 | 회원 조회 | 회원 목록을 조회한다. | 목록, 상세 | REQ-003",
                     "metadata": {
-                        "requirement": {
-                            "requirement_id": "BSR-00001",
-                            "title": "회원 조회",
-                            "description": "회원 목록을 조회한다.",
-                            "metadata": {
-                                "requirement_name": "회원 조회",
-                                "biz_requirement_id": "Biz-0001",
-                            },
+                        "screen_artifact": {
+                            "artifact_type": "SCREEN_DESIGN",
+                            "screens": [
+                                {
+                                    "screen_id": "SCR-003",
+                                    "name": "회원 조회",
+                                    "description": "회원 목록을 조회한다.",
+                                    "source_requirement_ids": ["REQ-003"],
+                                }
+                            ],
                         }
                     },
                 }
@@ -107,11 +120,94 @@ async def test_unit_test_agent_reads_requirement_metadata_from_documents() -> No
     )
 
     assert response.success is True
-    assert response.result["test_cases"][0]["test_case_id"] == "TEST-0001-001"
+    assert response.result["metadata"]["source_screen_count"] == 1
+    assert response.result["test_cases"][0]["requirement_name"] == "회원 조회"
+    assert response.result["test_cases"][0]["requirement_id"] == "REQ-003"
 
 
 @pytest.mark.anyio
-async def test_unit_test_agent_preserves_blank_test_content_for_validation() -> None:
+async def test_unit_test_agent_parses_screen_design_text_rows_from_documents() -> None:
+    agent = UnitTestAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[
+                {
+                    "chunk_id": "CHUNK-001",
+                    "document_id": "DOC-001",
+                    "text": (
+                        "# SCREEN_DESIGN\n"
+                        "SCR-001 | 표지 | 표지 페이지 |  | \n"
+                        "SCR-002 | 목차 | 목차 페이지 |  | \n"
+                        "SCR-003 | 회원 조회 | 회원 목록을 조회한다. 회원 상세를 확인한다. | 항목A, 항목B | REQ-003\n"
+                        "SCR-004 | 회원 등록 | 회원 정보를 등록하고 저장 결과를 확인한다. | 항목C, 항목D | REQ-004\n"
+                    ),
+                }
+            ],
+        )
+    )
+
+    assert response.success is True
+    assert response.result["metadata"]["source_screen_count"] == 2
+    assert [case["metadata"]["screen_id"] for case in response.result["test_cases"]] == [
+        "SCR-003",
+        "SCR-004",
+    ]
+    assert [case["requirement_id"] for case in response.result["test_cases"]] == [
+        "REQ-003",
+        "REQ-004",
+    ]
+
+
+@pytest.mark.anyio
+async def test_unit_test_agent_falls_back_to_document_chunks_when_text_is_unstructured() -> None:
+    agent = UnitTestAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[
+                {
+                    "chunk_id": "CHUNK-001",
+                    "chunk_index": 0,
+                    "text": "표지",
+                },
+                {
+                    "chunk_id": "CHUNK-002",
+                    "chunk_index": 1,
+                    "text": "목차",
+                },
+                {
+                    "chunk_id": "CHUNK-003",
+                    "chunk_index": 2,
+                    "section_title": "회원 조회",
+                    "text": "회원 목록을 조회한다. 상세를 확인한다. REQ-101",
+                },
+                {
+                    "chunk_id": "CHUNK-004",
+                    "chunk_index": 3,
+                    "section_title": "회원 등록",
+                    "text": "회원 정보를 등록하고 저장 결과를 확인한다. REQ-102",
+                },
+            ],
+        )
+    )
+
+    assert response.success is True
+    assert response.result["metadata"]["source_screen_count"] == 2
+    assert [case["metadata"]["screen_name"] for case in response.result["test_cases"]] == [
+        "회원 조회",
+        "회원 등록",
+    ]
+    assert [case["requirement_id"] for case in response.result["test_cases"]] == [
+        "REQ-101",
+        "REQ-102",
+    ]
+
+
+@pytest.mark.anyio
+async def test_unit_test_agent_falls_back_to_screen_name_when_description_is_blank() -> None:
     agent = UnitTestAgent()
     validator = ValidatorAgent()
 
@@ -119,17 +215,13 @@ async def test_unit_test_agent_preserves_blank_test_content_for_validation() -> 
         AgentRequest(
             project_id="PRJ-001",
             context={
-                "requirement_artifact": {
-                    "requirements": [
+                "screen_artifact": {
+                    "screens": [
                         {
-                            "requirement_id": "BSR-00001",
-                            "title": "대량거래 입력",
+                            "screen_id": "SCR-001",
+                            "name": "대량거래 입력",
                             "description": "",
-                            "metadata": {
-                                "requirement_name": "대량거래 입력",
-                                "biz_requirement_id": "Biz-0001",
-                                "description": "",
-                            },
+                            "source_requirement_ids": ["BSR-00001"],
                         }
                     ]
                 }
@@ -139,6 +231,83 @@ async def test_unit_test_agent_preserves_blank_test_content_for_validation() -> 
     validation = await validator.validate(response.result)
 
     assert response.success is True
-    assert response.result["test_cases"][0]["test_content"] == " "
-    assert response.result["test_cases"][0]["metadata"]["test_content"] == " "
+    assert response.result["test_cases"][0]["test_content"].strip() != ""
+    assert response.result["test_cases"][0]["metadata"]["screen_name"] == "대량거래 입력"
+    assert response.result["test_cases"][0]["test_content"].splitlines()[0].startswith("1. ")
     assert validation.success is True
+
+
+@pytest.mark.anyio
+async def test_unit_test_agent_uses_save_template_for_registration_screen() -> None:
+    agent = UnitTestAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "screen_artifact": {
+                    "screens": [
+                        {
+                            "screen_id": "SCR-010",
+                            "name": "회원 등록",
+                            "description": "회원 정보를 등록하고 저장 결과를 확인한다.",
+                            "source_requirement_ids": ["BSR-00010"],
+                        }
+                    ]
+                }
+            },
+        )
+    )
+
+    assert response.success is True
+    test_content_lines = response.result["test_cases"][0]["test_content"].splitlines()
+    assert len(test_content_lines) <= 6
+    assert "회원 정보를 등록하고 저장 결과를 확인한다" in test_content_lines[0]
+    assert any("저장 버튼 상태" in line for line in test_content_lines)
+    assert any("정상 저장 후 결과 메시지" in line for line in test_content_lines)
+    assert any("필수 입력 항목" in line for line in test_content_lines)
+    assert response.result["test_cases"][0]["test_case_name"] == "회원 등록 처리 검증"
+
+
+@pytest.mark.anyio
+async def test_unit_test_agent_skips_preliminary_pages_when_page_numbers_exist() -> None:
+    agent = UnitTestAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "screen_artifact": {
+                    "artifact_type": "SCREEN_DESIGN",
+                    "screens": [
+                        {
+                            "screen_id": "SCR-001",
+                            "name": "표지",
+                            "description": "문서 표지",
+                            "source_requirement_ids": ["REQ-001"],
+                            "metadata": {"page_number": 1},
+                        },
+                        {
+                            "screen_id": "SCR-002",
+                            "name": "목차",
+                            "description": "문서 목차",
+                            "source_requirement_ids": ["REQ-002"],
+                            "metadata": {"page_number": 2},
+                        },
+                        {
+                            "screen_id": "SCR-003",
+                            "name": "회원 조회",
+                            "description": "ㆍ 회원 목록을 조회한다.\nㆍ 상세를 확인한다.",
+                            "source_requirement_ids": ["REQ-003"],
+                            "metadata": {"page_number": 3},
+                        },
+                    ],
+                }
+            },
+        )
+    )
+
+    assert response.success is True
+    assert len(response.result["test_cases"]) == 1
+    assert response.result["test_cases"][0]["metadata"]["screen_id"] == "SCR-003"
+    assert response.result["test_cases"][0]["requirement_id"] == "REQ-003"

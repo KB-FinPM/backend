@@ -1064,6 +1064,8 @@ class ChatOutputAgent:
                 if source_document_type == "CONSTRUCTION_REQUIREMENT_DEFINITION"
                 else "업로드한 요구사항 명세서"
                 if source_document_type == "REQUIREMENT_SPEC"
+                else "업로드한 화면설계서"
+                if source_document_type == "SCREEN_DESIGN"
                 else "선택한 문서"
             )
 

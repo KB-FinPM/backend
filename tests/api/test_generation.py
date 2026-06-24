@@ -287,7 +287,7 @@ def test_generate_screen_design_sets_target_artifact_type(client: TestClient) ->
     assert stub_output_orchestrator.received_response_type == "API_RESPONSE"
 
 
-def test_generate_unittest_uses_requirement_spec_source(client: TestClient) -> None:
+def test_generate_unittest_uses_screen_design_source(client: TestClient) -> None:
     stub_generation_service = StubGenerationOrchestrator()
     stub_input_orchestrator = StubInputOrchestrator()
     stub_output_orchestrator = StubOutputOrchestrator()
@@ -312,7 +312,7 @@ def test_generate_unittest_uses_requirement_spec_source(client: TestClient) -> N
                 "project_id": "PRJ-001",
                 "source_document_ids": ["DOC-REQ-001"],
                 "source_document_type": "REQUIREMENT_SPEC",
-                "target_artifact_type": "REQUIREMENT_SPEC",
+                "target_artifact_type": "SCREEN_DESIGN",
             },
         )
     finally:
@@ -321,7 +321,7 @@ def test_generate_unittest_uses_requirement_spec_source(client: TestClient) -> N
     assert response.status_code == 200
     assert stub_generation_service.received_request is not None
     assert stub_generation_service.received_request.source_document_type == (
-        "REQUIREMENT_SPEC"
+        "SCREEN_DESIGN"
     )
     assert stub_generation_service.received_request.target_artifact_type == (
         "UNITTEST_SPEC"

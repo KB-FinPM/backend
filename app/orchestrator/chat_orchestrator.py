@@ -494,7 +494,11 @@ class ChatOrchestrator:
                 "output_format": output_format,
                 "requirements_confirmed": True,
             },
-            "source_document_type": structured_context.get("source_document_type"),
+            "source_document_type": (
+                required_source_type.value
+                if required_source_type is not None
+                else structured_context.get("source_document_type")
+            ),
             "output_format": output_format,
             "project_name": request.context.get("project_name"),
             "start_date": project_start_date,

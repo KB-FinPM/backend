@@ -197,3 +197,55 @@ async def test_document_ingestion_orchestrator_indexes_wbs_rows_once(session_fac
     assert len(chunks) == 2
     assert [chunk.chunk_index for chunk in chunks] == [0, 1]
     assert [chunk.section_title for chunk in chunks] == ["요구사항정의", "분석"]
+
+
+@pytest.mark.anyio
+async def test_document_ingestion_orchestrator_indexes_screen_design_screens_once(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository = DocumentRepository(session)
+        orchestrator = DocumentIngestionOrchestrator(
+            embedding_service=FakeEmbeddingService()
+        )
+
+        document = await orchestrator.ingest_uploaded_document(
+            document_repository=repository,
+            document_id="DOC-002",
+            project_id="PRJ-001",
+            document_type=DocumentType.SCREEN_DESIGN,
+            file_name="screen_design.pptx",
+            storage_path="s3://bucket/screen_design.pptx",
+            file_bytes=b"binary",
+            parsed_context={
+                "text": "# SCREEN_DESIGN\nSCR-001 | 회원 조회 | 회원 목록을 조회한다. | 목록, 상세 | REQ-001\nSCR-002 | 회원 등록 | 회원 정보를 등록하고 저장한다. | 입력, 저장 | REQ-002",
+                "screens": [
+                    {
+                        "screen_id": "SCR-001",
+                        "name": "회원 조회",
+                        "description": "회원 목록을 조회한다.",
+                        "source_requirement_ids": ["REQ-001"],
+                        "metadata": {"display_items": ["목록", "상세"]},
+                    },
+                    {
+                        "screen_id": "SCR-002",
+                        "name": "회원 등록",
+                        "description": "회원 정보를 등록하고 저장한다.",
+                        "source_requirement_ids": ["REQ-002"],
+                        "metadata": {"display_items": ["입력", "저장"]},
+                    },
+                ],
+                "metadata": {"artifact_type": "SCREEN_DESIGN"},
+                "parser_name": "ArtifactExportService",
+            },
+        )
+        chunks = await repository.list_chunks_by_document(
+            project_id="PRJ-001",
+            document_id="DOC-002",
+        )
+
+    assert document.status == DocumentStatus.INDEXED
+    assert len(chunks) == 2
+    assert [chunk.section_title for chunk in chunks] == ["회원 조회", "회원 등록"]
+    assert chunks[0].chunk_metadata["screen_artifact"]["screens"][0]["screen_id"] == "SCR-001"
+    assert chunks[1].chunk_metadata["screen_artifact"]["screens"][0]["screen_id"] == "SCR-002"

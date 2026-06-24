@@ -572,12 +572,18 @@ class WbsAgent:
         *,
         start_date_text: str,
         end_date_text: str,
+        atoms,
     ) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
         for row in self.SCHEDULE_ANCHOR_DETAIL_ROWS:
             wbs_id = str(row["wbs_id"])
             name = str(row["wbs_name"])
             phase_name = self._development_phase_from_wbs_id(wbs_id)
+            source_requirement_ids = self._source_requirement_ids_for_task(
+                atoms,
+                phase=phase_name,
+                name=name,
+            )
             metadata = {
                 "level": str(row["level"]),
                 "phase": phase_name,
@@ -595,7 +601,7 @@ class WbsAgent:
                     "task_id": f"WBS-{wbs_id}",
                     "name": name,
                     "description": self._detail_description_for_phase(phase_name, name),
-                    "source_requirement_ids": [],
+                    "source_requirement_ids": source_requirement_ids,
                     "metadata": metadata,
                 }
             )
@@ -605,6 +611,7 @@ class WbsAgent:
         self,
         request: AgentRequest,
         *,
+        atoms,
         start_date: date | None,
         end_date: date | None,
         project_period: str | None,
@@ -654,12 +661,17 @@ class WbsAgent:
                 task_metadata["end_date"] = end_date_text
             if numeric_level > 1 and not task_metadata.get("worker"):
                 task_metadata["worker"] = "작업자"
+            source_requirement_ids = self._source_requirement_ids_for_task(
+                atoms,
+                phase=phase_name or "공통",
+                name=name,
+            )
             tasks.append(
                 {
                     "task_id": f"WBS-{len(tasks) + 1:03d}",
                     "name": name,
                     "description": f"공통 WBS 템플릿 항목: {name}",
-                    "source_requirement_ids": [],
+                    "source_requirement_ids": source_requirement_ids,
                     "metadata": task_metadata,
                 }
             )
@@ -669,6 +681,7 @@ class WbsAgent:
                 self._build_schedule_anchor_tasks(
                     start_date_text=start_date_text,
                     end_date_text=end_date_text,
+                    atoms=atoms,
                 )
             )
 
@@ -727,6 +740,42 @@ class WbsAgent:
             or atom.domain
             or fallback
         ).strip()
+
+    def _source_requirement_ids_for_task(
+        self,
+        atoms,
+        *,
+        phase: str,
+        name: str,
+    ) -> list[str]:
+        ids: list[str] = []
+        for value in self._guess_source_requirement_ids(atoms, phase, name):
+            requirement_id = str(value or "").strip()
+            if requirement_id and requirement_id not in ids:
+                ids.append(requirement_id)
+        if not ids:
+            for atom in atoms or []:
+                requirement_id = str(getattr(atom, "requirement_id", "") or "").strip()
+                if requirement_id and requirement_id not in ids:
+                    ids.append(requirement_id)
+                if len(ids) >= 3:
+                    break
+        return ids[:3]
+
+    def _phase_detail_prefix(self, phase: str) -> str:
+        return {
+            "요구사항정의": "3.1",
+            "분석": "3.2",
+            "설계": "3.3",
+            "구현": "3.4",
+            "테스트": "3.5",
+            "이행": "3.6",
+            "안정화": "3.6.3",
+        }.get(phase, "3.4")
+
+    def _phase_detail_wbs_id(self, phase: str, index: int) -> str:
+        prefix = self._phase_detail_prefix(phase)
+        return f"{prefix}.{index}"
 
     def _score_atom_for_phase(self, atom, phase: str) -> int:
         phase_keywords = {
@@ -813,13 +862,17 @@ class WbsAgent:
                 suffix = suffixes[index % len(suffixes)]
                 if atom is not None:
                     atom_name = self._atom_display_name(atom, fallback=project_name)
-                    source_requirement_ids = [str(getattr(atom, "requirement_id", "")).strip()]
                     name = f"{atom_name} {suffix}".strip()
                     description = f"{atom_name} 관련 {phase_role_labels.get(phase, phase)} 작업을 수행한다."
                     if atom.description:
                         description = f"{description} {truncate_text(atom.description, 180)}"
+                    source_requirement_ids = self._source_requirement_ids_for_task(
+                        [atom],
+                        phase=phase,
+                        name=atom_name,
+                    )
+                    wbs_id = self._phase_detail_wbs_id(phase, index + 1)
                 else:
-                    source_requirement_ids = []
                     if phase == "요구사항정의":
                         name = f"{project_name} {suffix}".strip()
                     elif phase == "이행":
@@ -827,6 +880,12 @@ class WbsAgent:
                     else:
                         name = f"{project_name} {suffix}".strip()
                     description = self._detail_description_for_phase(phase, name)
+                    source_requirement_ids = self._source_requirement_ids_for_task(
+                        atoms,
+                        phase=phase,
+                        name=name,
+                    )
+                    wbs_id = self._phase_detail_wbs_id(phase, index + 1)
 
                 deliverable = str(self._resolve_deliverable_local(name, phase) or "").strip()
                 if project_type and project_type != "auto":
@@ -834,16 +893,19 @@ class WbsAgent:
                 tasks.append(
                     {
                         "phase": phase,
-                        "level": "3",
+                        "level": "4",
                         "name": name,
                         "description": truncate_text(description, 700),
                         "source_requirement_ids": [value for value in source_requirement_ids if value],
+                        "wbs_id": wbs_id,
                         "metadata": {
                             "phase": phase,
                             "deliverable": deliverable,
                             "generation_source": "fallback",
-                            "level": "3",
+                            "level": "4",
                             "worker": "작업자",
+                            "wbs_id": wbs_id,
+                            "id": wbs_id,
                         },
                     }
                 )
@@ -1081,6 +1143,8 @@ Project period: {project_period or ""}
         self,
         base_tasks: list[dict[str, object]],
         llm_tasks: list[dict[str, object]],
+        *,
+        atoms,
     ) -> list[dict[str, object]]:
         phase_buckets: dict[str, list[dict[str, object]]] = {phase: [] for phase in self.DEVELOPMENT_PHASE_ORDER}
         overflow_tasks: list[dict[str, object]] = []
@@ -1090,7 +1154,7 @@ Project period: {project_period or ""}
             phase = str(extra.get("phase") or "").strip()
             if phase == "개발":
                 phase = "구현"
-            materialized = self._materialize_llm_task(extra, phase=phase, index=index)
+            materialized = self._materialize_llm_task(extra, phase=phase, index=index, atoms=atoms)
             metadata = materialized.get("metadata") or {}
             insert_after_phase = False
             if isinstance(metadata, dict):
@@ -1133,6 +1197,7 @@ Project period: {project_period or ""}
         *,
         phase: str,
         index: int,
+        atoms,
     ) -> dict[str, object]:
         extra_metadata = dict(extra.get("metadata") or {})
         extra_metadata.setdefault("phase", phase)
@@ -1143,20 +1208,27 @@ Project period: {project_period or ""}
         extra_metadata.setdefault("generation_source", "llm")
         if extra.get("_insert_after_phase"):
             extra_metadata["_insert_after_phase"] = True
-        level_text = str(extra.get("level") or extra_metadata.get("level") or "3").strip() or "3"
-        extra_metadata["level"] = level_text
+        detail_level = "4"
+        extra_metadata["level"] = detail_level
         if not extra_metadata.get("wbs_id"):
-            try:
-                extra_metadata["wbs_id"] = str(int(level_text) + 1)
-            except ValueError:
-                extra_metadata["wbs_id"] = "4"
+            extra_metadata["wbs_id"] = self._phase_detail_wbs_id(phase, index)
         extra_metadata.setdefault("id", extra_metadata.get("wbs_id"))
         extra_metadata.setdefault("worker", "작업자")
+        source_requirement_ids = extra.get("source_requirement_ids") or []
+        if isinstance(source_requirement_ids, str):
+            source_requirement_ids = [source_requirement_ids]
+        if not source_requirement_ids:
+            source_requirement_ids = self._source_requirement_ids_for_task(
+                atoms,
+                phase=phase,
+                name=str(extra.get("name") or "").strip(),
+            )
         return {
             "task_id": f"WBS-LLM-{phase[:1] or 'X'}-{index:02d}",
             "name": str(extra.get("name") or "").strip(),
             "description": str(extra.get("description") or "").strip(),
-            "source_requirement_ids": extra.get("source_requirement_ids") or [],
+            "source_requirement_ids": [str(value) for value in source_requirement_ids if value],
+            "wbs_id": extra_metadata.get("wbs_id"),
             "metadata": extra_metadata,
         }
 
@@ -1197,10 +1269,20 @@ Project period: {project_period or ""}
                 self._context_requirement_artifact(request),
                 documents=request.documents,
             )
-            used_default_draft = False
+
+            if self._has_invalid_explicit_schedule_context(request.context):
+                return AgentResponse(
+                    success=False,
+                    agent_name=self.AGENT_NAME,
+                    error="project start_date is required for WBS generation",
+                )
+
             if not atoms:
-                atoms = self._fallback_atoms_from_request(request)
-                used_default_draft = True
+                return AgentResponse(
+                    success=False,
+                    agent_name=self.AGENT_NAME,
+                    error="No requirement context available for WBS generation",
+                )
 
             configured_type = str((request.context or {}).get("project_type") or "auto")
             project_type = classify_project_type(
@@ -1211,6 +1293,7 @@ Project period: {project_period or ""}
             start_date, end_date, project_period = self._resolve_project_schedule(request)
             base_tasks = self._build_base_tasks(
                 request,
+                atoms=atoms,
                 start_date=start_date,
                 end_date=end_date,
                 project_period=project_period,
@@ -1238,7 +1321,7 @@ Project period: {project_period or ""}
                 )
                 generated_tasks = detail_tasks
 
-            tasks = self._merge_llm_development_tasks(base_tasks, generated_tasks)
+            tasks = self._merge_llm_development_tasks(base_tasks, generated_tasks, atoms=atoms)
 
             self._apply_llm_development_schedule(
                 tasks,
@@ -1272,7 +1355,6 @@ Project period: {project_period or ""}
                         "project_end_date": self._format_date(end_date) or "",
                         "project_period": project_period,
                         "process_rule": "Common WBS template rows plus LLM-generated development tasks",
-                        **(self._default_draft_metadata() if used_default_draft else {}),
                     },
                 },
             )

@@ -187,6 +187,74 @@ class DocumentIngestionOrchestrator:
                 items=requirement_items,
                 progress_reporter=progress_reporter,
             )
+        elif (
+            parsed_metadata.get("artifact_type") == "SCREEN_DESIGN"
+            and isinstance(parsed_context.get("screens"), list)
+            and parsed_context.get("screens")
+        ):
+            screen_items: list[dict[str, object]] = []
+            base_metadata = {
+                key: value for key, value in parsed_metadata.items() if key != "screens"
+            }
+            for index, screen in enumerate(parsed_context.get("screens") or []):
+                if not isinstance(screen, dict):
+                    continue
+                metadata = screen.get("metadata") or {}
+                display_items = metadata.get("display_items") or screen.get(
+                    "display_items"
+                )
+                if isinstance(display_items, list):
+                    display_items_text = ", ".join(str(item) for item in display_items)
+                else:
+                    display_items_text = str(display_items or "")
+                source_requirement_ids = ", ".join(
+                    str(value).strip()
+                    for value in screen.get("source_requirement_ids") or []
+                    if str(value).strip()
+                )
+                text = " | ".join(
+                    str(value or "")
+                    for value in [
+                        screen.get("screen_id"),
+                        screen.get("name") or screen.get("screen_name"),
+                        screen.get("description"),
+                        display_items_text,
+                        source_requirement_ids,
+                    ]
+                )
+                screen_items.append(
+                    {
+                        "chunk_index": index,
+                        "text": text,
+                        "section_title": str(
+                            screen.get("name")
+                            or screen.get("screen_name")
+                            or screen.get("screen_id")
+                            or "SCREEN"
+                        ),
+                        "chunk_metadata": {
+                            **base_metadata,
+                            "parser_name": parser_name or "ArtifactExportService",
+                            "document_type": document_type.value,
+                            "source_document_type": document_type.value,
+                            "document_file_name": file_name,
+                            "source_file_name": file_name,
+                            "screen": screen,
+                            "screen_artifact": {
+                                "artifact_type": "SCREEN_DESIGN",
+                                "screens": [screen],
+                                "metadata": parsed_metadata.get("metadata") or {},
+                            },
+                        },
+                    }
+                )
+            await self._embed_and_store_items(
+                document_repository=document_repository,
+                project_id=project_id,
+                document_id=document_id,
+                items=screen_items,
+                progress_reporter=progress_reporter,
+            )
         else:
             chunks = split_text_into_chunks(parsed_text)
             if not chunks:
