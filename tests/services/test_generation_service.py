@@ -159,6 +159,31 @@ async def test_generation_service_validates_required_source_type() -> None:
 
 
 @pytest.mark.anyio
+async def test_generation_service_allows_screen_design_for_unittest_generation() -> None:
+    service = GenerationService(StubOrchestrator())
+    document = DocumentMetadata(
+        document_id="DOC-001",
+        project_id="PRJ-001",
+        document_type=DocumentType.SCREEN_DESIGN,
+        file_name="screen-design.pptx",
+        storage_path="s3://bucket/screen-design.pptx",
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        source_document_ids=["DOC-001"],
+        target_artifact_type="UNITTEST_SPEC",
+    )
+
+    result = await service.validate_source_documents(
+        request,
+        document_service=StubDocumentService({"DOC-001": document}),
+    )
+
+    assert result.success is True
+    assert result.error_code is None
+
+
+@pytest.mark.anyio
 async def test_generation_service_allows_requirement_spec_with_meeting_notes() -> None:
     service = GenerationService(StubOrchestrator())
     documents = {

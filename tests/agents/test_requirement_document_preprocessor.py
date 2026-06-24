@@ -57,3 +57,38 @@ def test_requirement_document_preprocessor_preserves_document_order() -> None:
         "DOC-MEET-001",
     ]
     assert normalized[2]["section_title"] == "회의록 A"
+
+
+def test_requirement_document_preprocessor_splits_meeting_notes_into_candidates() -> None:
+    documents = [
+        {
+            "document_id": "DOC-MEET-001",
+            "chunk_id": "CHUNK-001",
+            "section_title": "회의록",
+            "text": (
+                "회의명 | 기술협상회의\n"
+                "회의 주제 | 업무 내용중 추가 필요한 부분 협의\n"
+                "1. 환율 고시 및 조회 | - 실시간 환율 채집 및 고시 관리 기능 필요 | - Pricing 기능 필요 | "
+                "- 채집 및 고시된 환율을 직원이 기간별로 조회할 수 있는 화면 구현\n"
+                "1-1. 실시간 환율 채집 및 고시 관리 기능 상세 | - 시장 LP 및 CMBS로부터의 시장 환율을 채집 및 고시 | "
+                "- 시장 채집 불가한 환율 및 Swap PT의 경우 수기 입력 기능 구현\n"
+            ),
+            "metadata": {
+                "document_type": "MEETING_NOTES",
+                "source_file_name": "시연용_회의록.v.1.docx",
+            },
+        }
+    ]
+
+    normalized = normalize_requirement_documents(documents)
+
+    assert len(normalized) >= 4
+    texts = [item["text"] for item in normalized]
+    assert any("실시간 환율 채집 및 고시 관리 기능 필요" in text for text in texts)
+    assert any("Pricing 기능 필요" in text for text in texts)
+    assert any(text.startswith("환율 고시 및 조회") for text in texts)
+    assert all(
+        "회의명" not in text
+        and "회의 주제" not in text
+        for text in texts
+    )

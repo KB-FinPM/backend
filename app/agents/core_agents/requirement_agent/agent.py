@@ -50,6 +50,7 @@ EXTRACTION_SYSTEM_PROMPT = """
 - 인프라 구축 프로젝트에서는 OCP, Kafka, EFK, CDC, API Gateway, Service Mesh, Monitoring, Logging, DB, 보안, 백업 등을 Biz요건명 후보로 본다.
 - 개발 프로젝트에서는 업무, 화면, 기능, 인터페이스, 데이터, 권한, 배치 등을 Biz요건명 후보로 본다.
 - source_document_context에 meeting_notes가 있으면 회의록 제목과 내용을 기준으로 요구사항을 보완/추가한다.
+- 회의록은 항목/불릿/번호 단위로 분리된 개별 후보를 각각 독립적으로 해석한다.
 - 기능 구현과 직접 관련 있으면 기능요구사항으로 분류한다.
 - 성능, 보안, 권한, 로그, 접근성, 운영, 백업, 장애대응은 비기능요구사항으로 분류한다.
 - 각 description은 120자 이내로 요약한다.
@@ -72,6 +73,7 @@ TABLE_EXTRACTION_SYSTEM_PROMPT = """
 - 각 description은 표와 원문 맥락을 반영해 1~2문장으로 구체화한다.
 - acceptance_criteria는 실제 검증 가능한 문장으로 2~4개 작성한다.
 - source_document_context에 meeting_notes가 있으면 회의록 제목과 내용을 함께 반영한다.
+- 회의록 후보는 제목 전체가 아니라 항목별 요구사항 후보로 나누어 해석한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
 """.strip()
 
@@ -134,6 +136,7 @@ TABLE_BATCH_REFINEMENT_SYSTEM_PROMPT = """
 - requirement_name과 biz_requirement_name은 후보 값을 최대한 보존한다.
 - acceptance_criteria는 2~4개만 작성한다.
 - source_document_context에 meeting_notes가 있으면 회의록 제목과 내용을 함께 반영한다.
+- 회의록 후보는 제목 전체가 아니라 항목별 요구사항 후보로 나누어 해석한다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
 """.strip()
 

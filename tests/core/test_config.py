@@ -17,6 +17,7 @@ def test_settings_defaults_match_env_example_baseline() -> None:
     assert settings.S3_STORAGE_BACKEND == "mock"
     assert settings.GENERATION_REQUIREMENT_RETRIEVAL_TOP_K == 40
     assert settings.GENERATION_REQUIREMENT_TABLE_BATCH_SIZE == 4
+    assert settings.ALLOWED_ORIGIN_REGEX == r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
 def test_settings_can_load_explicit_env_file(tmp_path) -> None:

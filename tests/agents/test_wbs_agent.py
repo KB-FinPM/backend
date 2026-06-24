@@ -191,6 +191,42 @@ async def test_wbs_agent_applies_planned_dates_from_context() -> None:
             assert parent_start <= planned_end <= parent_end
 
 
+@pytest.mark.anyio
+async def test_wbs_agent_populates_source_requirement_ids_for_all_tasks() -> None:
+    orchestrator = StubWbsOrchestrator()
+    agent = WbsAgent(model_invoker=orchestrator)
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[{"chunk_id": "CHUNK-001", "text": "Login and reporting"}],
+            context={
+                "project_name": "Schedule Test",
+                "requirement_artifact": {
+                    "requirements": [
+                        {
+                            "requirement_id": "REQ-001",
+                            "requirement_name": "Login",
+                            "description": "Users can sign in.",
+                            "biz_requirement_name": "Access",
+                        },
+                        {
+                            "requirement_id": "REQ-002",
+                            "requirement_name": "Report",
+                            "description": "Users can view reports.",
+                            "biz_requirement_name": "Reporting",
+                        },
+                    ],
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["tasks"]
+    assert all(task.get("source_requirement_ids") for task in response.result["tasks"])
+
+
 @pytest.mark.parametrize(
     ("raw_value", "expected"),
     [
@@ -346,7 +382,7 @@ async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_task
 
     generated = [task for task in tasks if task["name"] == "접근관리"]
     assert generated[0]["name"] == "접근관리"
-    assert generated[0]["metadata"]["wbs_id"] == "4"
+    assert generated[0]["metadata"]["wbs_id"] == "3.4.1"
 
 
 @pytest.mark.anyio

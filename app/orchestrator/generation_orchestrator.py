@@ -271,15 +271,14 @@ class GenerationOrchestrator:
             if generation_flow.target_artifact_type == ArtifactType.REQUIREMENT_SPEC
             else settings.GENERATION_RETRIEVAL_TOP_K
         )
-        top_k = min(
-            max(retrieval_top_k, 1),
-            max(settings.GENERATION_MAX_SOURCE_CHUNKS, 1),
-        )
+        # Load the full selected source document instead of truncating at a
+        # fixed chunk cap so large screen-design files keep all pages.
+        top_k = None
         logger.info(
             "[Orchestrator] retrieval window | "
             f"project_id={request.project_id} | "
             f"target_artifact_type={generation_flow.target_artifact_type} | "
-            f"top_k={top_k}"
+            f"top_k={'ALL' if top_k is None else top_k}"
         )
         await self._emit_progress(
             progress_reporter,

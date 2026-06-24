@@ -349,11 +349,11 @@ def test_user_flow_output_agent_formats_generated_artifact_downloads() -> None:
                 "artifact": {
                     "artifact_id": "ART-REQ-001",
                     "artifact_type": "REQUIREMENT_SPEC",
-                    "name": f"[{PROJECT_NAME}] REQUIREMENT_SPEC.xlsx",
+                    "name": "요구사항명세서.xlsx",
                 },
                 "generated": {"artifact_type": "REQUIREMENT_SPEC"},
                 "exported_file": {
-                    "file_name": f"[{PROJECT_NAME}] REQUIREMENT_SPEC.xlsx",
+                    "file_name": "요구사항명세서.xlsx",
                     "content_type": (
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     ),
