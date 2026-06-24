@@ -66,6 +66,7 @@ async def _ensure_action_item_columns(connection) -> None:
         "related_document": "VARCHAR(200)",
         "source_type": "VARCHAR(40) DEFAULT 'MEETING_MINUTES'",
         "updated_at": "DATETIME DEFAULT CURRENT_TIMESTAMP",
+        "completed_at": "DATETIME",
     }
     if connection.dialect.name == "sqlite":
         result = await connection.execute(text("PRAGMA table_info(action_items)"))
@@ -81,6 +82,7 @@ async def _ensure_action_item_columns(connection) -> None:
         postgres_columns = {
             **columns,
             "updated_at": "TIMESTAMP WITH TIME ZONE DEFAULT now()",
+            "completed_at": "TIMESTAMP WITH TIME ZONE",
         }
         for column_name, column_sql in postgres_columns.items():
             await connection.execute(

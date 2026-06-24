@@ -154,51 +154,21 @@ class ChatOrchestrator:
             )
 
         if intent == "EXTRACT_ACTION_ITEMS":
-            if structured_context.get("missing_slots"):
-                return await self._render_and_save_response(
-                    conversation=conversation,
-                    project_id=request.project_id,
-                    result_json={
-                        "event": "SCHEDULE_RESULT",
-                        "result": {
-                            "artifact_type": "SCHEDULE_TODO_LIST",
-                            "action": structured_context.get("schedule_action")
-                            or "EXTRACT_TODOS_FROM_MEETING",
-                            "status": "REQUIRED_INFO",
-                            "missing_fields": structured_context.get("missing_slots")
-                            or [],
-                            "metadata": {"required_context": "MEETING_NOTES"},
-                        },
-                    },
-                )
-            return await self._prepare_schedule_action(
+            return await self._todo_management_guidance_response(
                 conversation=conversation,
-                request=request,
-                structured_context=structured_context,
+                project_id=request.project_id,
             )
 
         if intent == "SCHEDULE_QUERY":
-            schedule_action = str(
-                structured_context.get("schedule_action") or ""
-            ).strip()
-            if schedule_action == "EXTRACT_TODOS_FROM_MEETING":
-                return await self._prepare_schedule_action(
-                    conversation=conversation,
-                    request=request,
-                    structured_context=structured_context,
-                )
-            return await self._run_schedule_query(
-                conversation=conversation,
-                request=request,
-                structured_context=structured_context,
-            )
-
-        if intent == "COMPLETE_TODO":
-            return await self._complete_todo_action(
+            return await self._todo_management_guidance_response(
                 conversation=conversation,
                 project_id=request.project_id,
-                title_query=structured_context.get("todo_title_query")
-                or request.message,
+            )
+
+        if intent in {"COMPLETE_TODO", "UPDATE_TODO_STATUS", "MARK_TODO_DONE"}:
+            return await self._todo_management_guidance_response(
+                conversation=conversation,
+                project_id=request.project_id,
             )
 
         if intent == "DOWNLOAD_ARTIFACT":
@@ -728,6 +698,17 @@ class ChatOrchestrator:
                 },
             )
 
+        if pending_action.action_type == ChatActionType.EXTRACT_ACTION_ITEMS:
+            await self.conversation_repository.update_action_status(
+                project_id=project_id,
+                action_id=pending_action.action_id,
+                status=ChatActionStatus.CANCELLED,
+            )
+            return await self._todo_management_guidance_response(
+                conversation=conversation,
+                project_id=project_id,
+            )
+
         return await self._start_pending_action(
             conversation=conversation,
             project_id=project_id,
@@ -755,28 +736,6 @@ class ChatOrchestrator:
                 action_id=pending_action.action_id,
                 status=ChatActionStatus.CANCELLED,
             )
-            if (
-                pending_action.action_type == ChatActionType.EXTRACT_ACTION_ITEMS
-                and str(
-                    pending_action.payload.get("schedule_action")
-                    or "EXTRACT_TODOS_FROM_MEETING"
-                )
-                == "EXTRACT_TODOS_FROM_MEETING"
-            ):
-                return await self._render_and_save_response(
-                    conversation=conversation,
-                    project_id=project_id,
-                    result_json={
-                        "event": "SCHEDULE_RESULT",
-                        "result": {
-                            "artifact_type": "SCHEDULE_TODO_LIST",
-                            "action": "EXTRACT_TODOS_FROM_MEETING",
-                            "status": "REQUIRED_INFO",
-                            "missing_fields": ["meeting_notes"],
-                            "metadata": {"required_context": "MEETING_NOTES"},
-                        },
-                    },
-                )
         else:
             return await self._render_and_save_response(
                 conversation=conversation,
@@ -887,6 +846,34 @@ class ChatOrchestrator:
                 "result": response.result if isinstance(response.result, dict) else {},
             },
         )
+
+    async def _todo_management_guidance_response(
+        self,
+        *,
+        conversation: ConversationMetadata,
+        project_id: str,
+    ) -> ChatResponse:
+        return await self._render_and_save_response(
+            conversation=conversation,
+            project_id=project_id,
+            result_json={"event": "TODO_MANAGEMENT_GUIDANCE"},
+        )
+
+    def _blocked_todo_mutation_context(
+        self,
+        structured_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        entities = dict(structured_context.get("entities") or {})
+        entities.setdefault("status_filter", "NOT_DONE")
+        return {
+            **structured_context,
+            "intent": "SCHEDULE_QUERY",
+            "action": "QUERY",
+            "schedule_action": "SHOW_ALL_TODOS",
+            "schedule_intent": "SCHEDULE_ASSISTANT",
+            "todo_mutation_blocked": True,
+            "entities": entities,
+        }
 
     async def _run_schedule_query(
         self,

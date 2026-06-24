@@ -21,35 +21,52 @@ jobs:
           EC2_PORT: ${{ secrets.EC2_PORT }}
           APP_DIRECTORY: ${{ secrets.APP_DIRECTORY }}
         run: |
-          # Create SSH key file
           mkdir -p ~/.ssh
           echo "$EC2_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          
-          # Add EC2 host to known_hosts
-          ssh-keyscan -p ${{ env.EC2_PORT }} ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          
-          # Deploy via SSH with error handling
-          ssh -i ~/.ssh/id_rsa -p ${{ env.EC2_PORT }} ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
-            set -e  # Exit on error
-            
-            # Navigate to project directory
-            cd "${{ env.APP_DIRECTORY }}"
-            
-            # Pull latest code
-            git pull origin main || exit 1
-            
-            # Activate virtual environment
-            source venv/bin/activate || exit 1
-            
-            # Install dependencies
-            pip install -r requirements.txt || exit 1
-            
-            # Stop existing FastAPI process
-            pkill -f "uvicorn|gunicorn" || true
-            
-            # Start FastAPI
-            nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &
-            
-            echo "FastAPI deployment complete"
+
+          ssh-keyscan -p "$EC2_PORT" "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          ssh -i ~/.ssh/id_rsa -p "$EC2_PORT" "$EC2_USER@$EC2_HOST" << EOF
+          set -e
+
+          echo "===== MOVE TO APP DIRECTORY ====="
+          cd "${APP_DIRECTORY}"
+          pwd
+
+          echo "===== FILE CHECK ====="
+          ls -al
+          ls -al .env || true
+
+          echo "===== GIT PULL ====="
+          git pull origin main
+
+          echo "===== ACTIVATE VENV ====="
+          source venv/bin/activate
+
+          echo "===== SETTINGS CHECK ====="
+          python -c "from app.core.config import ENV_FILE, settings; print('ENV_FILE=', ENV_FILE); print('ENV_EXISTS=', ENV_FILE.exists()); print('DATABASE_URL_PREFIX=', settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else settings.DATABASE_URL); print('DATABASE_SSL_VERIFY=', settings.DATABASE_SSL_VERIFY); print('ALLOWED_ORIGINS=', settings.ALLOWED_ORIGINS)"
+
+          echo "===== INSTALL REQUIREMENTS ====="
+          pip install -r requirements.txt
+
+          echo "===== STOP EXISTING PROCESS ====="
+          pkill -f "uvicorn app.main:app" || true
+
+          echo "===== START FASTAPI ====="
+          nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &
+
+          sleep 5
+
+          echo "===== APP LOG ====="
+          tail -100 app.log || true
+
+          echo "===== PROCESS CHECK ====="
+          if ! pgrep -af "uvicorn app.main:app"; then
+            echo "FastAPI failed to start"
+            cat app.log
+            exit 1
+          fi
+
+          echo "FastAPI deployment complete"
           EOF
