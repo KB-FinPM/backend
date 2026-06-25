@@ -255,7 +255,7 @@ class ArtifactExportService:
 
     def _wbs_text(self, result_json: dict[str, Any]) -> str:
         lines = ["# WBS"]
-        for task in result_json.get("tasks", []):
+        for task in self._sorted_wbs_tasks(result_json.get("tasks", [])):
             if not isinstance(task, dict):
                 continue
             source = self._wbs_source(task)
@@ -307,7 +307,7 @@ class ArtifactExportService:
         file_name: str,
     ) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
-        for row_number, task in enumerate(result_json.get("tasks", []), start=1):
+        for row_number, task in enumerate(self._sorted_wbs_tasks(result_json.get("tasks", [])), start=1):
             if not isinstance(task, dict):
                 continue
             source = self._wbs_source(task)
@@ -428,6 +428,7 @@ class ArtifactExportService:
         context = build_template_context(project_id=str((result_json.get("metadata") or {}).get("project_id") or ""), context=result_json.get("metadata") or {})
         tasks = self._normalize_wbs_hierarchy(result_json.get("tasks", []), project_name=context.get("project_name") or "프로젝트명")
         self._apply_wbs_schedule_defaults(tasks, result_json)
+        tasks = self._sorted_wbs_tasks(tasks)
 
         template_path = wbs_mapper.get("template_path")
         if template_path:
@@ -848,6 +849,26 @@ class ArtifactExportService:
             task["id"] = wbs_id
             normalized.append(task)
         return normalized
+
+    def _sorted_wbs_tasks(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        def sort_key(task: dict[str, Any]) -> tuple[str, str]:
+            source = self._wbs_source(task)
+            raw_id = str(source.get("id") or source.get("wbs_id") or task.get("task_id") or "").strip()
+            parts: list[str] = []
+            for part in raw_id.split("."):
+                piece = part.strip()
+                if not piece:
+                    continue
+                if piece.isdigit():
+                    parts.append(f"{int(piece):08d}")
+                else:
+                    parts.append(f"z{piece.lower()}")
+            if not parts:
+                parts.append(f"zz{str(source.get('wbs_name') or task.get('name') or '').strip().lower()}")
+            return (".".join(parts), str(task.get("task_id") or "").lower())
+
+        ordered = [task for task in tasks if isinstance(task, dict)]
+        return sorted(ordered, key=sort_key)
 
     def _wbs_source(self, task: dict[str, Any]) -> dict[str, Any]:
         metadata = task.get("metadata") or {}

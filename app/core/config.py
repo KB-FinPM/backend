@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 ENV_FILE = BASE_DIR / ".env"
+LOCAL_DEV_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
 class Settings(BaseSettings):
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5176",
         "https://d2xtqtnbdz7asr.cloudfront.net",
     ]
+    ALLOWED_ORIGIN_REGEX: str = LOCAL_DEV_ORIGIN_REGEX
 
     AWS_REGION: str = "ap-northeast-2"
     AWS_ACCESS_KEY_ID: str = ""

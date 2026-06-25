@@ -26,7 +26,6 @@ from app.services.schedule_service import ScheduleService
 
 
 PROJECT_ID = "PRJ-TEST-001"
-PROJECT_NAME = "KB Star Banking Process"
 
 
 def assert_user_facing_message(message: str) -> None:
@@ -222,8 +221,15 @@ class ScenarioGenerationService:
         self.requests.append(request)
         artifact_type = request.target_artifact_type.value
         artifact_id = f"ART-{artifact_type}-001"
-        extension = ".xlsx" if artifact_type != "SCREEN_DESIGN" else ".pptx"
-        file_name = f"[{request.project_name or PROJECT_NAME}] {artifact_type}{extension}"
+        file_name = {
+            ArtifactType.REQUIREMENT_SPEC.value: "요구사항명세서.xlsx",
+            ArtifactType.WBS.value: "WBS.xlsx",
+            ArtifactType.SCREEN_DESIGN.value: "화면기획서.pptx",
+            ArtifactType.UNITTEST_SPEC.value: "단위테스트케이스.xlsx",
+        }.get(
+            artifact_type,
+            f"{artifact_type}.xlsx",
+        )
         generated = self._generated_payload(artifact_type)
         return GenerationResponse(
             project_id=request.project_id,

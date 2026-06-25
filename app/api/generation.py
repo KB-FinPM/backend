@@ -242,9 +242,7 @@ async def generate_unittest(
     """Generate a unit test case artifact through the PM agent orchestrator."""
     logger.info(f"generate_unittest | project_id={request.project_id}")
     request.target_artifact_type = ArtifactType.UNITTEST_SPEC
-    request.source_document_type = request.source_document_type or (
-        DocumentType.SCREEN_DESIGN
-    )
+    request.source_document_type = DocumentType.SCREEN_DESIGN
 
     return await _generate_artifact_response(
         request=request,

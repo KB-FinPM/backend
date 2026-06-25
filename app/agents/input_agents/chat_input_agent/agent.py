@@ -1668,6 +1668,7 @@ class ChatInputAgent:
         if normalized in {
             DocumentType.CONSTRUCTION_REQUIREMENT_DEFINITION.value,
             DocumentType.REQUIREMENT_SPEC.value,
+            DocumentType.SCREEN_DESIGN.value,
             DocumentType.MEETING_NOTES.value,
             DocumentType.WBS.value,
         }:
@@ -1683,6 +1684,8 @@ class ChatInputAgent:
             ArtifactType.SCREEN_DESIGN.value,
             ArtifactType.UNITTEST_SPEC.value,
         }:
+            if normalized == ArtifactType.UNITTEST_SPEC.value:
+                return DocumentType.SCREEN_DESIGN.value
             return DocumentType.REQUIREMENT_SPEC.value
         return None
 
@@ -2425,12 +2428,7 @@ class ChatInputAgent:
                 "PLANNING_DOC",
             ]
         if target_artifact_type == ArtifactType.UNITTEST_SPEC:
-            return [
-                DocumentType.REQUIREMENT_SPEC.value,
-                "PROGRAM_LIST",
-                "PROGRAM_DESIGN",
-                "SCREEN_DESIGN",
-            ]
+            return [DocumentType.SCREEN_DESIGN.value]
         return []
 
     def _recommended_commands_for_artifact(

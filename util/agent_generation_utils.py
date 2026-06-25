@@ -925,6 +925,7 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
     generic_table_kind = ""
 
     for document in documents or []:
+        document_start_count = len(atoms)
         metadata = document.get("metadata") or {}
         chunk_id = document.get("chunk_id")
         section_title = _normalize_section_title(document.get("section_title") or "")
@@ -1332,7 +1333,85 @@ def extract_requirement_atoms_from_pipe_tables(documents: list[dict[str, Any]] |
                         "preserve_empty_description": bool(split_items),
                     },
                 ))
+
+        # Meeting notes are often flattened into plain sentences during DOCX
+        # parsing. If the table-oriented paths above produced nothing, treat the
+        # remaining plain text chunk as a single atomic requirement candidate.
+        if len(atoms) == document_start_count and _is_meeting_note_document(document):
+            fallback_atom = _make_meeting_note_atom(document=document, chunk_id=chunk_id)
+            if fallback_atom is not None:
+                atoms.append(fallback_atom)
     return atoms
+
+
+def _is_meeting_note_document(document: dict[str, Any]) -> bool:
+    metadata = document.get("metadata") or {}
+    document_type = str(
+        metadata.get("document_type")
+        or metadata.get("source_document_type")
+        or metadata.get("documentType")
+        or metadata.get("sourceDocumentType")
+        or "",
+    ).upper()
+    if document_type in {"MEETING_NOTES", "MEETING_NOTE", "MEETING_MINUTES"}:
+        return True
+
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            document.get("section_title"),
+            metadata.get("source_file_name"),
+            metadata.get("document_file_name"),
+            metadata.get("file_name"),
+        )
+    ).lower()
+    return any(keyword in haystack for keyword in ("회의록", "회의 내용", "회의내용", "미팅 내용", "미팅내용", "minutes", "meeting note", "meeting notes"))
+
+
+def _make_meeting_note_atom(
+    *,
+    document: dict[str, Any],
+    chunk_id: Any,
+) -> RequirementAtom | None:
+    metadata = document.get("metadata") or {}
+    text = _clean_description_cell_text(document.get("text") or "")
+    text = _normalize_meeting_note_text(text)
+    if not _looks_like_requirement_detail(text):
+        return None
+
+    section_title = _normalize_section_title(document.get("section_title") or "")
+    biz_name = section_title or "회의록"
+    category = _classify_category(text)
+    requirement_name = truncate_text(text, 120)
+    description = truncate_text(text, 700)
+    requirement_id = ""
+    return _make_atom_from_table_row(
+        document=document,
+        chunk_id=chunk_id,
+        category=category,
+        biz_requirement_id="",
+        biz_requirement_name=biz_name,
+        requirement_id=requirement_id,
+        requirement_name=requirement_name,
+        description=description,
+        metadata={
+            "source": metadata.get("source") or "회의록",
+            "source_doc": metadata.get("source_file_name"),
+            "section_title": section_title or "회의록",
+            "work": section_title or "회의록",
+            "section_category": section_title or "회의록",
+            "preserve_empty_description": False,
+        },
+    )
+
+
+def _normalize_meeting_note_text(text: str) -> str:
+    value = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    value = re.sub(r"^#+\s*", "", value).strip()
+    value = re.sub(r"^\d+(?:[-.]\d+)*\.\s*", "", value)
+    value = re.sub(r"^\d+[\).]\s*", "", value)
+    value = value.strip(" -•ㅇ○·")
+    return re.sub(r"\s+", " ", value).strip()
 
 def deduplicate_requirement_atoms(atoms: Iterable[RequirementAtom]) -> list[RequirementAtom]:
     """Deduplicate requirement atoms using the same grouping idea as sample_0605."""

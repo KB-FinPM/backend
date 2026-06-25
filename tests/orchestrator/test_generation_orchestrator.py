@@ -21,6 +21,7 @@ class StubRetrievalService:
         self.received_project_id: str | None = None
         self.received_permission_scope: list[str] | None = None
         self.received_query: str | None = None
+        self.received_top_k: int | None = None
 
     async def search(
         self,
@@ -35,6 +36,7 @@ class StubRetrievalService:
         self.received_project_id = project_id
         self.received_permission_scope = permission_scope
         self.received_query = query
+        self.received_top_k = top_k
         self.received_document_ids = document_ids
         self.received_search_mode = search_mode
         return [{"chunk_id": "CHUNK-001", "text": "Login is required."}]
@@ -54,6 +56,7 @@ class ChunkyRetrievalService(StubRetrievalService):
         self.received_project_id = project_id
         self.received_permission_scope = permission_scope
         self.received_query = query
+        self.received_top_k = top_k
         self.received_document_ids = document_ids
         self.received_search_mode = search_mode
         return [
@@ -298,6 +301,28 @@ async def test_generate_artifact_reports_source_chunks_as_sub_progress() -> None
     assert source_chunk_events[-1]["sub_progress"]["total"] == 3
     assert source_chunk_events[-1]["sub_progress"]["unit"] == "chunks"
     assert any(event["stage"] == "DOCUMENT_GENERATION_COMPLETED" for event in events)
+
+
+@pytest.mark.anyio
+async def test_generate_artifact_uses_unbounded_retrieval_for_source_documents() -> None:
+    calls: list[str] = []
+    retrieval = StubRetrievalService(calls)
+    orchestrator = GenerationOrchestrator(
+        retrieval=retrieval,
+        requirement_generator=StubRequirementAgent(calls),
+        validator=StubValidatorAgent(calls),
+    )
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        source_document_ids=["DOC-001"],
+        target_artifact_type="UNITTEST_SPEC",
+        permission_scope=["project:read", "artifact:generate"],
+    )
+
+    response = await orchestrator.generate_artifact(request)
+
+    assert response.success is True
+    assert retrieval.received_top_k is None
 
 
 @pytest.mark.anyio

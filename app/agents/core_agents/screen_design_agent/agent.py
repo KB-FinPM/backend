@@ -2,6 +2,7 @@
 # KO: 화면설계서 산출물 생성을 위한 Core Agent adapter입니다.
 
 import json
+import re
 from typing import Any
 
 from app.core.logger import get_logger
@@ -28,7 +29,7 @@ SCREEN_LLM_SYSTEM_PROMPT = """
     {
       "screen_id": "SCR-001",
       "name": "화면명",
-      "description": "화면 목적과 사용 흐름이 드러나는 설명",
+      "description": "ㆍ 화면 목적과 사용 흐름\nㆍ 사용자 확인 포인트",
       "source_requirement_ids": ["REQ-00001"],
       "metadata": {
         "display_items": [
@@ -42,7 +43,10 @@ SCREEN_LLM_SYSTEM_PROMPT = """
 
 규칙:
 - 화면은 요구사항별로 1개 이상 생성하되, 너무 쪼개지 말고 사용자가 실제로 보게 될 화면 단위로 묶는다.
-- description은 단순 요구사항 문구가 아니라 화면 구성, 조회/등록/처리 흐름, 사용자 확인 포인트를 포함해 구체적으로 작성한다.
+- description은 화면 설명 항목을 최소 2개 이상 생성한다.
+- description 항목에는 화면 구성, 조회/등록/처리 흐름, 사용자 확인 포인트를 포함한다.
+- description 항목은 `ㆍ`로 시작한다.
+- 다른 화면이나 요구사항의 순번을 이어받지 말고, 모든 화면 description은 `ㆍ`로 시작한다.
 - display_items에는 화면에 실제 노출될 만한 항목을 3~8개 정도 작성한다.
 - source_requirement_ids는 실제 근거가 되는 요구사항 ID를 1~3개 넣는다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
@@ -258,17 +262,16 @@ Requirement summary:
         screens = []
         for index, atom in enumerate(atoms, start=1):
             screen_id = f"SCR-{index:03d}"
-            work_description = self._work_description(atom)
-            if not str(getattr(atom, "description", "") or "").strip():
-                work_description = self._ensure_screen_description(
-                    work_description,
-                    self._screen_name(atom, index),
-                )
+            screen_name = self._screen_name(atom, index)
+            work_description = self._ensure_screen_description(
+                self._work_description(atom),
+                screen_name,
+            )
             display_items = self._display_items(atom)
             screens.append(
                 {
                     "screen_id": screen_id,
-                    "name": self._screen_name(atom, index),
+                    "name": screen_name,
                     "description": work_description,
                     "source_requirement_ids": [atom.requirement_id],
                     "metadata": {
@@ -296,15 +299,21 @@ Requirement summary:
                 source_requirement_ids = [source_requirement_ids]
             screen_id = f"SCR-{index:03d}"
             metadata = dict(screen.get("metadata") or {})
+            name = str(screen.get("name") or metadata.get("screen_name") or f"화면 {index}")
+            description = self._ensure_screen_description(
+                str(screen.get("description") or metadata.get("description") or ""),
+                name,
+            )
             metadata["screen_no"] = screen_id
             metadata.setdefault("requirement_id", ", ".join([str(value) for value in source_requirement_ids if value]))
-            metadata.setdefault("requirement_name", str(screen.get("name") or ""))
-            metadata.setdefault("description", str(screen.get("description") or ""))
+            metadata.setdefault("requirement_name", name)
+            metadata["description"] = description
             metadata.setdefault("display_items", metadata.get("display_items") or [])
             normalized.append(
                 {
                     **screen,
                     "screen_id": screen_id,
+                    "description": description,
                     "source_requirement_ids": [str(value) for value in source_requirement_ids if value],
                     "metadata": metadata,
                 }
@@ -394,21 +403,85 @@ Requirement summary:
         return self._ensure_screen_description(base, name or self._screen_name_from_payload(payload, index))
 
     def _ensure_screen_description(self, base: str, name: str) -> str:
-        lines = [
-            line.strip()
-            for line in str(base or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-            if line.strip()
-        ]
-        if len(lines) >= 2:
-            return truncate_text("\n".join(lines), 700)
-
         title = name or "화면"
-        fallback_lines = [
-            f"{title}에서 주요 조회와 입력 흐름을 제공한다.",
-            f"{title}의 필수 항목 검증과 저장 결과 반영을 처리한다.",
-            f"{title}의 사용자는 목록, 상세, 팝업 또는 경고 메시지를 확인한다.",
+        items = [
+            self._strip_number_prefix(line)
+            for line in str(base or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if self._strip_number_prefix(line)
         ]
-        return truncate_text("\n".join(fallback_lines), 700)
+        if not items:
+            items = [
+                f"{title}에서 주요 조회와 입력 흐름을 제공한다."
+            ]
+
+        description_items = list(items)
+        for line in self._screen_description_support_lines(
+            base=" ".join(description_items),
+            name=title,
+        ):
+            if line not in description_items:
+                description_items.append(line)
+            if len(description_items) >= 3:
+                break
+
+        return truncate_text(self._bulleted_description(description_items), 700)
+
+    def _strip_number_prefix(self, value: Any) -> str:
+        return re.sub(
+            r"^\s*(?:[-*•ㆍ]+|\d+[.)])\s*",
+            "",
+            str(value or "").strip(),
+        ).strip()
+
+    def _bulleted_description(self, items: list[str]) -> str:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            text = self._strip_number_prefix(item)
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(text)
+            if len(normalized) >= 6:
+                break
+
+        if len(normalized) < 2:
+            title = normalized[0] if normalized else "화면"
+            normalized.append(f"{title}의 처리 결과와 사용자 확인 흐름을 제공한다.")
+
+        return "\n".join(
+            f"ㆍ {item}"
+            for item in normalized
+        )
+
+    def _screen_description_support_lines(self, *, base: str, name: str) -> list[str]:
+        corpus = f"{name} {base}".lower()
+        candidates: list[str] = []
+        if any(keyword in corpus for keyword in ("조회", "검색", "목록", "상세")):
+            candidates.append(f"{name}에서 조회 조건, 목록 결과, 상세 확인 흐름을 제공한다.")
+        if any(keyword in corpus for keyword in ("등록", "저장", "추가", "입력")):
+            candidates.append(f"{name}에서 입력 항목 검증과 저장 결과 반영을 처리한다.")
+        if any(keyword in corpus for keyword in ("수정", "변경")):
+            candidates.append(f"{name}에서 기존 값 확인, 변경 입력, 수정 결과 반영을 처리한다.")
+        if any(keyword in corpus for keyword in ("삭제", "제거")):
+            candidates.append(f"{name}에서 삭제 전 확인, 삭제 처리, 삭제 후 목록 반영을 제공한다.")
+        if any(keyword in corpus for keyword in ("권한", "인증", "보안")):
+            candidates.append(f"{name}에서 권한별 접근 제어와 버튼 노출 상태를 확인할 수 있다.")
+        if any(keyword in corpus for keyword in ("팝업", "경고", "오류", "예외", "메시지")):
+            candidates.append(f"{name}에서 팝업, 경고 메시지, 오류 안내 흐름을 제공한다.")
+
+        if not candidates:
+            candidates = [
+                f"{name}에서 주요 정보 표시와 사용자 입력 흐름을 제공한다.",
+                f"{name}의 필수 항목 검증과 처리 결과 반영을 확인할 수 있다.",
+            ]
+        elif len(candidates) == 1:
+            candidates.append(f"{name}의 사용자는 처리 결과, 안내 메시지, 화면 반영 상태를 확인한다.")
+
+        return candidates[:2]
 
     def _normalize_display_items(self, metadata: dict[str, Any], name: str, description: str) -> list[dict[str, str]]:
         display_items = metadata.get("display_items") or []

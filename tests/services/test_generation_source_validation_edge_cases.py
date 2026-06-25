@@ -82,7 +82,7 @@ async def test_source_validation_uses_db_document_type_not_request_claim() -> No
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("target_artifact_type", ["WBS", "SCREEN_DESIGN", "UNITTEST_SPEC"])
+@pytest.mark.parametrize("target_artifact_type", ["WBS", "SCREEN_DESIGN"])
 async def test_downstream_artifacts_require_requirement_spec_source(
     target_artifact_type: str,
 ) -> None:
@@ -105,6 +105,52 @@ async def test_downstream_artifacts_require_requirement_spec_source(
 
     assert result.success is False
     assert result.error_code == "INVALID_SOURCE_DOCUMENT_TYPE"
+
+
+@pytest.mark.anyio
+async def test_unittest_generation_requires_screen_design_source() -> None:
+    service = GenerationService(StubOrchestrator())
+    result = await service.validate_source_documents(
+        GenerationRequest(
+            project_id="PRJ-001",
+            source_document_ids=["DOC-REQ"],
+            target_artifact_type="UNITTEST_SPEC",
+        ),
+        document_service=StubDocumentService(
+            {
+                "DOC-REQ": _doc(
+                    "DOC-REQ",
+                    DocumentType.REQUIREMENT_SPEC,
+                )
+            }
+        ),
+    )
+
+    assert result.success is False
+    assert result.error_code == "INVALID_SOURCE_DOCUMENT_TYPE"
+
+
+@pytest.mark.anyio
+async def test_unittest_generation_accepts_screen_design_source() -> None:
+    service = GenerationService(StubOrchestrator())
+    result = await service.validate_source_documents(
+        GenerationRequest(
+            project_id="PRJ-001",
+            source_document_ids=["DOC-SCREEN"],
+            target_artifact_type="UNITTEST_SPEC",
+        ),
+        document_service=StubDocumentService(
+            {
+                "DOC-SCREEN": _doc(
+                    "DOC-SCREEN",
+                    DocumentType.SCREEN_DESIGN,
+                )
+            }
+        ),
+    )
+
+    assert result.success is True
+    assert result.error_code is None
 
 
 @pytest.mark.anyio
