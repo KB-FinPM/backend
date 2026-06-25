@@ -208,7 +208,7 @@ class ActionItemRepository:
                 continue
             due_date_text = self._normalize_due_date_text(
                 todo.get("due_date") or todo.get("due_date_text"),
-                default_today=True,
+                default_today=False,
             )
             action_item = ActionItemModel(
                 action_item_id=self._new_todo_id(),
@@ -262,7 +262,7 @@ class ActionItemRepository:
         if "due_date" in values:
             due_date_value = self._normalize_due_date_text(
                 values.get("due_date"),
-                default_today=True,
+                default_today=False,
             )
             item.due_date = self._parse_iso_date(due_date_value)
             item.due_date_text = due_date_value
