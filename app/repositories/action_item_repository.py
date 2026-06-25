@@ -26,7 +26,12 @@ class ActionItemRepository:
         for todo in todos:
             due_date_text = self._normalize_due_date_text(
                 todo.get("due_date"),
-                default_today=True,
+                default_today=False,
+            )
+            start_date_text, end_date_text = self._normalize_schedule_date_range(
+                start_value=todo.get("start_date") or todo.get("planned_start_date"),
+                end_value=todo.get("end_date") or todo.get("planned_end_date"),
+                fallback_value=due_date_text,
             )
             action_item = ActionItemModel(
                 action_item_id=self._new_todo_id(),
@@ -34,6 +39,8 @@ class ActionItemRepository:
                 title=str(todo.get("title") or "").strip(),
                 description=normalize_todo_description(todo) or None,
                 owner=todo.get("assignee"),
+                start_date=self._parse_iso_date(start_date_text),
+                end_date=self._parse_iso_date(end_date_text),
                 due_date=self._parse_iso_date(due_date_text),
                 due_date_text=due_date_text,
                 related_document=todo.get("related_document"),
@@ -86,9 +93,19 @@ class ActionItemRepository:
             ) or None
             action_item.owner = todo.get("assignee")
             due_date = self._normalize_due_date_text(
-                todo.get("due_date") or todo.get("planned_end_date"),
-                default_today=True,
+                todo.get("due_date")
+                or todo.get("end_date")
+                or todo.get("planned_end_date"),
+                default_today=False,
             )
+            start_date, end_date = self._normalize_schedule_date_range(
+                start_value=todo.get("start_date") or todo.get("planned_start_date"),
+                end_value=todo.get("end_date") or todo.get("planned_end_date"),
+                fallback_value=due_date,
+            )
+            due_date = end_date or due_date
+            action_item.start_date = self._parse_iso_date(start_date)
+            action_item.end_date = self._parse_iso_date(end_date)
             action_item.due_date = self._parse_iso_date(due_date)
             action_item.due_date_text = due_date
             action_item.related_document = (
@@ -207,9 +224,18 @@ class ActionItemRepository:
             if not title:
                 continue
             due_date_text = self._normalize_due_date_text(
-                todo.get("due_date") or todo.get("due_date_text"),
+                todo.get("due_date")
+                or todo.get("end_date")
+                or todo.get("planned_end_date")
+                or todo.get("due_date_text"),
                 default_today=False,
             )
+            start_date_text, end_date_text = self._normalize_schedule_date_range(
+                start_value=todo.get("start_date") or todo.get("planned_start_date"),
+                end_value=todo.get("end_date") or todo.get("planned_end_date"),
+                fallback_value=due_date_text,
+            )
+            due_date_text = end_date_text or due_date_text
             action_item = ActionItemModel(
                 action_item_id=self._new_todo_id(),
                 project_id=project_id,
@@ -220,6 +246,8 @@ class ActionItemRepository:
                 )
                 or None,
                 owner=todo.get("assignee"),
+                start_date=self._parse_iso_date(start_date_text),
+                end_date=self._parse_iso_date(end_date_text),
                 due_date=self._parse_iso_date(due_date_text),
                 due_date_text=due_date_text,
                 related_document=(
@@ -266,6 +294,19 @@ class ActionItemRepository:
             )
             item.due_date = self._parse_iso_date(due_date_value)
             item.due_date_text = due_date_value
+            if "start_date" not in values and "end_date" not in values:
+                item.start_date = self._parse_iso_date(due_date_value)
+                item.end_date = self._parse_iso_date(due_date_value)
+        if "start_date" in values or "end_date" in values:
+            start_date_value, end_date_value = self._normalize_schedule_date_range(
+                start_value=values.get("start_date") if "start_date" in values else item.start_date,
+                end_value=values.get("end_date") if "end_date" in values else item.end_date,
+                fallback_value=values.get("due_date") or item.due_date_text or item.due_date,
+            )
+            item.start_date = self._parse_iso_date(start_date_value)
+            item.end_date = self._parse_iso_date(end_date_value)
+            item.due_date = self._parse_iso_date(end_date_value)
+            item.due_date_text = end_date_value
         if "status" in values and values["status"] is not None:
             status_value = self._storage_status(values.get("status"))
             item.status = status_value
@@ -297,6 +338,8 @@ class ActionItemRepository:
             "title": item.title,
             "description": item.description,
             "assignee": item.owner,
+            "start_date": item.start_date.isoformat() if item.start_date else None,
+            "end_date": item.end_date.isoformat() if item.end_date else None,
             "due_date": item.due_date_text
             or (item.due_date.isoformat() if item.due_date else None),
             "related_document": item.related_document,
@@ -345,6 +388,30 @@ class ActionItemRepository:
         if default_today:
             return date.today().isoformat()
         return None
+
+    def _normalize_schedule_date_range(
+        self,
+        *,
+        start_value: Any = None,
+        end_value: Any = None,
+        fallback_value: Any = None,
+    ) -> tuple[str | None, str | None]:
+        start_text = self._normalize_due_date_text(start_value, default_today=False)
+        end_text = self._normalize_due_date_text(end_value, default_today=False)
+        fallback_text = self._normalize_due_date_text(
+            fallback_value,
+            default_today=False,
+        )
+        if not start_text and not end_text and fallback_text:
+            start_text = fallback_text
+            end_text = fallback_text
+        elif start_text and not end_text:
+            end_text = start_text
+        elif end_text and not start_text:
+            start_text = end_text
+        if start_text and end_text and end_text < start_text:
+            start_text, end_text = end_text, start_text
+        return start_text, end_text
 
     def _parse_iso_date(self, value: Any) -> date | None:
         if not value:

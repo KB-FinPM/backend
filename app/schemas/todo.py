@@ -12,6 +12,8 @@ class TodoItem(BaseModel):
     todo_id: str
     title: str
     assignee: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
     due_date: str | None = None
     due_date_text: str | None = None
     status: TodoStatus = "NOT_STARTED"
@@ -32,6 +34,8 @@ class TodoListResponse(BaseModel):
 class TodoUpdateRequest(BaseModel):
     title: str | None = None
     assignee: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
     due_date: str | None = None
     status: TodoStatus | None = None
     description: str | None = None

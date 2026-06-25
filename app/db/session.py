@@ -62,6 +62,8 @@ async def dispose_db() -> None:
 async def _ensure_action_item_columns(connection) -> None:
     columns = {
         "description": "TEXT",
+        "start_date": "DATE",
+        "end_date": "DATE",
         "due_date_text": "VARCHAR(100)",
         "related_document": "VARCHAR(200)",
         "source_type": "VARCHAR(40) DEFAULT 'MEETING_MINUTES'",
