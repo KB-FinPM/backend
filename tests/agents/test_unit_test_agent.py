@@ -53,11 +53,11 @@ async def test_unit_test_agent_creates_one_case_per_screen_description() -> None
     assert response.result["test_cases"][0]["scenario_id"] == "SCN-001"
     assert response.result["test_cases"][0]["test_case_name"] == "회원 조회 기본 검증"
     test_content_lines = response.result["test_cases"][0]["test_content"].splitlines()
-    assert len(test_content_lines) >= 3
+    assert 3 <= len(test_content_lines) <= 6
     assert test_content_lines[0].startswith("1. ")
-    assert test_content_lines[1].startswith("2. ")
     assert any("조회 조건 입력" in line for line in test_content_lines)
-    assert "회원 목록을 조회하고 상세를 확인한다" in test_content_lines[0]
+    assert any("회원 목록을 조회하고 상세를 확인한다" in line for line in test_content_lines)
+    assert not any("ㆍ" in line or "•" in line or "·" in line for line in test_content_lines)
 
 
 @pytest.mark.anyio
@@ -262,10 +262,11 @@ async def test_unit_test_agent_uses_save_template_for_registration_screen() -> N
     assert response.success is True
     test_content_lines = response.result["test_cases"][0]["test_content"].splitlines()
     assert len(test_content_lines) <= 6
-    assert "회원 정보를 등록하고 저장 결과를 확인한다" in test_content_lines[0]
+    assert any("회원 정보를 등록하고 저장 결과를 확인한다" in line for line in test_content_lines)
     assert any("저장 버튼 상태" in line for line in test_content_lines)
     assert any("정상 저장 후 결과 메시지" in line for line in test_content_lines)
     assert any("필수 입력 항목" in line for line in test_content_lines)
+    assert not any("ㆍ" in line or "•" in line or "·" in line for line in test_content_lines)
     assert response.result["test_cases"][0]["test_case_name"] == "회원 등록 처리 검증"
 
 

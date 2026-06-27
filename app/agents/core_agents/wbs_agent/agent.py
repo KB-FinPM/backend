@@ -21,6 +21,7 @@ from util.agent_generation_utils import (
 from util.agent_template_utils import (
     load_wbs_common_rows,
     load_deliverable_mapper_local,
+    load_wbs_deliverable_catalog_local,
 )
 
 logger = get_logger(__name__)
@@ -163,6 +164,8 @@ class WbsAgent:
             or context.get("contract_start_date")
         )
         start_date = self._normalize_date(start_date_value)
+        if start_date is None:
+            start_date = self._today_date()
 
         project_period = self._extract_project_period(request.documents, context)
         if project_period is None:
@@ -172,6 +175,9 @@ class WbsAgent:
             end_date = self._add_duration(start_date, project_period["value"], project_period["unit"])
 
         return start_date, end_date, self._format_period(project_period)
+
+    def _today_date(self) -> date:
+        return date.today()
 
     def _normalize_date(self, value: object) -> date | None:
         if isinstance(value, datetime):
@@ -950,20 +956,109 @@ class WbsAgent:
                     "deliverables": ", ".join(str(item) for item in rule.get("deliverables") or [] if item),
                 }
             )
+        for row in load_wbs_deliverable_catalog_local():
+            digest.append(
+                {
+                    "stage": str(row.get("stage") or ""),
+                    "task": str(row.get("task") or ""),
+                    "activity": str(row.get("activity") or ""),
+                    "purpose": str(row.get("purpose") or ""),
+                    "deliverable": str(row.get("deliverable") or ""),
+                }
+            )
         return digest
+
+    def _normalize_deliverable_text(self, value: str) -> str:
+        return re.sub(r"[\s\W_]+", "", str(value or "").lower())
+
+    def _strip_deliverable_suffix(self, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return ""
+        return re.sub(r"\s*\([^)]*\)\s*", "", cleaned).strip()
+
+    def _deliverable_alias(self, name: str, phase: str) -> str:
+        normalized_name = self._normalize_deliverable_text(name)
+        normalized_phase = self._normalize_deliverable_text(phase)
+
+        alias_rules = (
+            (("프로젝트계획수립", "프로젝트계획서작성", "프로젝트계획서승인"), "프로젝트계획서"),
+            (("프로젝트착수보고",), "프로젝트착수보고서"),
+            (("cutover계획수립", "cutover계획서작성", "컷오버계획수립", "전환계획수립"), "Cut-Over 계획서"),
+            (("프로젝트인수인계",), "프로젝트인수인계서"),
+            (("프로젝트완료보고",), "프로젝트완료보고서"),
+            (("요구사항정의분석설계단계말산출물검토",), "요구사항추적표"),
+            (("테스트계획설계", "테스트계획수립"), "테스트계획서"),
+            (("단위테스트실행및평가",), "단위테스트평가보고서"),
+            (("단위테스트설계",), "단위테스트케이스"),
+            (("단위테스트",), "단위테스트케이스"),
+            (("통합테스트계획",), "통합테스트계획서"),
+            (("통합테스트",), "통합테스트결과서"),
+            (("사용자인수테스트계획및결과",), "사용자인수테스트계획및결과서"),
+            (("인프라테스트계획및결과",), "인프라테스트계획및결과서"),
+            (("성능테스트계획",), "성능테스트계획서"),
+            (("가용성테스트계획",), "가용성테스트계획서"),
+        )
+
+        for keywords, deliverable in alias_rules:
+            if any(keyword in normalized_name or keyword in normalized_phase for keyword in keywords):
+                return deliverable
+
+        return ""
 
     def _resolve_deliverable_local(self, name: str, phase: str) -> str:
         mapper = load_deliverable_mapper_local()
+        alias = self._deliverable_alias(name, phase)
+        if alias:
+            return alias
+
         text = f"{name} {phase}"
+        normalized_text = self._normalize_deliverable_text(text)
+
+        best_deliverable = ""
+        best_score = 0
+        for row in load_wbs_deliverable_catalog_local():
+            deliverable = str(row.get("deliverable") or "").strip()
+            if not deliverable:
+                continue
+            candidate_text = " ".join(
+                str(row.get(key) or "").strip()
+                for key in ("stage", "task", "activity", "purpose", "deliverable")
+            )
+            normalized_candidate = self._normalize_deliverable_text(candidate_text)
+            score = 0
+            normalized_deliverable = self._normalize_deliverable_text(deliverable)
+            if normalized_text == normalized_deliverable:
+                score += 120
+            if normalized_text and normalized_text in normalized_candidate:
+                score += 80
+            if normalized_candidate and normalized_candidate in normalized_text:
+                score += 40
+            if self._normalize_deliverable_text(phase) and self._normalize_deliverable_text(phase) in normalized_candidate:
+                score += 10
+            if self._normalize_deliverable_text(name) and self._normalize_deliverable_text(name) in normalized_candidate:
+                score += 15
+            if score > best_score:
+                best_score = score
+                best_deliverable = deliverable
+
+        if best_score >= 40 and best_deliverable:
+            return self._strip_deliverable_suffix(best_deliverable) or best_deliverable
+
         for rule in mapper.get("keyword_rules") or []:
             if not isinstance(rule, dict):
                 continue
             keywords = rule.get("keywords") or []
             if any(str(keyword).lower() in text.lower() for keyword in keywords if keyword):
                 deliverables = rule.get("deliverables") or []
-                return ", ".join(str(item) for item in deliverables[:2] if item)
+                if deliverables:
+                    return ", ".join(str(item) for item in deliverables[:2] if item)
         for key, value in (mapper.get("default_by_phase") or {}).items():
-            if str(key) and str(key) in str(phase):
+            if str(key) and (
+                str(key) in str(phase)
+                or str(key) in str(name)
+                or self._normalize_deliverable_text(key) in normalized_text
+            ):
                 return str(value)
         return ""
 

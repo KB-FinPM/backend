@@ -36,9 +36,16 @@ def normalize_requirement_documents(
     handling such as pipe-table row cleanup and section-title carry-over lives
     here in the core agent boundary.
     """
+    prioritized_documents = [
+        document
+        for _, document in sorted(
+            enumerate(list(documents or [])),
+            key=lambda item: (_document_priority(item[1]), item[0]),
+        )
+    ]
     normalized: list[dict[str, Any]] = []
     current_title_by_document_id: dict[str, str] = {}
-    for document in documents or []:
+    for document in prioritized_documents:
         item = deepcopy(document)
         document_id = str(item.get("document_id") or "").strip()
         document_key = document_id or "__default__"
@@ -66,6 +73,33 @@ def normalize_requirement_documents(
             item["section_title"] = current_title
         normalized.append(item)
     return normalized
+
+
+def _document_priority(document: dict[str, Any]) -> int:
+    metadata = document.get("metadata") or {}
+    document_type = str(
+        metadata.get("document_type")
+        or metadata.get("source_document_type")
+        or metadata.get("documentType")
+        or metadata.get("sourceDocumentType")
+        or "",
+    ).upper()
+    if document_type == "CONSTRUCTION_REQUIREMENT_DEFINITION":
+        return 0
+    if document_type in MEETING_NOTE_TYPE_VALUES:
+        return 2
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            document.get("section_title"),
+            metadata.get("source_file_name"),
+            metadata.get("document_file_name"),
+            metadata.get("file_name"),
+        )
+    ).lower()
+    if any(keyword in haystack for keyword in MEETING_NOTE_KEYWORDS):
+        return 2
+    return 1
 
 
 def _meeting_note_requirement_chunks(
