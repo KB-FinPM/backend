@@ -160,9 +160,10 @@ class ChatOrchestrator:
             )
 
         if intent == "SCHEDULE_QUERY":
-            return await self._todo_management_guidance_response(
+            return await self._run_schedule_query(
                 conversation=conversation,
-                project_id=request.project_id,
+                request=request,
+                structured_context=structured_context,
             )
 
         if intent in {"COMPLETE_TODO", "UPDATE_TODO_STATUS", "MARK_TODO_DONE"}:
@@ -886,6 +887,7 @@ class ChatOrchestrator:
                 "normalized_input": structured_context,
             },
             permission_scope=request.permission_scope,
+            persist_wbs_todos=False,
         )
         return await self._render_and_save_response(
             conversation=conversation,

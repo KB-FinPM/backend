@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 TodoStatus = Literal["NOT_STARTED", "IN_PROGRESS", "DONE"]
-TodoSourceType = Literal["MEETING_NOTES", "WBS"]
+TodoSourceType = Literal["MEETING_NOTES", "WBS", "MANUAL"]
 
 
 class TodoItem(BaseModel):

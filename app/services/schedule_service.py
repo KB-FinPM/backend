@@ -402,7 +402,7 @@ class ScheduleService:
         source_document_id = todo.get("source_document_id")
         due_date = self._normalize_due_date_text(
             todo.get("due_date") or todo.get("due_date_text"),
-            default_today=False,
+            default_today=True,
         )
         start_date = self._normalize_due_date_text(
             todo.get("start_date") or todo.get("planned_start_date"),
@@ -764,7 +764,11 @@ class ScheduleService:
 
     def _normalize_source_type(self, value: Any) -> str:
         text = str(value or "").strip().upper()
-        return "WBS" if "WBS" in text else "MEETING_NOTES"
+        if "WBS" in text:
+            return "WBS"
+        if "MANUAL" in text or "DIRECT" in text:
+            return "MANUAL"
+        return "MEETING_NOTES"
 
     async def run_query(
         self,
@@ -773,6 +777,7 @@ class ScheduleService:
         schedule_action: str,
         context: dict[str, Any] | None = None,
         permission_scope: list[str] | None = None,
+        persist_wbs_todos: bool = True,
     ) -> ScheduleTodoResponse:
         todos: list[dict[str, Any]] = []
         if self.action_item_repository is not None:
@@ -804,7 +809,8 @@ class ScheduleService:
             context=assembled_context,
         )
         if (
-            response.success
+            persist_wbs_todos
+            and response.success
             and self.action_item_repository is not None
             and isinstance(response.result, dict)
         ):
