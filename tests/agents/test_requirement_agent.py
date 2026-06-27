@@ -326,10 +326,25 @@ def test_assign_requirement_ids_replaces_non_identifier_duplicates() -> None:
     )
 
     requirement_ids = [atom.requirement_id for atom in atoms]
-    assert requirement_ids == ["BSR-00001", "BSR-00002"]
+    assert requirement_ids == ["REQ-00001", "REQ-00002"]
     assert len(requirement_ids) == len(set(requirement_ids))
     assert atoms[0].metadata["source_requirement_id_raw"] == "프론트엔드 구현"
     assert atoms[1].metadata["source_requirement_id_raw"] == "프론트엔드 구현"
+
+
+def test_assign_requirement_ids_normalizes_existing_non_req_prefixes() -> None:
+    atoms = assign_requirement_ids(
+        [
+            RequirementAtom(
+                requirement_id="BSR-00014",
+                title="프로젝트 계획 수립",
+                requirement_name="프로젝트 계획 수립",
+                description="프로젝트 계획을 수립한다.",
+            ),
+        ]
+    )
+
+    assert atoms[0].requirement_id == "REQ-00014"
 
 
 @pytest.mark.anyio
