@@ -52,11 +52,45 @@ def test_requirement_document_preprocessor_preserves_document_order() -> None:
     normalized = normalize_requirement_documents(documents)
 
     assert [item["document_id"] for item in normalized] == [
-        "DOC-MEET-001",
         "DOC-REQ-001",
+        "DOC-MEET-001",
         "DOC-MEET-001",
     ]
     assert normalized[2]["section_title"] == "회의록 A"
+
+
+def test_requirement_document_preprocessor_prioritizes_construction_before_meeting_notes() -> None:
+    documents = [
+        {
+            "document_id": "DOC-MEET-001",
+            "chunk_index": "0",
+            "section_title": "회의록 A",
+            "text": "회의록 내용",
+            "metadata": {"document_type": "MEETING_NOTES"},
+        },
+        {
+            "document_id": "DOC-REQ-001",
+            "chunk_index": "1",
+            "section_title": "구축요건정의서 A",
+            "text": "구축요건 내용 1",
+            "metadata": {"document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION"},
+        },
+        {
+            "document_id": "DOC-REQ-001",
+            "chunk_index": "2",
+            "section_title": "구축요건정의서 A",
+            "text": "구축요건 내용 2",
+            "metadata": {"document_type": "CONSTRUCTION_REQUIREMENT_DEFINITION"},
+        },
+    ]
+
+    normalized = normalize_requirement_documents(documents)
+
+    assert [item["document_id"] for item in normalized] == [
+        "DOC-REQ-001",
+        "DOC-REQ-001",
+        "DOC-MEET-001",
+    ]
 
 
 def test_requirement_document_preprocessor_splits_meeting_notes_into_candidates() -> None:

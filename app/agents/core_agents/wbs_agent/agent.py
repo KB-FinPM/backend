@@ -21,6 +21,7 @@ from util.agent_generation_utils import (
 from util.agent_template_utils import (
     load_wbs_common_rows,
     load_deliverable_mapper_local,
+    load_wbs_deliverable_catalog_local,
 )
 
 logger = get_logger(__name__)
@@ -86,7 +87,6 @@ class WbsAgent:
     SCHEDULE_ANCHOR_DETAIL_ROWS = (
         {"level": "3", "wbs_id": "3.3.5", "wbs_name": "테스트계획설계"},
         {"level": "3", "wbs_id": "3.4.3", "wbs_name": "단위테스트"},
-        {"level": "3", "wbs_id": "3.5.1", "wbs_name": "통합테스트"},
         {"level": "4", "wbs_id": "3.6.2.3", "wbs_name": "가동(오픈)"},
     )
 
@@ -163,6 +163,8 @@ class WbsAgent:
             or context.get("contract_start_date")
         )
         start_date = self._normalize_date(start_date_value)
+        if start_date is None:
+            start_date = self._today_date()
 
         project_period = self._extract_project_period(request.documents, context)
         if project_period is None:
@@ -172,6 +174,9 @@ class WbsAgent:
             end_date = self._add_duration(start_date, project_period["value"], project_period["unit"])
 
         return start_date, end_date, self._format_period(project_period)
+
+    def _today_date(self) -> date:
+        return date.today()
 
     def _normalize_date(self, value: object) -> date | None:
         if isinstance(value, datetime):
@@ -709,10 +714,10 @@ class WbsAgent:
     def _detail_description_for_phase(self, phase: str, name: str) -> str:
         phase_descriptions = {
             "요구사항정의": "요구사항 범위와 업무 규칙을 정리하고 세부 요구를 확정한다.",
-            "분석": "업무 흐름, 데이터, 인터페이스, 제약 조건을 분석한다.",
-            "설계": "기능, 화면, 데이터, 인터페이스, 테스트 관점을 설계한다.",
-            "구현": "설계 내용을 기반으로 기능을 개발하고 연동을 구현한다.",
-            "테스트": "단위, 통합, 인수 테스트를 설계하고 실행해 품질을 검증한다.",
+            "분석": "업무 흐름, 데이터, 인터페이스, 제약 조건을 분석하고 세부 영향 범위를 정리한다.",
+            "설계": "기능, 화면, 데이터, 인터페이스, 테스트 관점을 설계하고 검증 기준을 정의한다.",
+            "구현": "설계 내용을 기반으로 기능을 개발하고 연동, 예외 처리, 결과 반영을 구현한다.",
+            "테스트": "단위, 통합, 성능, 가용성, 인수 테스트를 설계하고 실행해 품질을 검증한다.",
             "이행": "배포, 교육, 오픈 준비와 이행 점검을 수행한다.",
             "안정화": "오픈 이후 이슈를 점검하고 안정화한다.",
         }
@@ -724,10 +729,10 @@ class WbsAgent:
     def _phase_detail_targets(self) -> dict[str, int]:
         return {
             "요구사항정의": 2,
-            "분석": 2,
-            "설계": 3,
-            "구현": 3,
-            "테스트": 2,
+            "분석": 4,
+            "설계": 4,
+            "구현": 4,
+            "테스트": 3,
             "이행": 2,
             "안정화": 0,
         }
@@ -826,12 +831,50 @@ class WbsAgent:
     ) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
         phase_targets = self._phase_detail_targets()
+        phase_templates = {
+            "요구사항정의": [
+                "기능요구와 비기능요구의 범위를 정리한다.",
+                "우선순위와 적용 범위를 확정한다.",
+            ],
+            "분석": [
+                "업무 흐름과 예외 처리를 분석한다.",
+                "데이터 흐름과 인터페이스 연계를 분석한다.",
+                "정책, 권한, 운영 제약을 함께 검토한다.",
+                "화면 전환 및 사용자 영향 범위를 정리한다.",
+            ],
+            "설계": [
+                "화면 구성과 사용자 조작 흐름을 설계한다.",
+                "데이터 구조와 저장 방식을 설계한다.",
+                "인터페이스와 연동 방식을 설계한다.",
+                "검증 기준과 예외 처리 방식을 설계한다.",
+            ],
+            "구현": [
+                "핵심 기능 로직을 구현한다.",
+                "화면과 백엔드 연동을 구현한다.",
+                "데이터 처리와 저장 로직을 구현한다.",
+                "오류 처리와 상태 반영 로직을 구현한다.",
+            ],
+            "테스트": [
+                "통합테스트 시나리오를 준비하고 검증한다.",
+                "성능테스트 기준과 병목 구간을 점검한다.",
+                "가용성테스트 기준과 장애 대응을 검증한다.",
+                "사용자인수테스트 기준과 업무 적합성을 검증한다.",
+                "결과를 정리하고 개선 사항을 반영한다.",
+            ],
+            "이행": [
+                "운영 전환 절차를 준비한다.",
+                "사용자 교육과 오픈 점검을 수행한다.",
+            ],
+            "안정화": [
+                "오픈 이후 이슈와 개선 항목을 점검한다.",
+            ],
+        }
         phase_suffixes = {
             "요구사항정의": ["기능요구사항 정의", "요구사항 정의"],
-            "분석": ["업무 분석", "데이터/정책 분석"],
-            "설계": ["아키텍처 설계", "화면 설계", "데이터베이스 설계"],
-            "구현": ["기능 개발", "연동 구현", "데이터 처리 개발"],
-            "테스트": ["통합테스트", "기능 테스트"],
+            "분석": ["업무 분석", "데이터/정책 분석", "인터페이스 분석", "화면 영향 분석"],
+            "설계": ["아키텍처 설계", "화면 설계", "데이터베이스 설계", "인터페이스 설계"],
+            "구현": ["기능 개발", "연동 구현", "데이터 처리 개발", "오류 처리 개발"],
+            "테스트": ["통합테스트", "성능테스트", "가용성테스트", "사용자인수테스트", "결과 검토"],
             "이행": ["운영이관", "사용자 교육 및 안정화"],
             "안정화": ["안정화 점검"],
         }
@@ -852,18 +895,36 @@ class WbsAgent:
             if needed == 0:
                 continue
 
+            if phase == "테스트":
+                tasks.extend(
+                    self._build_test_phase_detail_tasks(
+                        atoms,
+                        project_name=project_name,
+                        project_type=project_type,
+                        needed=needed,
+                    )
+                )
+                continue
+
             selected_atoms = self._select_atoms_for_phase(atoms, phase, limit=needed)
             if not selected_atoms:
                 selected_atoms = [None] * needed
 
             suffixes = phase_suffixes.get(phase, ["작업"])
+            templates = phase_templates.get(phase, [])
             for index in range(needed):
                 atom = selected_atoms[index] if index < len(selected_atoms) else None
                 suffix = suffixes[index % len(suffixes)]
+                phase_template = templates[index % len(templates)] if templates else ""
                 if atom is not None:
                     atom_name = self._atom_display_name(atom, fallback=project_name)
-                    name = f"{atom_name} {suffix}".strip()
+                    if phase == "테스트":
+                        name = suffix
+                    else:
+                        name = f"{atom_name} {suffix}".strip()
                     description = f"{atom_name} 관련 {phase_role_labels.get(phase, phase)} 작업을 수행한다."
+                    if phase_template:
+                        description = f"{description} {phase_template}"
                     if atom.description:
                         description = f"{description} {truncate_text(atom.description, 180)}"
                     source_requirement_ids = self._source_requirement_ids_for_task(
@@ -875,11 +936,15 @@ class WbsAgent:
                 else:
                     if phase == "요구사항정의":
                         name = f"{project_name} {suffix}".strip()
+                    elif phase == "테스트":
+                        name = suffix
                     elif phase == "이행":
                         name = suffix
                     else:
                         name = f"{project_name} {suffix}".strip()
                     description = self._detail_description_for_phase(phase, name)
+                    if phase_template:
+                        description = f"{description} {phase_template}"
                     source_requirement_ids = self._source_requirement_ids_for_task(
                         atoms,
                         phase=phase,
@@ -898,6 +963,7 @@ class WbsAgent:
                         "description": truncate_text(description, 700),
                         "source_requirement_ids": [value for value in source_requirement_ids if value],
                         "wbs_id": wbs_id,
+                        "_insert_after_phase": True,
                         "metadata": {
                             "phase": phase,
                             "deliverable": deliverable,
@@ -910,6 +976,153 @@ class WbsAgent:
                     }
                 )
         return tasks
+
+    def _build_test_phase_detail_tasks(
+        self,
+        atoms,
+        *,
+        project_name: str,
+        project_type: str,
+        needed: int,
+    ) -> list[dict[str, object]]:
+        if needed <= 0:
+            return []
+
+        parent_specs = [
+            {
+                "wbs_id": "3.5.1",
+                "level": "3",
+                "name": "통합테스트",
+                "description": "통합테스트 시나리오를 준비하고 검증한다.",
+                "children": [
+                    ("3.5.1.1", "통합테스트설계", "통합테스트 설계 기준과 시나리오를 정리한다."),
+                    ("3.5.1.2", "통합테스트실행및결과", "통합테스트를 실행하고 결과를 정리한다."),
+                    ("3.5.1.3", "통합테스트평가", "통합테스트 결과를 평가하고 개선 사항을 도출한다."),
+                ],
+            },
+            {
+                "wbs_id": "3.5.2",
+                "level": "3",
+                "name": "사용자인수테스트",
+                "description": "사용자인수테스트 기준과 업무 적합성을 검증한다.",
+                "children": [
+                    ("3.5.2.1", "사용자인수테스트계획및결과", "사용자인수테스트 계획과 결과를 정리한다."),
+                ],
+            },
+            {
+                "wbs_id": "3.5.3",
+                "level": "3",
+                "name": "결과 검토",
+                "description": "테스트 결과를 정리하고 개선 사항을 반영한다.",
+                "children": [],
+            },
+        ]
+
+        selected_atoms = self._select_atoms_for_phase(atoms, "테스트", limit=len(parent_specs))
+        if not selected_atoms:
+            selected_atoms = [None] * len(parent_specs)
+        while len(selected_atoms) < len(parent_specs):
+            selected_atoms.append(selected_atoms[-1] if selected_atoms else None)
+
+        tasks: list[dict[str, object]] = []
+        for index, spec in enumerate(parent_specs):
+            atom = selected_atoms[index] if index < len(selected_atoms) else None
+            atom_name = self._atom_display_name(atom, fallback=project_name) if atom is not None else project_name
+            source_requirement_ids = self._source_requirement_ids_for_task(
+                [atom] if atom is not None else atoms,
+                phase="테스트",
+                name=spec["name"],
+            )
+            description = f"{atom_name} 관련 테스트 작업을 수행한다. {spec['description']}"
+            if project_type and project_type != "auto":
+                description = f"{description} 프로젝트 유형은 {project_type}로 분류되었다."
+
+            tasks.append(
+                {
+                    "phase": "테스트",
+                    "level": spec["level"],
+                    "name": spec["name"],
+                    "description": truncate_text(description, 700),
+                    "source_requirement_ids": [value for value in source_requirement_ids if value],
+                    "wbs_id": spec["wbs_id"],
+                    "_insert_after_phase": True,
+                    "metadata": {
+                        "phase": "테스트",
+                        "deliverable": str(self._resolve_deliverable_local(spec["name"], "테스트") or "").strip(),
+                        "generation_source": "fallback",
+                        "level": spec["level"],
+                        "worker": "작업자",
+                        "wbs_id": spec["wbs_id"],
+                        "id": spec["wbs_id"],
+                    },
+                }
+            )
+
+            for child_wbs_id, child_name, child_description in spec["children"]:
+                child_source_ids = self._source_requirement_ids_for_task(
+                    [atom] if atom is not None else atoms,
+                    phase="테스트",
+                    name=child_name,
+                )
+                child_text = f"{atom_name} 관련 {child_description}"
+                if project_type and project_type != "auto":
+                    child_text = f"{child_text} 프로젝트 유형은 {project_type}로 분류되었다."
+                tasks.append(
+                    {
+                        "phase": "테스트",
+                        "level": "4",
+                        "name": child_name,
+                        "description": truncate_text(child_text, 700),
+                        "source_requirement_ids": [value for value in child_source_ids if value],
+                        "wbs_id": child_wbs_id,
+                        "_insert_after_phase": True,
+                        "metadata": {
+                            "phase": "테스트",
+                            "deliverable": str(self._resolve_deliverable_local(child_name, "테스트") or "").strip(),
+                            "generation_source": "fallback",
+                            "level": "4",
+                            "worker": "작업자",
+                            "wbs_id": child_wbs_id,
+                            "id": child_wbs_id,
+                        },
+                    }
+                )
+
+        return tasks
+
+    def _apply_test_detail_schedule(
+        self,
+        tasks: list[dict[str, object]],
+        *,
+        project_start: date | None,
+        project_end: date | None,
+    ) -> None:
+        if project_start is None:
+            return
+
+        windows = self._build_development_phase_windows(project_start, project_end or project_start)
+        if not windows or "테스트" not in windows:
+            return
+
+        test_start, test_end = windows["테스트"]
+        schedule_rules = (
+            ("통합테스트", test_start, test_end - timedelta(weeks=1)),
+            ("사용자인수테스트", test_end - timedelta(weeks=1), test_end),
+            ("결과 검토", test_end - timedelta(days=1), test_end - timedelta(days=1)),
+        )
+
+        for name, start_value, end_value in schedule_rules:
+            anchor_id = self._find_task_id_by_name(tasks, name)
+            if not anchor_id:
+                continue
+            for task in tasks:
+                metadata = task.get("metadata") or {}
+                if not isinstance(metadata, dict):
+                    continue
+                task_id = str(metadata.get("wbs_id") or metadata.get("id") or "").strip()
+                if not task_id or not self._is_same_or_descendant(task_id, anchor_id):
+                    continue
+                self._set_task_schedule(task, start_value=start_value, end_value=end_value)
 
     def _fixed_development_phases(self, tasks: list[dict[str, object]]) -> dict[str, dict[str, object]]:
         return {
@@ -950,20 +1163,109 @@ class WbsAgent:
                     "deliverables": ", ".join(str(item) for item in rule.get("deliverables") or [] if item),
                 }
             )
+        for row in load_wbs_deliverable_catalog_local():
+            digest.append(
+                {
+                    "stage": str(row.get("stage") or ""),
+                    "task": str(row.get("task") or ""),
+                    "activity": str(row.get("activity") or ""),
+                    "purpose": str(row.get("purpose") or ""),
+                    "deliverable": str(row.get("deliverable") or ""),
+                }
+            )
         return digest
+
+    def _normalize_deliverable_text(self, value: str) -> str:
+        return re.sub(r"[\s\W_]+", "", str(value or "").lower())
+
+    def _strip_deliverable_suffix(self, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return ""
+        return re.sub(r"\s*\([^)]*\)\s*", "", cleaned).strip()
+
+    def _deliverable_alias(self, name: str, phase: str) -> str:
+        normalized_name = self._normalize_deliverable_text(name)
+        normalized_phase = self._normalize_deliverable_text(phase)
+
+        alias_rules = (
+            (("프로젝트계획수립", "프로젝트계획서작성", "프로젝트계획서승인"), "프로젝트계획서"),
+            (("프로젝트착수보고",), "프로젝트착수보고서"),
+            (("cutover계획수립", "cutover계획서작성", "컷오버계획수립", "전환계획수립"), "Cut-Over 계획서"),
+            (("프로젝트인수인계",), "프로젝트인수인계서"),
+            (("프로젝트완료보고",), "프로젝트완료보고서"),
+            (("요구사항정의분석설계단계말산출물검토",), "요구사항추적표"),
+            (("테스트계획설계", "테스트계획수립"), "테스트계획서"),
+            (("단위테스트실행및평가",), "단위테스트평가보고서"),
+            (("단위테스트설계",), "단위테스트케이스"),
+            (("단위테스트",), "단위테스트케이스"),
+            (("통합테스트계획",), "통합테스트계획서"),
+            (("통합테스트",), "통합테스트결과서"),
+            (("사용자인수테스트계획및결과",), "사용자인수테스트계획및결과서"),
+            (("인프라테스트계획및결과",), "인프라테스트계획및결과서"),
+            (("성능테스트계획",), "성능테스트계획서"),
+            (("가용성테스트계획",), "가용성테스트계획서"),
+        )
+
+        for keywords, deliverable in alias_rules:
+            if any(keyword in normalized_name or keyword in normalized_phase for keyword in keywords):
+                return deliverable
+
+        return ""
 
     def _resolve_deliverable_local(self, name: str, phase: str) -> str:
         mapper = load_deliverable_mapper_local()
+        alias = self._deliverable_alias(name, phase)
+        if alias:
+            return alias
+
         text = f"{name} {phase}"
+        normalized_text = self._normalize_deliverable_text(text)
+
+        best_deliverable = ""
+        best_score = 0
+        for row in load_wbs_deliverable_catalog_local():
+            deliverable = str(row.get("deliverable") or "").strip()
+            if not deliverable:
+                continue
+            candidate_text = " ".join(
+                str(row.get(key) or "").strip()
+                for key in ("stage", "task", "activity", "purpose", "deliverable")
+            )
+            normalized_candidate = self._normalize_deliverable_text(candidate_text)
+            score = 0
+            normalized_deliverable = self._normalize_deliverable_text(deliverable)
+            if normalized_text == normalized_deliverable:
+                score += 120
+            if normalized_text and normalized_text in normalized_candidate:
+                score += 80
+            if normalized_candidate and normalized_candidate in normalized_text:
+                score += 40
+            if self._normalize_deliverable_text(phase) and self._normalize_deliverable_text(phase) in normalized_candidate:
+                score += 10
+            if self._normalize_deliverable_text(name) and self._normalize_deliverable_text(name) in normalized_candidate:
+                score += 15
+            if score > best_score:
+                best_score = score
+                best_deliverable = deliverable
+
+        if best_score >= 40 and best_deliverable:
+            return self._strip_deliverable_suffix(best_deliverable) or best_deliverable
+
         for rule in mapper.get("keyword_rules") or []:
             if not isinstance(rule, dict):
                 continue
             keywords = rule.get("keywords") or []
             if any(str(keyword).lower() in text.lower() for keyword in keywords if keyword):
                 deliverables = rule.get("deliverables") or []
-                return ", ".join(str(item) for item in deliverables[:2] if item)
+                if deliverables:
+                    return ", ".join(str(item) for item in deliverables[:2] if item)
         for key, value in (mapper.get("default_by_phase") or {}).items():
-            if str(key) and str(key) in str(phase):
+            if str(key) and (
+                str(key) in str(phase)
+                or str(key) in str(name)
+                or self._normalize_deliverable_text(key) in normalized_text
+            ):
                 return str(value)
         return ""
 
@@ -1208,8 +1510,11 @@ Project period: {project_period or ""}
         extra_metadata.setdefault("generation_source", "llm")
         if extra.get("_insert_after_phase"):
             extra_metadata["_insert_after_phase"] = True
-        detail_level = "4"
-        extra_metadata["level"] = detail_level
+        detail_level = str(extra_metadata.get("level") or extra.get("level") or "4").strip() or "4"
+        if str(extra_metadata.get("generation_source") or "").strip() == "fallback":
+            extra_metadata["level"] = detail_level
+        else:
+            extra_metadata["level"] = "4"
         if not extra_metadata.get("wbs_id"):
             extra_metadata["wbs_id"] = self._phase_detail_wbs_id(phase, index)
         extra_metadata.setdefault("id", extra_metadata.get("wbs_id"))
@@ -1313,7 +1618,12 @@ Project period: {project_period or ""}
                 existing_phase_counts=self._phase_counts(llm_tasks),
             )
             if llm_tasks:
-                generated_tasks = list(llm_tasks)
+                generated_tasks = list(detail_tasks) + [
+                    task
+                    for task in llm_tasks
+                    if str((task.get("phase") or (task.get("metadata") or {}).get("phase") or "")).strip()
+                    != "테스트"
+                ]
             else:
                 logger.warning(
                     f"[{self.AGENT_NAME}] LLM generation produced no tasks; "
@@ -1324,6 +1634,11 @@ Project period: {project_period or ""}
             tasks = self._merge_llm_development_tasks(base_tasks, generated_tasks, atoms=atoms)
 
             self._apply_llm_development_schedule(
+                tasks,
+                project_start=start_date,
+                project_end=end_date,
+            )
+            self._apply_test_detail_schedule(
                 tasks,
                 project_start=start_date,
                 project_end=end_date,

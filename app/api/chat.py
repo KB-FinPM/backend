@@ -14,6 +14,7 @@ from app.orchestrator.output_orchestrator import OutputOrchestrator
 from app.repositories.conversation_repository import ConversationRepository
 from app.schemas.chat import (
     ChatActionMetadata,
+    ChatActionType,
     ChatActionStatus,
     ChatActionStatusResponse,
     ChatMessageRequest,
@@ -85,6 +86,21 @@ async def _build_action_status_response(
     action: ChatActionMetadata,
     output_orchestrator: OutputOrchestrator,
 ) -> ChatActionStatusResponse:
+    pending_action = action
+    if (
+        action.action_type == ChatActionType.GENERATE_UNITTEST
+        and action.status in {ChatActionStatus.EXECUTED, ChatActionStatus.FAILED}
+    ):
+        pending_action = ChatActionMetadata(
+            action_id=action.action_id,
+            conversation_id=action.conversation_id,
+            project_id=action.project_id,
+            action_type=action.action_type,
+            status=action.status,
+            payload=action.payload,
+            result_json={},
+        )
+
     if action.status == ChatActionStatus.EXECUTED:
         generation_result = action.result_json or {}
         result = generation_result.get("result")
@@ -109,7 +125,7 @@ async def _build_action_status_response(
             conversation_id=action.conversation_id,
             status=action.status,
             state=ChatState(payload.get("state", ChatState.COMPLETED.value)),
-            pending_action=action,
+            pending_action=pending_action,
             result=payload.get("result") or {
                 "action_id": action.action_id,
                 "job_id": action.action_id,
@@ -149,7 +165,7 @@ async def _build_action_status_response(
             conversation_id=action.conversation_id,
             status=action.status,
             state=ChatState(payload.get("state", ChatState.FAILED.value)),
-            pending_action=action,
+            pending_action=pending_action,
             result=payload.get("result") or {"error": error},
             download_files=[],
         )
@@ -168,7 +184,7 @@ async def _build_action_status_response(
         conversation_id=action.conversation_id,
         status=action.status,
         state=state,
-        pending_action=action,
+        pending_action=pending_action,
         result={
             "action_id": action.action_id,
             "job_id": action.action_id,

@@ -192,6 +192,39 @@ async def test_wbs_agent_applies_planned_dates_from_context() -> None:
 
 
 @pytest.mark.anyio
+async def test_wbs_agent_defaults_start_date_to_today_when_missing() -> None:
+    orchestrator = StubWbsOrchestrator()
+    agent = WbsAgent(model_invoker=orchestrator)
+    fixed_today = date(2026, 6, 27)
+    agent._today_date = lambda: fixed_today  # type: ignore[method-assign]
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[{"chunk_id": "CHUNK-001", "text": "Login and reporting"}],
+            context={
+                "project_name": "Schedule Test",
+                "requirement_artifact": {
+                    "requirements": [
+                        {
+                            "requirement_id": "REQ-001",
+                            "requirement_name": "Login",
+                            "description": "Users can sign in.",
+                            "biz_requirement_name": "Access",
+                        }
+                    ],
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    assert response.result["metadata"]["project_start_date"] == "2026.06.27"
+    assert response.result["tasks"][0]["start_date"] == "2026.06.27"
+    assert response.result["tasks"][0]["planned_start_date"] == "2026-06-27"
+
+
+@pytest.mark.anyio
 async def test_wbs_agent_populates_source_requirement_ids_for_all_tasks() -> None:
     orchestrator = StubWbsOrchestrator()
     agent = WbsAgent(model_invoker=orchestrator)
@@ -375,14 +408,92 @@ async def test_wbs_agent_uses_backend_dev_common_prefix_and_keeps_generated_task
     assert orchestrator.calls
 
     assert len(tasks) >= len(template_rows) + 1
-    for task, template_row in zip(tasks[: len(template_rows)], template_rows, strict=True):
+    common_tasks = [
+        task
+        for task in tasks
+        if not (task.get("metadata") or {}).get("generation_source")
+    ]
+    for task, template_row in zip(common_tasks[: len(template_rows)], template_rows, strict=True):
         assert task["metadata"]["level"] == template_row["level"]
         assert task["metadata"]["wbs_id"] == template_row["wbs_id"]
         assert task["name"] == template_row["wbs_name"]
 
     generated = [task for task in tasks if task["name"] == "접근관리"]
     assert generated[0]["name"] == "접근관리"
-    assert generated[0]["metadata"]["wbs_id"] == "3.4.1"
+    assert generated[0]["metadata"]["wbs_id"].startswith("3.4.")
+
+
+def test_wbs_agent_resolves_project_plan_deliverables_from_template_catalog() -> None:
+    agent = WbsAgent()
+
+    assert agent._resolve_deliverable_local("프로젝트계획서작성", "프로젝트관리") == "프로젝트계획서"
+    assert agent._resolve_deliverable_local("프로젝트착수보고", "프로젝트관리") == "프로젝트착수보고서"
+    assert agent._resolve_deliverable_local("단위테스트설계", "테스트") == "단위테스트케이스"
+
+
+@pytest.mark.anyio
+async def test_wbs_agent_expands_analysis_design_implementation_and_test_tasks() -> None:
+    orchestrator = StubWbsOrchestrator(task_name="주요 기능")
+    agent = WbsAgent(model_invoker=orchestrator)
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-002",
+            context={
+                "project_name": "풍부한 WBS 프로젝트",
+                "start_date": "2026.01.01",
+                "requirement_artifact": {
+                    "requirements": [
+                        {
+                            "requirement_id": "REQ-001",
+                            "requirement_name": "조회 기능",
+                            "description": "조회 조건 입력과 결과 확인이 필요하다.",
+                            "biz_requirement_name": "조회",
+                        },
+                        {
+                            "requirement_id": "REQ-002",
+                            "requirement_name": "저장 기능",
+                            "description": "입력값 저장과 오류 처리가 필요하다.",
+                            "biz_requirement_name": "저장",
+                        },
+                    ]
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    tasks = response.result["tasks"]
+    phase_names = [str(task.get("phase") or task.get("metadata", {}).get("phase") or "") for task in tasks]
+
+    assert phase_names.count("분석") >= 4
+    assert phase_names.count("설계") >= 4
+    assert phase_names.count("구현") >= 4
+    assert phase_names.count("테스트") >= 5
+
+    test_tasks = [
+        task
+        for task in tasks
+        if (task.get("phase") or (task.get("metadata") or {}).get("phase")) == "테스트"
+    ]
+    test_names = " ".join(task["name"] for task in test_tasks)
+    assert "통합테스트" in test_names
+    assert "사용자인수테스트" in test_names
+    assert "결과 검토" in test_names
+    assert "성능테스트" not in test_names
+    assert "가용성테스트" not in test_names
+
+    task_by_wbs_id = {
+        str(task.get("metadata", {}).get("wbs_id") or task.get("wbs_id") or ""): task
+        for task in tasks
+    }
+    assert task_by_wbs_id["3.5.1"]["metadata"]["level"] == "3"
+    assert task_by_wbs_id["3.5.1.1"]["metadata"]["level"] == "4"
+    assert task_by_wbs_id["3.5.1.2"]["metadata"]["level"] == "4"
+    assert task_by_wbs_id["3.5.1.3"]["metadata"]["level"] == "4"
+    assert task_by_wbs_id["3.5.2"]["metadata"]["level"] == "3"
+    assert task_by_wbs_id["3.5.2.1"]["metadata"]["level"] == "4"
+    assert task_by_wbs_id["3.5.3"]["metadata"]["level"] == "3"
 
 
 @pytest.mark.anyio
@@ -510,6 +621,16 @@ async def test_wbs_agent_applies_special_schedule_rules_by_id_hierarchy() -> Non
     )
     assert task_map["3.5.1"]["metadata"]["start_date"] == integration_start.strftime("%Y.%m.%d")
     assert task_map["3.5.1"]["metadata"]["end_date"] == integration_end.strftime("%Y.%m.%d")
+
+    uat_start = (test_end - timedelta(weeks=1)).strftime("%Y.%m.%d")
+    uat_end = test_end.strftime("%Y.%m.%d")
+    review_day = (test_end - timedelta(days=1)).strftime("%Y.%m.%d")
+    assert task_map["3.5.2"]["metadata"]["start_date"] == uat_start
+    assert task_map["3.5.2"]["metadata"]["end_date"] == uat_end
+    assert task_map["3.5.2.1"]["metadata"]["start_date"] == uat_start
+    assert task_map["3.5.2.1"]["metadata"]["end_date"] == uat_end
+    assert task_map["3.5.3"]["metadata"]["start_date"] == review_day
+    assert task_map["3.5.3"]["metadata"]["end_date"] == review_day
 
     assert task_map["3.6.2.3"]["metadata"]["start_date"] == transition_end.strftime("%Y.%m.%d")
     assert task_map["3.6.2.3"]["metadata"]["end_date"] == transition_end.strftime("%Y.%m.%d")

@@ -309,6 +309,16 @@ def looks_like_requirement_identifier(value: Any) -> bool:
     )
 
 
+def _normalize_requirement_identifier(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.search(r"(\d+)(?:[-_]\d+)?$", text)
+    if not match:
+        return ""
+    return f"REQ-{int(match.group(1)):05d}"
+
+
 def atoms_to_requirement_artifact(atoms: list[RequirementAtom], project_id: str, generated_by: str) -> dict[str, Any]:
     return {
         "artifact_type": "REQUIREMENT_SPEC",
@@ -1454,19 +1464,11 @@ def assign_requirement_ids(atoms: Iterable[RequirementAtom]) -> list[Requirement
             metadata["source_requirement_id_raw"] = current_id
             current_id = ""
 
-        should_generate_id = (
-            not current_id
-            or current_id.startswith(("RQ-", "Requirement"))
-            or re.fullmatch(r"REQ-?\d+", current_id or "", flags=re.IGNORECASE)
-        )
-        if should_generate_id:
-            prefix = (
-                "BSR"
-                if metadata.get("source") == "구축요건정의서"
-                and metadata.get("raw_table_category")
-                else "REQ"
-            )
-            current_id = f"{prefix}-{idx:05d}"
+        normalized_id = _normalize_requirement_identifier(current_id)
+        if normalized_id:
+            current_id = normalized_id
+        else:
+            current_id = f"REQ-{idx:05d}"
 
         base_id = current_id
         suffix = 2

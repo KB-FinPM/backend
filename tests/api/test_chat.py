@@ -1,9 +1,35 @@
 # EN: Tests for chat API routing behavior.
 
 from fastapi.testclient import TestClient
+import pytest
 
+from app.api.chat import _build_action_status_response
 from app.dependencies import get_chat_service
-from app.schemas.chat import ChatMessageRequest, ChatResponse, ChatState
+from app.schemas.chat import (
+    ChatActionMetadata,
+    ChatActionStatus,
+    ChatActionType,
+    ChatMessageRequest,
+    ChatResponse,
+    ChatState,
+)
+
+
+class StubOutputResponse:
+    def __init__(self, display_payload: dict) -> None:
+        self.display_payload = display_payload
+
+
+class StubOutputOrchestrator:
+    async def format(self, request) -> StubOutputResponse:
+        return StubOutputResponse(
+            {
+                "message": "단위테스트케이스가 생성되었습니다.",
+                "state": "COMPLETED",
+                "result": {},
+                "download_files": [],
+            }
+        )
 
 
 class StubChatService:
@@ -44,3 +70,27 @@ def test_chat_messages_route_delegates_to_chat_service(client: TestClient) -> No
     assert service.received_request.context["selected_document_ids"] == [
         "DOC-REQ-001"
     ]
+
+
+@pytest.mark.anyio
+async def test_chat_action_status_strips_unittest_result_json_after_completion() -> None:
+    action = ChatActionMetadata(
+        action_id="ACT-UNIT-001",
+        conversation_id="CONV-001",
+        project_id="PRJ-001",
+        action_type=ChatActionType.GENERATE_UNITTEST,
+        status=ChatActionStatus.EXECUTED,
+        payload={"target_artifact_type": "UNITTEST_SPEC"},
+        result_json={
+            "result": {"test_cases": [{"test_case_id": "TEST-001"}]},
+            "generation_progress": {"stage": "DOCUMENT_GENERATION_COMPLETED"},
+        },
+    )
+
+    response = await _build_action_status_response(
+        action,
+        StubOutputOrchestrator(),
+    )
+
+    assert response.pending_action is not None
+    assert response.pending_action.result_json == {}
