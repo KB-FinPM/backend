@@ -39,11 +39,10 @@ async def test_screen_design_agent_creates_one_screen_per_requirement_id() -> No
     assert len(response.result["screens"]) == 2
     assert response.result["screens"][0]["source_requirement_ids"] == ["REQ-0001"]
     description_lines = response.result["screens"][0]["description"].splitlines()
-    assert len(description_lines) >= 2
-    assert description_lines[0].startswith("ㆍ ")
-    assert description_lines[1].startswith("ㆍ ")
+    assert 2 <= len(description_lines) <= 10
+    assert not description_lines[0].startswith("ㆍ ")
     assert "사용자는 회원 목록을 조회할 수 있어야 한다." in description_lines[0]
-    assert "회원 조회 화면" in description_lines[1]
+    assert any("회원 조회 화면" in line for line in description_lines[1:])
     assert response.result["screens"][0]["metadata"]["requirement_id"] == "REQ-0001"
     assert response.result["screens"][0]["metadata"]["description"] == response.result["screens"][0]["description"]
     assert response.result["metadata"]["author"] == "홍길동"
@@ -64,8 +63,22 @@ def test_screen_design_description_renumbers_each_screen_from_one() -> None:
     )
 
     description_lines = description.splitlines()
-    assert description_lines[0].startswith("ㆍ ")
-    assert description_lines[1].startswith("ㆍ ")
     assert "3. " not in description_lines[0]
     assert "4. " not in description_lines[1]
     assert "환율 고시 및 조회" in description_lines[0]
+
+
+def test_screen_design_description_expands_for_richer_content() -> None:
+    agent = ScreenDesignAgent()
+
+    description = agent._ensure_screen_description(
+        "조회 조건 입력, 결과 목록 표시, 상세 확인, 수정 저장, 삭제 처리, 파일 업로드, 승인 결과 반영, 통계 요약, 오류 메시지 안내",
+        "종합 관리 화면",
+    )
+
+    description_lines = description.splitlines()
+    assert 5 <= len(description_lines) <= 10
+    assert all(not line.startswith("ㆍ ") for line in description_lines)
+    assert any("조회 조건" in line for line in description_lines)
+    assert any("저장" in line for line in description_lines)
+    assert any("오류" in line for line in description_lines)

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import random
 import re
 from typing import Any
 
@@ -753,7 +755,12 @@ class UnitTestAgent:
         scenario_focus: str | None,
     ) -> list[str]:
         corpus = f"{screen_name} {screen_description}".lower()
-        description_points = self._screen_description_points(screen_name, screen_description)
+        rng = self._screen_rng(screen_name, screen_description)
+        description_points = self._screen_description_points(
+            screen_name,
+            screen_description,
+            rng=rng,
+        )
         lines = self._screen_template_lines(
             screen_name=screen_name,
             screen_description=screen_description,
@@ -761,25 +768,31 @@ class UnitTestAgent:
             description_points=description_points,
         )
 
-        if scenario_label:
+        combined: list[str] = []
+        for candidate in [*description_points, *lines]:
+            cleaned = str(candidate or "").strip()
+            if cleaned and cleaned not in combined:
+                combined.append(cleaned)
+
+        if screen_description:
+            summary = truncate_text(screen_description, 260)
+            if summary and summary not in combined:
+                combined.append(summary)
+
+        if len(combined) < 2:
+            combined.append(f"{screen_name}의 기본 화면 요소를 확인한다.")
+
+        if len(combined) > 2:
+            rng.shuffle(combined)
+
+        target_count = min(len(combined), rng.randint(3, 6)) if len(combined) >= 3 else len(combined)
+        lines = [self._sanitize_test_content_line(line) for line in combined[:target_count]]
+        lines = [line for line in lines if line]
+
+        if scenario_label and lines:
             lines[0] = f"{scenario_label}{lines[0]}"
-        if scenario_focus:
+        if scenario_focus and lines:
             lines[0] = f"{lines[0]} ({scenario_focus})"
-
-        if description_points:
-            ordered_lines: list[str] = []
-            for point in description_points:
-                if point and point not in ordered_lines:
-                    ordered_lines.append(point)
-            for candidate in lines:
-                if candidate and candidate not in ordered_lines:
-                    ordered_lines.append(candidate)
-            lines = ordered_lines
-        elif screen_description and truncate_text(screen_description, 260) not in lines:
-            lines.insert(0, truncate_text(screen_description, 260))
-
-        if len(lines) < 2:
-            lines.append(f"{screen_name}의 기본 화면 요소를 확인한다.")
 
         return lines[:6]
 
@@ -849,7 +862,10 @@ class UnitTestAgent:
         self,
         screen_name: str,
         screen_description: str,
+        *,
+        rng: random.Random | None = None,
     ) -> list[str]:
+        rng = rng or random.Random()
         text = str(screen_description or "").replace("\r\n", "\n").replace("\r", "\n").strip()
         if not text:
             return []
@@ -860,13 +876,23 @@ class UnitTestAgent:
         )
         points: list[str] = []
         seen: set[str] = set()
+        target_count = rng.randint(2, 4)
         for part in raw_parts:
             cleaned = re.sub(r"^\s*(?:[-*•ㆍ]+|\d+[.)])\s*", "", part).strip()
             cleaned = cleaned.strip(" -")
             if len(cleaned) < 4:
                 continue
 
-            primary = f"화면 설명 원문: {cleaned}"
+            primary_prefix = rng.choice(
+                [
+                    "화면 설명 원문:",
+                    "핵심 설명:",
+                    "주요 동작:",
+                    "검증 포인트:",
+                    "",
+                ]
+            )
+            primary = f"{primary_prefix} {cleaned}".strip()
             primary_key = primary.lower()
             if primary_key not in seen:
                 seen.add(primary_key)
@@ -878,10 +904,10 @@ class UnitTestAgent:
                     continue
                 seen.add(derived_key)
                 points.append(derived)
-                if len(points) >= 4:
+                if len(points) >= target_count + 1:
                     break
 
-            if len(points) >= 4:
+            if len(points) >= target_count + 1:
                 break
 
         if len(points) < 2:
@@ -895,7 +921,15 @@ class UnitTestAgent:
                 if len(points) >= 2:
                     break
 
-        return points[:4]
+        if len(points) > 2:
+            rng.shuffle(points)
+        target_count = min(len(points), rng.randint(2, min(4, len(points)))) if points else 0
+        return points[:target_count]
+
+    def _screen_rng(self, screen_name: str, screen_description: str) -> random.Random:
+        seed_text = f"{screen_name}\n{screen_description}".encode("utf-8")
+        seed = int(hashlib.sha1(seed_text).hexdigest(), 16)
+        return random.Random(seed)
 
     def _derive_description_points(
         self,
@@ -997,9 +1031,20 @@ class UnitTestAgent:
                 break
 
         if len(numbered_lines) <= 1:
-            return numbered_lines[0] if numbered_lines else text
+            return self._sanitize_test_content_line(
+                numbered_lines[0] if numbered_lines else text
+            )
 
-        return "\n".join(f"{index}. {line}" for index, line in enumerate(numbered_lines, start=1))
+        return "\n".join(
+            f"{index}. {self._sanitize_test_content_line(line)}"
+            for index, line in enumerate(numbered_lines, start=1)
+        )
+
+    def _sanitize_test_content_line(self, value: Any) -> str:
+        text = str(value or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"[ㆍ•·]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
 
     def _screen_pages_from_third(
         self,

@@ -29,7 +29,7 @@ SCREEN_LLM_SYSTEM_PROMPT = """
     {
       "screen_id": "SCR-001",
       "name": "화면명",
-      "description": "ㆍ 화면 목적과 사용 흐름\nㆍ 사용자 확인 포인트",
+      "description": "화면 목적과 사용 흐름\n사용자 확인 포인트",
       "source_requirement_ids": ["REQ-00001"],
       "metadata": {
         "display_items": [
@@ -45,8 +45,8 @@ SCREEN_LLM_SYSTEM_PROMPT = """
 - 화면은 요구사항별로 1개 이상 생성하되, 너무 쪼개지 말고 사용자가 실제로 보게 될 화면 단위로 묶는다.
 - description은 화면 설명 항목을 최소 2개 이상 생성한다.
 - description 항목에는 화면 구성, 조회/등록/처리 흐름, 사용자 확인 포인트를 포함한다.
-- description 항목은 `ㆍ`로 시작한다.
-- 다른 화면이나 요구사항의 순번을 이어받지 말고, 모든 화면 description은 `ㆍ`로 시작한다.
+- description 항목은 번호나 bullet 없이 일반 문장으로 작성한다.
+- 다른 화면이나 요구사항의 순번을 이어받지 말고, 모든 화면 description은 독립적으로 작성한다.
 - display_items에는 화면에 실제 노출될 만한 항목을 3~8개 정도 작성한다.
 - source_requirement_ids는 실제 근거가 되는 요구사항 ID를 1~3개 넣는다.
 - JSON 외의 설명 문장은 절대 출력하지 않는다.
@@ -415,16 +415,17 @@ Requirement summary:
             ]
 
         description_items = list(items)
+        target_count = self._screen_description_target_count(base=" ".join(description_items), name=title)
         for line in self._screen_description_support_lines(
             base=" ".join(description_items),
             name=title,
         ):
             if line not in description_items:
                 description_items.append(line)
-            if len(description_items) >= 3:
+            if len(description_items) >= target_count:
                 break
 
-        return truncate_text(self._bulleted_description(description_items), 700)
+        return truncate_text(self._line_description(description_items), 700)
 
     def _strip_number_prefix(self, value: Any) -> str:
         return re.sub(
@@ -433,7 +434,7 @@ Requirement summary:
             str(value or "").strip(),
         ).strip()
 
-    def _bulleted_description(self, items: list[str]) -> str:
+    def _line_description(self, items: list[str]) -> str:
         normalized: list[str] = []
         seen: set[str] = set()
         for item in items:
@@ -445,17 +446,14 @@ Requirement summary:
                 continue
             seen.add(key)
             normalized.append(text)
-            if len(normalized) >= 6:
+            if len(normalized) >= 10:
                 break
 
         if len(normalized) < 2:
             title = normalized[0] if normalized else "화면"
             normalized.append(f"{title}의 처리 결과와 사용자 확인 흐름을 제공한다.")
 
-        return "\n".join(
-            f"ㆍ {item}"
-            for item in normalized
-        )
+        return "\n".join(normalized)
 
     def _screen_description_support_lines(self, *, base: str, name: str) -> list[str]:
         corpus = f"{name} {base}".lower()
@@ -472,16 +470,67 @@ Requirement summary:
             candidates.append(f"{name}에서 권한별 접근 제어와 버튼 노출 상태를 확인할 수 있다.")
         if any(keyword in corpus for keyword in ("팝업", "경고", "오류", "예외", "메시지")):
             candidates.append(f"{name}에서 팝업, 경고 메시지, 오류 안내 흐름을 제공한다.")
+        if any(keyword in corpus for keyword in ("탭", "정렬", "필터", "조건", "검색조건")):
+            candidates.append(f"{name}에서 탭 전환, 정렬, 필터 조건 변경을 지원한다.")
+        if any(keyword in corpus for keyword in ("페이징", "페이지", "다음", "이전")):
+            candidates.append(f"{name}에서 페이지 이동과 건별 목록 확인을 지원한다.")
+        if any(keyword in corpus for keyword in ("파일", "첨부", "다운로드", "업로드")):
+            candidates.append(f"{name}에서 파일 첨부와 다운로드 흐름을 처리한다.")
+        if any(keyword in corpus for keyword in ("승인", "결재", "반려")):
+            candidates.append(f"{name}에서 승인, 반려, 처리 결과 반영 흐름을 확인한다.")
+        if any(keyword in corpus for keyword in ("연동", "전송", "호출", "api", "인터페이스")):
+            candidates.append(f"{name}에서 외부 연동 결과와 응답 상태를 확인한다.")
+        if any(keyword in corpus for keyword in ("차트", "통계", "집계", "요약")):
+            candidates.append(f"{name}에서 요약 정보와 집계 결과를 시각적으로 확인한다.")
 
         if not candidates:
             candidates = [
                 f"{name}에서 주요 정보 표시와 사용자 입력 흐름을 제공한다.",
                 f"{name}의 필수 항목 검증과 처리 결과 반영을 확인할 수 있다.",
+                f"{name}에서 화면 진입 후 초기 상태와 조회 결과를 확인한다.",
             ]
         elif len(candidates) == 1:
             candidates.append(f"{name}의 사용자는 처리 결과, 안내 메시지, 화면 반영 상태를 확인한다.")
+        elif len(candidates) == 2:
+            candidates.append(f"{name}에서 사용자의 입력 후 반영 상태를 확인한다.")
 
-        return candidates[:2]
+        return candidates[:10]
+
+    def _screen_description_target_count(self, *, base: str, name: str) -> int:
+        corpus = f"{name} {base}".lower()
+        score = 2
+        keyword_buckets = (
+            ("조회", "검색", "목록", "상세"),
+            ("등록", "저장", "추가", "입력"),
+            ("수정", "변경"),
+            ("삭제", "제거"),
+            ("권한", "인증", "보안"),
+            ("팝업", "경고", "오류", "예외", "메시지"),
+            ("탭", "정렬", "필터", "조건", "검색조건"),
+            ("페이징", "페이지", "다음", "이전"),
+            ("파일", "첨부", "다운로드", "업로드"),
+            ("승인", "결재", "반려"),
+            ("연동", "전송", "호출", "api", "인터페이스"),
+            ("차트", "통계", "집계", "요약"),
+        )
+        for keywords in keyword_buckets:
+            if any(keyword in corpus for keyword in keywords):
+                score += 1
+
+        sentence_count = sum(1 for line in str(base or "").splitlines() if self._strip_number_prefix(line))
+        if sentence_count >= 3:
+            score += 1
+        if sentence_count >= 5:
+            score += 1
+        if sentence_count >= 7:
+            score += 1
+
+        if len(corpus) > 80:
+            score += 1
+        if len(corpus) > 140:
+            score += 1
+
+        return max(2, min(score, 10))
 
     def _normalize_display_items(self, metadata: dict[str, Any], name: str, description: str) -> list[dict[str, str]]:
         display_items = metadata.get("display_items") or []

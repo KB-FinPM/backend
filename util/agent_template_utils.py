@@ -200,6 +200,42 @@ def load_wbs_deliverable_catalog() -> list[dict[str, str]]:
     return catalog
 
 
+@lru_cache(maxsize=1)
+def load_wbs_deliverable_catalog_local() -> list[dict[str, str]]:
+    """Load the bundled WBS deliverable reference list without S3 lookup."""
+    path = TEMPLATE_DIR / "산출물목록.xlsx"
+    workbook = load_workbook(path, data_only=True)
+    worksheet = workbook[workbook.sheetnames[0]]
+
+    catalog: list[dict[str, str]] = []
+    current_stage = ""
+    current_task = ""
+    current_activity = ""
+
+    for row in worksheet.iter_rows(min_row=2, values_only=True):
+        stage, task, activity, purpose, output = (list(row) + [None] * 5)[:5]
+        if stage:
+            current_stage = str(stage).strip()
+        if task:
+            current_task = str(task).strip()
+        if activity:
+            current_activity = str(activity).strip()
+        deliverable = str(output or "").strip()
+        if not deliverable:
+            continue
+        catalog.append(
+            {
+                "stage": current_stage,
+                "task": current_task,
+                "activity": current_activity,
+                "purpose": str(purpose or "").strip(),
+                "deliverable": deliverable,
+            }
+        )
+
+    return catalog
+
+
 def load_wbs_template() -> dict[str, Any]:
     return _load_local_template_json("wbs_template.json", {"common_items": []})
 
