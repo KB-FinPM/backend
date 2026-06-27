@@ -378,12 +378,27 @@ async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> No
                 "selected_document_ids": ["DOC-REQ-001"],
                 "start_date": "2025-01-20",
                 "requirements_confirmed": True,
+                "author": "홍길동",
+                "writer": "홍길동",
+                "created_by": "CREATOR-001",
+                "user_id": "USER-CONTEXT-001",
             },
         )
     )
     assert first_response.state == "COMPLETED"
     assert generation_service.received_request is not None
     assert generation_service.received_request.target_artifact_type == "WBS"
+    assert generation_service.received_request.author == "홍길동"
+    assert generation_service.received_request.writer == "홍길동"
+    assert generation_service.received_request.created_by == "CREATOR-001"
+    assert generation_service.received_request.user_id == "USER-CONTEXT-001"
+
+    action_payload = next(iter(repository.actions.values())).payload
+    assert action_payload["author"] == "홍길동"
+    assert action_payload["writer"] == "홍길동"
+    assert action_payload["created_by"] == "CREATOR-001"
+    assert action_payload["user_id"] == "USER-CONTEXT-001"
+    assert action_payload["context"]["author"] == "홍길동"
 
 
 @pytest.mark.anyio

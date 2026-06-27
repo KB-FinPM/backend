@@ -140,6 +140,10 @@ async def _execute_generation_action(
             template_id=payload.get("template_id"),
             template_version=payload.get("template_version"),
             query=payload.get("query"),
+            author=payload.get("author"),
+            writer=payload.get("writer"),
+            created_by=payload.get("created_by"),
+            user_id=payload.get("user_id"),
             permission_scope=payload.get("server_permission_scope")
             or list(DEFAULT_MVP_SCOPES),
         )
