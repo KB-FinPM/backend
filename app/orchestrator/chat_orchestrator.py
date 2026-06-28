@@ -1009,9 +1009,9 @@ class ChatOrchestrator:
         author = self._first_project_context_value(
             context,
             (
-                "author",
                 "documentAuthor",
                 "document_author",
+                "author",
                 "writer",
                 "createdBy",
                 "created_by",

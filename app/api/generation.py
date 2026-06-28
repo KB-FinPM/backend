@@ -334,7 +334,9 @@ async def _hydrate_project_metadata(
     request: GenerationRequest,
     project_service: ProjectService,
 ) -> None:
-    if request.project_name and request.start_date:
+    has_project_basics = bool(request.project_name and request.start_date)
+    has_explicit_author = bool(request.author or request.writer)
+    if has_project_basics and has_explicit_author:
         return
     project = await project_service.get_project(request.project_id)
     if project is None:
@@ -343,6 +345,10 @@ async def _hydrate_project_metadata(
         request.project_name = project.project_name
     if not request.start_date and project.start_date is not None:
         request.start_date = project.start_date.isoformat()
+    if not request.author and project.document_author:
+        request.author = project.document_author
+    if not request.created_by and project.created_by:
+        request.created_by = project.created_by
 
 
 async def _normalize_generation_input(
@@ -369,6 +375,10 @@ async def _normalize_generation_input(
                 "start_date": request.start_date,
                 "project_period": request.project_period,
                 "output_format": request.output_format,
+                "author": request.author_value(),
+                "writer": request.writer,
+                "created_by": request.created_by,
+                "user_id": request.user_id,
             },
         )
     )

@@ -99,6 +99,7 @@ async def _ensure_project_columns(connection) -> None:
     columns = {
         "start_date": "DATE",
         "end_date": "DATE",
+        "document_author": "VARCHAR(255)",
     }
     if connection.dialect.name == "sqlite":
         result = await connection.execute(text("PRAGMA table_info(projects)"))

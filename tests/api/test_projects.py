@@ -24,6 +24,7 @@ class StubProjectService:
             end_date=request.end_date,
             status=request.status or "ACTIVE",
             created_by=request.created_by,
+            document_author=request.document_author,
         )
         self.projects[project.project_id] = project
         return project
@@ -184,6 +185,7 @@ def test_create_project_response_id_can_be_used_for_detail_lookup(
                 "project_id": "  PRJ-NEW  ",
                 "project_name": "신규 프로젝트",
                 "description": "created from API",
+                "document_author": "홍길동 PM",
             },
         )
         assert create_response.status_code == 201
@@ -197,6 +199,34 @@ def test_create_project_response_id_can_be_used_for_detail_lookup(
     assert detail_response.status_code == 200
     assert detail_response.json()["project_id"] == created_project_id
     assert detail_response.json()["project_name"] == "신규 프로젝트"
+    assert detail_response.json()["document_author"] == "홍길동 PM"
+
+
+def test_update_project_preserves_document_author(
+    client: TestClient,
+) -> None:
+    service = StubProjectService()
+    service.projects["PRJ-AUTHOR"] = ProjectMetadata(
+        project_id="PRJ-AUTHOR",
+        project_name="기존 프로젝트",
+        document_author=None,
+    )
+    client.app.dependency_overrides[get_project_service] = lambda: service
+
+    try:
+        response = client.patch(
+            "/api/projects/PRJ-AUTHOR",
+            json={
+                "project_name": "작성자 프로젝트",
+                "document_author": "KBDS AI Hackathon 팀",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["project_name"] == "작성자 프로젝트"
+    assert response.json()["document_author"] == "KBDS AI Hackathon 팀"
 
 
 def test_get_project_returns_not_found_only_when_project_is_missing(
