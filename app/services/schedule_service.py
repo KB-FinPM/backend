@@ -315,10 +315,11 @@ class ScheduleService:
         skipped_items = []
         for item in items:
             item_id = str(item.get("client_import_id") or item.get("todo_id") or "")
+            normalized_item = self._normalize_wbs_import_assignee(item)
             if decisions.get(item_id) == "SKIP":
-                skipped_items.append(item)
+                skipped_items.append(normalized_item)
                 continue
-            selected_items.append(item)
+            selected_items.append(normalized_item)
 
         saved = await self.action_item_repository.save_imported_todos(
             project_id=project_id,
@@ -430,12 +431,13 @@ class ScheduleService:
         source_sentence = todo.get("source_sentence")
         metadata = todo.get("metadata") if isinstance(todo.get("metadata"), dict) else {}
         source_sentence = source_sentence or metadata.get("source_sentence")
+        source_type = self._normalize_source_type(todo.get("source_type"))
         description = normalize_todo_description(
             {
                 **todo,
                 "source_sentence": source_sentence,
             },
-            source_type=todo.get("source_type"),
+            source_type=source_type,
         )
         return TodoItem(
             todo_id=str(
@@ -445,13 +447,16 @@ class ScheduleService:
                 or ""
             ),
             title=str(todo.get("title") or "").strip(),
-            assignee=todo.get("assignee") or todo.get("owner"),
+            assignee=self._normalize_wbs_assignee(
+                todo.get("assignee") or todo.get("owner"),
+                source_type=source_type,
+            ),
             start_date=start_date,
             end_date=end_date,
             due_date=due_date,
             due_date_text=due_date,
             status=self._ui_status(todo.get("status")),
-            source_type=self._normalize_source_type(todo.get("source_type")),
+            source_type=source_type,
             source_document_id=source_document_id,
             source_document_name=source_document_name,
             related_document=todo.get("related_document") or source_document_name,
@@ -769,6 +774,23 @@ class ScheduleService:
         if "MANUAL" in text or "DIRECT" in text:
             return "MANUAL"
         return "MEETING_NOTES"
+
+    def _normalize_wbs_assignee(self, value: Any, *, source_type: Any) -> Any:
+        if self._normalize_source_type(source_type) != "WBS":
+            return value
+        normalized = str(value or "").strip()
+        return normalized or "미정"
+
+    def _normalize_wbs_import_assignee(self, item: dict[str, Any]) -> dict[str, Any]:
+        if self._normalize_source_type(item.get("source_type")) != "WBS":
+            return item
+        return {
+            **item,
+            "assignee": self._normalize_wbs_assignee(
+                item.get("assignee"),
+                source_type="WBS",
+            ),
+        }
 
     async def run_query(
         self,

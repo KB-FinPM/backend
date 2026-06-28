@@ -119,7 +119,11 @@ class GenerationRequest(BaseModel):
         )
 
     def author_value(self) -> str:
-        return str(self.author or self.writer or self.created_by or self.user_id or "")
+        for value in (self.author, self.writer):
+            normalized = str(value or "").strip()
+            if normalized:
+                return normalized
+        return ""
 
 
 class ArtifactRenameRequest(BaseModel):
