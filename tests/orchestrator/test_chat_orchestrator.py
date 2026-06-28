@@ -423,6 +423,50 @@ def test_chat_orchestrator_generation_author_payload_ignores_audit_fallbacks() -
     assert payload["user_id"] == "USER-CONTEXT-001"
 
 
+def test_chat_orchestrator_generation_author_payload_ignores_placeholders() -> None:
+    orchestrator = ChatOrchestrator.__new__(ChatOrchestrator)
+
+    payload = orchestrator._generation_author_payload(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            user_id="USER-REQUEST-001",
+            message="WBS 만들어줘",
+            context={
+                "document_author": "작성자",
+                "author": "Unknown",
+                "writer": "local_dev_user",
+                "created_by": "CREATOR-001",
+                "user_id": "USER-CONTEXT-001",
+            },
+        )
+    )
+
+    assert payload["author"] == ""
+    assert payload["writer"] == ""
+    assert payload["created_by"] == "CREATOR-001"
+    assert payload["user_id"] == "USER-CONTEXT-001"
+
+
+def test_chat_orchestrator_generation_author_payload_skips_placeholder_candidate() -> None:
+    orchestrator = ChatOrchestrator.__new__(ChatOrchestrator)
+
+    payload = orchestrator._generation_author_payload(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            user_id="USER-REQUEST-001",
+            message="WBS 만들어줘",
+            context={
+                "document_author": "작성자",
+                "writer": "홍길동",
+                "created_by": "CREATOR-001",
+            },
+        )
+    )
+
+    assert payload["author"] == "홍길동"
+    assert payload["writer"] == "홍길동"
+
+
 def test_chat_orchestrator_generation_author_payload_uses_document_author() -> None:
     orchestrator = ChatOrchestrator.__new__(ChatOrchestrator)
 

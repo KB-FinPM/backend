@@ -8,7 +8,7 @@
   },
   "common_values": {
     "project_name": "프로젝트명",
-    "author": "작성자",
+    "author": "",
     "today": "YYYY-MM-DD"
   },
   "output_files": {

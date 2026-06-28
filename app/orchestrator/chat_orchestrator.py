@@ -28,7 +28,11 @@ from app.schemas.io_agent import (
     OutputAgentRequest,
     OutputResponseType,
 )
-from app.schemas.request import GenerationRequest, ScheduleTodoRequest
+from app.schemas.request import (
+    GenerationRequest,
+    ScheduleTodoRequest,
+    normalize_author_value,
+)
 from app.schemas.response import GenerationResponse, ScheduleTodoResponse
 from app.services.artifact_service import ArtifactService
 from app.services.document_service import DocumentService
@@ -1005,12 +1009,25 @@ class ChatOrchestrator:
                 return value
         return None
 
+    def _first_author_context_value(
+        self,
+        context: dict[str, Any],
+        field_names: tuple[str, ...],
+    ) -> str:
+        for field_name in field_names:
+            value = normalize_author_value(
+                self._project_context_value(context, field_name)
+            )
+            if value:
+                return value
+        return ""
+
     def _generation_author_payload(
         self,
         request: ChatMessageRequest,
     ) -> dict[str, Any]:
         context = request.context or {}
-        author = self._first_project_context_value(
+        author = self._first_author_context_value(
             context,
             (
                 "documentAuthor",
@@ -1019,7 +1036,7 @@ class ChatOrchestrator:
                 "writer",
             ),
         )
-        writer = self._first_project_context_value(context, ("writer",)) or author
+        writer = self._first_author_context_value(context, ("writer",)) or author
         created_by = self._first_project_context_value(
             context,
             ("created_by", "createdBy"),
