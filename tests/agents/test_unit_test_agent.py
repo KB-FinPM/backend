@@ -8,6 +8,26 @@ from app.agents.core_agents.validator_agent.agent import ValidatorAgent
 from app.schemas.agent import AgentRequest
 
 
+def test_unit_test_agent_author_does_not_use_audit_fallbacks() -> None:
+    agent = UnitTestAgent()
+
+    assert (
+        agent._author(
+            {
+                "created_by": "local-dev-user",
+                "user_id": "local_dev_user",
+            }
+        )
+        == ""
+    )
+
+
+def test_unit_test_agent_author_uses_explicit_writer() -> None:
+    agent = UnitTestAgent()
+
+    assert agent._author({"writer": "김PM", "user_id": "local_dev_user"}) == "김PM"
+
+
 @pytest.mark.anyio
 async def test_unit_test_agent_creates_cases_from_requirements() -> None:
     agent = UnitTestAgent()

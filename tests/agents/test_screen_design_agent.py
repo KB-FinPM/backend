@@ -7,6 +7,26 @@ from app.agents.core_agents.screen_design_agent.agent import ScreenDesignAgent
 from app.schemas.agent import AgentRequest
 
 
+def test_screen_design_agent_author_does_not_use_audit_fallbacks() -> None:
+    agent = ScreenDesignAgent()
+
+    assert (
+        agent._author(
+            {
+                "created_by": "local-dev-user",
+                "user_id": "local_dev_user",
+            }
+        )
+        == ""
+    )
+
+
+def test_screen_design_agent_author_uses_explicit_author() -> None:
+    agent = ScreenDesignAgent()
+
+    assert agent._author({"author": "홍길동", "user_id": "local_dev_user"}) == "홍길동"
+
+
 @pytest.mark.anyio
 async def test_screen_design_agent_creates_one_screen_per_requirement_id() -> None:
     agent = ScreenDesignAgent()

@@ -501,9 +501,7 @@ Requirement summary:
         return str(
             context.get("author")
             or context.get("writer")
-            or context.get("created_by")
-            or context.get("user_id")
-            or "작성자"
+            or ""
         )
 
 

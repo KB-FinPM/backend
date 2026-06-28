@@ -670,8 +670,7 @@ Candidate:
         author = (
             context.get("author")
             or context.get("writer")
-            or context.get("created_by")
-            or context.get("user_id")
+            or ""
         )
         project_name = context.get("project_name") or context.get("project_nm")
         enriched = {**metadata}
