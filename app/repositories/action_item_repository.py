@@ -223,6 +223,11 @@ class ActionItemRepository:
             title = str(todo.get("title") or "").strip()
             if not title:
                 continue
+            source_type = todo.get("source_type") or "MEETING_NOTES"
+            assignee = self._normalize_wbs_assignee(
+                todo.get("assignee"),
+                source_type=source_type,
+            )
             due_date_text = self._normalize_due_date_text(
                 todo.get("due_date")
                 or todo.get("end_date")
@@ -245,7 +250,7 @@ class ActionItemRepository:
                     source_type=todo.get("source_type"),
                 )
                 or None,
-                owner=todo.get("assignee"),
+                owner=assignee,
                 start_date=self._parse_iso_date(start_date_text),
                 end_date=self._parse_iso_date(end_date_text),
                 due_date=self._parse_iso_date(due_date_text),
@@ -255,7 +260,7 @@ class ActionItemRepository:
                     or todo.get("related_document")
                     or todo.get("related_artifact")
                 ),
-                source_type=todo.get("source_type") or "MEETING_NOTES",
+                source_type=source_type,
                 status=self._storage_status(todo.get("status")),
                 source_document_id=todo.get("source_document_id"),
             )
@@ -479,6 +484,12 @@ class ActionItemRepository:
             "CLOSED": "DONE",
         }
         return aliases.get(normalized, "NOT_STARTED")
+
+    def _normalize_wbs_assignee(self, value: Any, *, source_type: Any) -> Any:
+        if "WBS" not in str(source_type or "").strip().upper():
+            return value
+        normalized = str(value or "").strip()
+        return normalized or "미정"
 
     def _normalize_text(self, value: str) -> str:
         text = str(value or "").lower()

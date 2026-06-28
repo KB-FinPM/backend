@@ -156,6 +156,26 @@ class StubTodoDateRepository:
         ]
 
 
+class StubTodoImportRepository:
+    def __init__(self) -> None:
+        self.received_todos: list[dict] = []
+
+    async def save_imported_todos(
+        self,
+        *,
+        project_id: str,
+        todos: list[dict],
+    ) -> list[dict]:
+        self.received_todos = [{**todo} for todo in todos]
+        return [
+            {
+                **todo,
+                "todo_id": todo.get("todo_id") or f"TODO-{index:03d}",
+            }
+            for index, todo in enumerate(todos, start=1)
+        ]
+
+
 @pytest.mark.anyio
 async def test_schedule_service_completes_todo_by_id_without_matching() -> None:
     action_item_repository = StubCompleteActionItemRepository()
@@ -207,6 +227,54 @@ async def test_schedule_service_normalizes_todo_due_dates_for_manager() -> None:
     assert due_dates["TODO-EMPTY"] == date.today().isoformat()
     assert due_dates["TODO-YEARLESS"] == f"{date.today().year}-01-17"
     assert due_dates["TODO-EXPLICIT"] == "2025-01-17"
+
+
+@pytest.mark.anyio
+async def test_schedule_service_normalizes_blank_wbs_import_assignees() -> None:
+    action_item_repository = StubTodoImportRepository()
+    service = ScheduleService(
+        orchestrator=StubScheduleOrchestrator(),
+        action_item_repository=action_item_repository,
+    )
+
+    response = await service.commit_todo_import(
+        project_id="PRJ-001",
+        items=[
+            {
+                "client_import_id": "IMPORT-001",
+                "title": "요구사항 검토",
+                "assignee": "",
+                "source_type": "WBS",
+            },
+            {
+                "client_import_id": "IMPORT-002",
+                "title": "화면 설계 검토",
+                "assignee": "   ",
+                "source_type": "WBS",
+            },
+            {
+                "client_import_id": "IMPORT-003",
+                "title": "단위테스트케이스 작성",
+                "assignee": "김PM",
+                "source_type": "WBS",
+            },
+            {
+                "client_import_id": "IMPORT-004",
+                "title": "회의록 액션아이템",
+                "assignee": "",
+                "source_type": "MEETING_NOTES",
+            },
+        ],
+    )
+
+    assignees = [item["assignee"] for item in action_item_repository.received_todos]
+    assert assignees == ["미정", "미정", "김PM", ""]
+    assert [item.assignee for item in response.saved_items] == [
+        "미정",
+        "미정",
+        "김PM",
+        None,
+    ]
 
 
 @pytest.mark.anyio
