@@ -115,6 +115,8 @@ def test_requirement_agent_metadata_does_not_use_audit_author_fallbacks() -> Non
         AgentRequest(
             project_id="PRJ-001",
             context={
+                "author": "작성자",
+                "writer": "local-dev-user",
                 "created_by": "local-dev-user",
                 "user_id": "local_dev_user",
                 "project_name": "작성자 공란 프로젝트",
@@ -122,7 +124,7 @@ def test_requirement_agent_metadata_does_not_use_audit_author_fallbacks() -> Non
         ),
     )
 
-    assert "author" not in metadata
+    assert metadata["author"] == ""
     assert metadata["project_name"] == "작성자 공란 프로젝트"
 
 

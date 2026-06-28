@@ -14,6 +14,23 @@ from app.schemas.artifact import (
     TemplateReference,
 )
 
+AUTHOR_PLACEHOLDER_VALUES = {
+    "작성자",
+    "author",
+    "unknown",
+    "local_dev_user",
+    "local-dev-user",
+}
+
+
+def normalize_author_value(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if normalized.lower() in AUTHOR_PLACEHOLDER_VALUES:
+        return ""
+    return normalized
+
 
 class UploadRequest(BaseModel):
     project_id: str = Field(..., description="Project ID")
@@ -120,7 +137,7 @@ class GenerationRequest(BaseModel):
 
     def author_value(self) -> str:
         for value in (self.author, self.writer):
-            normalized = str(value or "").strip()
+            normalized = normalize_author_value(value)
             if normalized:
                 return normalized
         return ""

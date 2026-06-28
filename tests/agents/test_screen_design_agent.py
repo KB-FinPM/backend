@@ -13,6 +13,8 @@ def test_screen_design_agent_author_does_not_use_audit_fallbacks() -> None:
     assert (
         agent._author(
             {
+                "author": "작성자",
+                "writer": "local-dev-user",
                 "created_by": "local-dev-user",
                 "user_id": "local_dev_user",
             }

@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
+from app.schemas.request import normalize_author_value
 from util.agent_generation_utils import (
     RequirementAtom,
     normalize_requirement_atoms,
@@ -345,10 +346,8 @@ Requirement summary:
         return truncate_text(base, 80)
 
     def _author(self, context: dict) -> str:
-        return str(
-            context.get("author")
-            or context.get("writer")
-            or ""
+        return normalize_author_value(context.get("author")) or normalize_author_value(
+            context.get("writer")
         )
 
     def _work_description(self, atom) -> str:

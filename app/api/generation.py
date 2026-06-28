@@ -56,7 +56,7 @@ REQUIREMENT_EXAMPLE = {
         "target_artifact_type": "REQUIREMENT_SPEC",
         "template_id": "TPL-REQ-SPEC-DEFAULT",
         "query": "Create a requirement specification.",
-        "author": "작성자",
+        "author": "",
         "permission_scope": ["project:read"],
     },
 }
@@ -70,7 +70,7 @@ WBS_EXAMPLE = {
         "target_artifact_type": "WBS",
         "start_date": "2024.01.10",
         "query": "Create a WBS from the requirement specification.",
-        "author": "작성자",
+        "author": "",
         "permission_scope": ["project:read"],
     },
 }
@@ -83,7 +83,7 @@ SCREEN_DESIGN_EXAMPLE = {
         "source_document_type": "REQUIREMENT_SPEC",
         "target_artifact_type": "SCREEN_DESIGN",
         "query": "Create a screen design document from the requirement specification.",
-        "author": "작성자",
+        "author": "",
         "permission_scope": ["project:read"],
     },
 }
