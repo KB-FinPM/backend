@@ -11,6 +11,7 @@ from app.agents.core_agents.requirement_agent.document_preprocessor import (
     normalize_requirement_documents,
 )
 from app.schemas.agent import AgentRequest, AgentResponse
+from app.schemas.request import normalize_author_value
 from util.agent_generation_utils import (
     RequirementAtom,
     assign_requirement_ids,
@@ -670,16 +671,12 @@ Candidate:
         request: AgentRequest,
     ) -> dict[str, Any]:
         context = request.context or {}
-        author = (
-            context.get("author")
-            or context.get("writer")
-            or context.get("created_by")
-            or context.get("user_id")
+        author = normalize_author_value(context.get("author")) or normalize_author_value(
+            context.get("writer")
         )
         project_name = context.get("project_name") or context.get("project_nm")
         enriched = {**metadata}
-        if author:
-            enriched["author"] = str(author)
+        enriched["author"] = author
         if project_name:
             enriched["project_name"] = str(project_name)
         return enriched

@@ -147,6 +147,18 @@ def test_generation_request_author_value_does_not_use_audit_fields() -> None:
     assert request.author_value() == ""
 
 
+def test_generation_request_author_value_ignores_placeholder_values() -> None:
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        author="작성자",
+        writer="local-dev-user",
+        created_by="CREATOR-001",
+        user_id="USER-001",
+    )
+
+    assert request.author_value() == ""
+
+
 def test_schedule_todo_request_accepts_meeting_notes() -> None:
     request = ScheduleTodoRequest(
         project_id="PRJ-001",

@@ -19,6 +19,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from openpyxl import load_workbook
 
 from app.core.config import settings
+from app.schemas.request import normalize_author_value
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "app" / "agents" / "core_agents" / "template"
 CACHE_DIR = Path(tempfile.gettempdir()) / "finpm-agent-template-cache"
@@ -280,18 +281,13 @@ def get_nested(config: dict[str, Any], *keys: str, default: Any = None) -> Any:
 
 def build_template_context(project_id: str = "", context: dict[str, Any] | None = None) -> dict[str, str]:
     context = context or {}
-    author = (
-        context.get("author")
-        or context.get("writer")
-        or context.get("created_by")
-        or context.get("user_id")
-        or context.get("requester")
-        or "작성자"
+    author = normalize_author_value(context.get("author")) or normalize_author_value(
+        context.get("writer")
     )
     return {
         "project_id": str(project_id or ""),
         "project_name": str(context.get("project_name") or context.get("project_nm") or "프로젝트명"),
-        "author": str(author),
+        "author": author,
         "today": datetime.today().strftime("%Y-%m-%d"),
     }
 

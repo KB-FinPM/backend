@@ -36,3 +36,29 @@ def test_resolve_local_template_file_accepts_encoded_request_name(
     )
 
     assert resolved == template_file
+
+
+def test_build_template_context_does_not_use_audit_author_fallbacks() -> None:
+    context = agent_template_utils.build_template_context(
+        "PRJ-001",
+        {
+            "created_by": "local-dev-user",
+            "user_id": "local_dev_user",
+            "requester": "작성자",
+        },
+    )
+
+    assert context["author"] == ""
+
+
+def test_build_template_context_uses_explicit_author_only() -> None:
+    context = agent_template_utils.build_template_context(
+        "PRJ-001",
+        {
+            "author": " 홍길동 ",
+            "writer": "김PM",
+            "created_by": "local-dev-user",
+        },
+    )
+
+    assert context["author"] == "홍길동"

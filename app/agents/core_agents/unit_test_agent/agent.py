@@ -10,6 +10,7 @@ from typing import Any
 
 from app.core.logger import get_logger
 from app.schemas.agent import AgentRequest, AgentResponse
+from app.schemas.request import normalize_author_value
 from util.agent_generation_utils import (
     parse_json_array,
     parse_json_object,
@@ -1135,12 +1136,8 @@ class UnitTestAgent:
         return f"{fallback:04d}"
 
     def _author(self, context: dict[str, Any]) -> str:
-        return str(
-            context.get("author")
-            or context.get("writer")
-            or context.get("created_by")
-            or context.get("user_id")
-            or "작성자"
+        return normalize_author_value(context.get("author")) or normalize_author_value(
+            context.get("writer")
         )
 
 
