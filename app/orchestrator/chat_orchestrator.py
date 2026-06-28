@@ -160,9 +160,10 @@ class ChatOrchestrator:
             )
 
         if intent == "SCHEDULE_QUERY":
-            return await self._todo_management_guidance_response(
+            return await self._run_schedule_query(
                 conversation=conversation,
-                project_id=request.project_id,
+                request=request,
+                structured_context=structured_context,
             )
 
         if intent in {"COMPLETE_TODO", "UPDATE_TODO_STATUS", "MARK_TODO_DONE"}:
@@ -384,6 +385,7 @@ class ChatOrchestrator:
             or structured_context.get("output_format")
             or structured_context.get("export_format")
         )
+        author_payload = self._generation_author_payload(request)
 
         source_document_ids = structured_context.get("source_document_ids") or []
         required_source_type = self._required_source_type_for_target(
@@ -408,6 +410,7 @@ class ChatOrchestrator:
             target_artifact_type=target_artifact_type,
             output_format=output_format,
             query=request.message,
+            **author_payload,
             permission_scope=request.permission_scope,
         )
         validation_result = await self.generation_service.validate_source_documents(
@@ -459,6 +462,7 @@ class ChatOrchestrator:
             "source_documents": source_documents,
             "context": {
                 **(request.context or {}),
+                **author_payload,
                 "source_document_ids": source_document_ids,
                 "source_documents": source_documents,
                 "output_format": output_format,
@@ -475,6 +479,7 @@ class ChatOrchestrator:
             "end_date": self._project_context_value(request.context, "end_date"),
             "project_period": request.context.get("project_period"),
             "query": request.message,
+            **author_payload,
             "permission_scope": request.permission_scope,
             "server_permission_scope": list(
                 request.permission_scope or DEFAULT_MVP_SCOPES
@@ -808,6 +813,10 @@ class ChatOrchestrator:
             template_id=payload.get("template_id"),
             template_version=payload.get("template_version"),
             query=payload.get("query"),
+            author=payload.get("author"),
+            writer=payload.get("writer"),
+            created_by=payload.get("created_by"),
+            user_id=payload.get("user_id"),
             permission_scope=payload.get("server_permission_scope")
             or list(DEFAULT_MVP_SCOPES),
         )
@@ -890,6 +899,7 @@ class ChatOrchestrator:
                 "normalized_input": structured_context,
             },
             permission_scope=request.permission_scope,
+            persist_wbs_todos=False,
         )
         return await self._render_and_save_response(
             conversation=conversation,
@@ -983,3 +993,49 @@ class ChatOrchestrator:
         if isinstance(project, dict):
             return project.get(field_name)
         return None
+
+    def _first_project_context_value(
+        self,
+        context: dict[str, Any],
+        field_names: tuple[str, ...],
+    ) -> Any:
+        for field_name in field_names:
+            value = self._project_context_value(context, field_name)
+            if value:
+                return value
+        return None
+
+    def _generation_author_payload(
+        self,
+        request: ChatMessageRequest,
+    ) -> dict[str, Any]:
+        context = request.context or {}
+        author = self._first_project_context_value(
+            context,
+            (
+                "documentAuthor",
+                "document_author",
+                "author",
+                "writer",
+                "createdBy",
+                "created_by",
+                "userName",
+                "userId",
+                "user_id",
+            ),
+        )
+        writer = self._first_project_context_value(context, ("writer",)) or author
+        created_by = (
+            self._first_project_context_value(context, ("created_by", "createdBy"))
+            or author
+        )
+        user_id = (
+            self._first_project_context_value(context, ("user_id", "userId"))
+            or request.user_id
+        )
+        return {
+            "author": author or None,
+            "writer": writer or None,
+            "created_by": created_by or None,
+            "user_id": user_id or None,
+        }

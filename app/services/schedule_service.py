@@ -404,6 +404,24 @@ class ScheduleService:
             todo.get("due_date") or todo.get("due_date_text"),
             default_today=True,
         )
+        start_date = self._normalize_due_date_text(
+            todo.get("start_date") or todo.get("planned_start_date"),
+            default_today=False,
+        )
+        end_date = self._normalize_due_date_text(
+            todo.get("end_date") or todo.get("planned_end_date"),
+            default_today=False,
+        )
+        if not start_date and not end_date and due_date:
+            start_date = due_date
+            end_date = due_date
+        elif start_date and not end_date:
+            end_date = start_date
+        elif end_date and not start_date:
+            start_date = end_date
+        if start_date and end_date and end_date < start_date:
+            start_date, end_date = end_date, start_date
+        due_date = end_date or due_date
         source_document_name = (
             todo.get("source_document_name")
             or (document_names or {}).get(str(source_document_id or ""))
@@ -428,6 +446,8 @@ class ScheduleService:
             ),
             title=str(todo.get("title") or "").strip(),
             assignee=todo.get("assignee") or todo.get("owner"),
+            start_date=start_date,
+            end_date=end_date,
             due_date=due_date,
             due_date_text=due_date,
             status=self._ui_status(todo.get("status")),
@@ -454,10 +474,11 @@ class ScheduleService:
             return False
         if source_type and self._normalize_source_type(todo.get("source_type")) != source_type:
             return False
-        due_date = str(todo.get("due_date") or "")[:10]
-        if date_from and (not due_date or due_date < date_from):
+        start_date = str(todo.get("start_date") or todo.get("due_date") or "")[:10]
+        end_date = str(todo.get("end_date") or todo.get("due_date") or start_date)[:10]
+        if date_from and (not end_date or end_date < date_from):
             return False
-        if date_to and (not due_date or due_date > date_to):
+        if date_to and (not start_date or start_date > date_to):
             return False
         return True
 
@@ -743,7 +764,11 @@ class ScheduleService:
 
     def _normalize_source_type(self, value: Any) -> str:
         text = str(value or "").strip().upper()
-        return "WBS" if "WBS" in text else "MEETING_NOTES"
+        if "WBS" in text:
+            return "WBS"
+        if "MANUAL" in text or "DIRECT" in text:
+            return "MANUAL"
+        return "MEETING_NOTES"
 
     async def run_query(
         self,
@@ -752,6 +777,7 @@ class ScheduleService:
         schedule_action: str,
         context: dict[str, Any] | None = None,
         permission_scope: list[str] | None = None,
+        persist_wbs_todos: bool = True,
     ) -> ScheduleTodoResponse:
         todos: list[dict[str, Any]] = []
         if self.action_item_repository is not None:
@@ -783,7 +809,8 @@ class ScheduleService:
             context=assembled_context,
         )
         if (
-            response.success
+            persist_wbs_todos
+            and response.success
             and self.action_item_repository is not None
             and isinstance(response.result, dict)
         ):
