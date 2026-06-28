@@ -125,6 +125,28 @@ def test_generation_request_accepts_permission_scope() -> None:
     assert request.permission_scope == ["project:read", "artifact:generate"]
 
 
+def test_generation_request_author_value_uses_explicit_author_only() -> None:
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        author="홍길동",
+        writer="김PM",
+        created_by="CREATOR-001",
+        user_id="USER-001",
+    )
+
+    assert request.author_value() == "홍길동"
+
+
+def test_generation_request_author_value_does_not_use_audit_fields() -> None:
+    request = GenerationRequest(
+        project_id="PRJ-001",
+        created_by="CREATOR-001",
+        user_id="USER-001",
+    )
+
+    assert request.author_value() == ""
+
+
 def test_schedule_todo_request_accepts_meeting_notes() -> None:
     request = ScheduleTodoRequest(
         project_id="PRJ-001",
