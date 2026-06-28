@@ -1013,25 +1013,20 @@ class ChatOrchestrator:
                 "document_author",
                 "author",
                 "writer",
-                "createdBy",
-                "created_by",
-                "userName",
-                "userId",
-                "user_id",
             ),
         )
         writer = self._first_project_context_value(context, ("writer",)) or author
-        created_by = (
-            self._first_project_context_value(context, ("created_by", "createdBy"))
-            or author
+        created_by = self._first_project_context_value(
+            context,
+            ("created_by", "createdBy"),
         )
         user_id = (
             self._first_project_context_value(context, ("user_id", "userId"))
             or request.user_id
         )
         return {
-            "author": author or None,
-            "writer": writer or None,
+            "author": author or "",
+            "writer": writer or "",
             "created_by": created_by or None,
             "user_id": user_id or None,
         }
