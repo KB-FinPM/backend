@@ -26,6 +26,8 @@ class ActionItemModel(Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     owner: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     due_date_text: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     related_document: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

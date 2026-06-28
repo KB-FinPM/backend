@@ -10,8 +10,19 @@ class ProjectBase(BaseModel):
     end_date: date | None = Field(None, description="Project end date")
     status: str | None = Field(None, description="Project status")
     created_by: str | None = Field(None, description="Project creator")
+    document_author: str | None = Field(
+        None,
+        description="Default author name shown in generated documents",
+    )
 
-    @field_validator("project_name", "description", "status", "created_by", mode="before")
+    @field_validator(
+        "project_name",
+        "description",
+        "status",
+        "created_by",
+        "document_author",
+        mode="before",
+    )
     @classmethod
     def strip_optional_text(cls, value):
         if value is None:
@@ -51,5 +62,6 @@ class ProjectMetadata(BaseModel):
     end_date: date | None = None
     status: str = "ACTIVE"
     created_by: str | None = None
+    document_author: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

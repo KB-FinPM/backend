@@ -21,6 +21,7 @@ class ProjectRepository:
             end_date=request.end_date,
             status=request.status or "ACTIVE",
             created_by=request.created_by,
+            document_author=request.document_author,
         )
         self.session.add(project)
         await self.session.commit()
@@ -72,6 +73,7 @@ class ProjectRepository:
             end_date=project.end_date,
             status=project.status,
             created_by=project.created_by,
+            document_author=project.document_author,
             created_at=project.created_at,
             updated_at=project.updated_at,
         )

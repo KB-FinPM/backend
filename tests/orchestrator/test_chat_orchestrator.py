@@ -189,6 +189,7 @@ class SpyScheduleServiceForTodoMutation:
         schedule_action,
         context,
         permission_scope=None,
+        persist_wbs_todos=True,
     ):
         self.query_calls.append(
             {
@@ -196,6 +197,7 @@ class SpyScheduleServiceForTodoMutation:
                 "schedule_action": schedule_action,
                 "context": context,
                 "permission_scope": permission_scope,
+                "persist_wbs_todos": persist_wbs_todos,
             }
         )
         return ScheduleTodoResponse(
@@ -279,6 +281,20 @@ class CompleteTodoInputNormalizer:
         )
 
 
+class ScheduleQueryInputNormalizer:
+    async def normalize(self, request):
+        return InputAgentResponse(
+            agent_name="ScheduleQueryInputNormalizer",
+            normalized_request_type=NormalizedRequestType.CHAT_MESSAGE,
+            structured_context={
+                "intent": "SCHEDULE_QUERY",
+                "action": "QUERY",
+                "schedule_action": "SHOW_TODAY_TODOS",
+                "entities": {"time_filter": "TODAY"},
+            },
+        )
+
+
 @pytest.mark.anyio
 async def test_chat_orchestrator_guides_chat_todo_completion_to_sidebar() -> None:
     schedule_service = SpyScheduleServiceForTodoMutation()
@@ -309,6 +325,37 @@ async def test_chat_orchestrator_guides_chat_todo_completion_to_sidebar() -> Non
 
 
 @pytest.mark.anyio
+async def test_chat_orchestrator_allows_read_only_schedule_query() -> None:
+    schedule_service = SpyScheduleServiceForTodoMutation()
+    orchestrator = ChatOrchestrator(
+        conversation_repository=StubConversationRepository(),
+        generation_service=StubGenerationService(),
+        schedule_service=schedule_service,
+        document_service=StubDocumentService(),
+        artifact_service=StubArtifactService(),
+        retrieval_service=object(),
+        template_service=object(),
+        input_normalizer=ScheduleQueryInputNormalizer(),
+    )
+
+    response = await orchestrator.handle_message(
+        ChatMessageRequest(
+            project_id="PRJ-001",
+            user_id="USER-001",
+            message="오늘 할일 알려줘",
+        )
+    )
+
+    assert response.state == "COMPLETED"
+    assert schedule_service.complete_calls == 0
+    assert len(schedule_service.query_calls) == 1
+    assert schedule_service.query_calls[0]["schedule_action"] == "SHOW_TODAY_TODOS"
+    assert schedule_service.query_calls[0]["persist_wbs_todos"] is False
+    assert response.result["items"][0]["title"] == "Review requirement"
+    assert response.result["items"][0]["actions"] == []
+
+
+@pytest.mark.anyio
 async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> None:
     repository = StubConversationRepository()
     generation_service = StubGenerationService()
@@ -331,12 +378,27 @@ async def test_chat_orchestrator_prepares_and_confirms_generation_action() -> No
                 "selected_document_ids": ["DOC-REQ-001"],
                 "start_date": "2025-01-20",
                 "requirements_confirmed": True,
+                "author": "홍길동",
+                "writer": "홍길동",
+                "created_by": "CREATOR-001",
+                "user_id": "USER-CONTEXT-001",
             },
         )
     )
     assert first_response.state == "COMPLETED"
     assert generation_service.received_request is not None
     assert generation_service.received_request.target_artifact_type == "WBS"
+    assert generation_service.received_request.author == "홍길동"
+    assert generation_service.received_request.writer == "홍길동"
+    assert generation_service.received_request.created_by == "CREATOR-001"
+    assert generation_service.received_request.user_id == "USER-CONTEXT-001"
+
+    action_payload = next(iter(repository.actions.values())).payload
+    assert action_payload["author"] == "홍길동"
+    assert action_payload["writer"] == "홍길동"
+    assert action_payload["created_by"] == "CREATOR-001"
+    assert action_payload["user_id"] == "USER-CONTEXT-001"
+    assert action_payload["context"]["author"] == "홍길동"
 
 
 @pytest.mark.anyio

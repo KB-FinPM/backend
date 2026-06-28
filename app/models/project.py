@@ -21,6 +21,7 @@ class ProjectModel(Base):
     end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="ACTIVE")
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    document_author: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
