@@ -152,6 +152,97 @@ async def test_schedule_management_agent_uses_input_agent_meeting_todo_extractio
 
 
 @pytest.mark.anyio
+async def test_schedule_management_agent_prefers_structured_meeting_action_item_table() -> None:
+    agent = ScheduleManagementAgent()
+
+    meeting_notes = """
+회의명: 일정 회의록
+회의 일시: 2026.06.28(일) 11:00 ~ 12:00
+본문:
+1. Market Making
+- USD/KRW, CNY/KRW 시장가 조성
+- 필요 계산식은 KB에서 제공
+
+결정사항 / 미결사항
+
+이번 회의에서 도출된 실행 항목
+
+No.
+실행 항목
+담당자
+기한
+
+1
+Market Making 계산식 제공
+한거래 대리2026.07.06
+"""
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            documents=[{"chunk_id": "CHUNK-001", "document_id": "DOC-MEETING-001"}],
+            context={
+                "action": "EXTRACT_TODOS_FROM_MEETING",
+                "meeting_notes": meeting_notes,
+                "source_document_ids": ["DOC-MEETING-001"],
+                "normalized_input": {
+                    "meeting_todo_extraction": {
+                        "todo_items": [
+                            {
+                                "title": "본문에서 잘못 추출된 할일",
+                                "source_sentence": "Market Making",
+                            }
+                        ],
+                    }
+                },
+            },
+        )
+    )
+
+    assert response.success is True
+    todo_list = ScheduleTodoList.model_validate(response.result)
+    assert len(todo_list.todos) == 1
+    todo = todo_list.todos[0]
+    assert todo.title == "Market Making 계산식 제공"
+    assert todo.assignee == "한거래 대리"
+    assert todo.due_date == "2026-07-06"
+    assert todo.status == "NOT_STARTED"
+    assert todo.source_type == "MEETING_NOTES"
+    assert todo.source_document_id == "DOC-MEETING-001"
+    assert todo.source_chunk_ids == ["CHUNK-001"]
+    assert todo.metadata["extraction_strategy"] == "meeting_action_item_table"
+    assert response.result["metadata"]["extraction_strategy"] == "meeting_action_item_table"
+
+
+@pytest.mark.anyio
+async def test_schedule_management_agent_parses_pipe_meeting_action_item_table() -> None:
+    agent = ScheduleManagementAgent()
+
+    response = await agent.generate(
+        AgentRequest(
+            project_id="PRJ-001",
+            context={
+                "action": "EXTRACT_TODOS_FROM_MEETING",
+                "meeting_notes": """
+회의 일시: 2026.06.28
+
+이번 회의에서 도출된 실행 항목
+No. | 실행 항목 | 담당자 | 기한
+1 | Market Making 계산식 제공 | 한거래 대리 | 2026.07.06
+""",
+            },
+        )
+    )
+
+    assert response.success is True
+    todo_list = ScheduleTodoList.model_validate(response.result)
+    assert len(todo_list.todos) == 1
+    assert todo_list.todos[0].title == "Market Making 계산식 제공"
+    assert todo_list.todos[0].assignee == "한거래 대리"
+    assert todo_list.todos[0].due_date == "2026-07-06"
+
+
+@pytest.mark.anyio
 async def test_schedule_management_agent_rejects_missing_meeting_notes() -> None:
     agent = ScheduleManagementAgent()
 

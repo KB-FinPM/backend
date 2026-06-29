@@ -305,6 +305,40 @@ class ScheduleManagementAgent:
             self._meeting_notes_reference_date(meeting_notes)
             or self._current_date(context)
         )
+        table_todos = self._extract_todos_from_action_item_table(
+            meeting_notes=meeting_notes,
+            source_document_id=source_document_id,
+            source_chunk_ids=source_chunk_ids,
+            current_date=current_date,
+        )
+        if table_todos:
+            needs_confirmation_count = sum(
+                1
+                for todo in table_todos
+                if todo.get("status") == "NEEDS_CONFIRMATION"
+            )
+            return self._success(
+                {
+                    "artifact_type": "SCHEDULE_TODO_LIST",
+                    "action": "EXTRACT_TODOS_FROM_MEETING",
+                    "status": "SUCCESS",
+                    "todos": table_todos,
+                    "needs_confirmation": [
+                        todo
+                        for todo in table_todos
+                        if todo.get("status") == "NEEDS_CONFIRMATION"
+                    ],
+                    "needs_confirmation_count": needs_confirmation_count,
+                    "missing_fields": [],
+                    "candidates": [],
+                    "metadata": {
+                        "source": "meeting_notes",
+                        "extraction_strategy": "meeting_action_item_table",
+                        "todo_count": len(table_todos),
+                        "needs_confirmation_count": needs_confirmation_count,
+                    },
+                }
+            )
         extraction = self._normalized_meeting_todo_extraction(context)
         todos = self._todos_from_input_agent_extraction(
             extraction=extraction,
@@ -420,6 +454,264 @@ class ScheduleManagementAgent:
             )
 
         return self._dedupe_extracted_todos(todos)
+
+    def _extract_todos_from_action_item_table(
+        self,
+        *,
+        meeting_notes: str,
+        source_document_id: str | None,
+        source_chunk_ids: list[str],
+        current_date: date,
+    ) -> list[dict[str, Any]]:
+        rows = self._extract_action_item_table_rows(meeting_notes)
+        todos: list[dict[str, Any]] = []
+        for row in rows:
+            title = self._clean_todo_title(row.get("title") or "")
+            if not title:
+                continue
+            assignee = self._clean_action_table_cell(row.get("assignee") or "")
+            due_text = self._clean_action_table_cell(row.get("due_date") or "")
+            due_date, due_metadata = self._extract_due_date(due_text, current_date)
+            row_text = row.get("row_text") or " | ".join(
+                value
+                for value in (
+                    row.get("row_no"),
+                    title,
+                    assignee,
+                    due_text,
+                )
+                if value
+            )
+            todos.append(
+                {
+                    "todo_id": f"TODO-TEMP-{len(todos) + 1:03d}",
+                    "project_id": "",
+                    "title": title,
+                    "description": title,
+                    "assignee": assignee or "미정",
+                    "due_date": due_date,
+                    "related_artifact": None,
+                    "related_document": None,
+                    "source_type": "MEETING_NOTES",
+                    "status": "NOT_STARTED",
+                    "confidence": 0.95,
+                    "evidence": row_text,
+                    "source_sentence": row_text,
+                    "source_document_id": source_document_id,
+                    "source_chunk_ids": source_chunk_ids,
+                    "metadata": {
+                        "source_text": row_text,
+                        "source_sentence": row_text,
+                        "due_date_text": due_metadata.get("raw_text") or due_text,
+                        "extraction_strategy": "meeting_action_item_table",
+                        "section_title": "이번 회의에서 도출된 실행 항목",
+                        "row_no": row.get("row_no"),
+                    },
+                }
+            )
+
+        return self._dedupe_extracted_todos(todos)
+
+    def _extract_action_item_table_rows(self, meeting_notes: str) -> list[dict[str, str]]:
+        text = self._normalize_meeting_notes_text(meeting_notes)
+        lines = [line.strip() for line in text.splitlines()]
+        section_index = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if self._is_action_item_table_heading(line)
+            ),
+            None,
+        )
+        if section_index is None:
+            return []
+
+        section_lines = lines[section_index + 1 :]
+        pipe_rows = self._extract_pipe_action_item_rows(section_lines)
+        if pipe_rows:
+            return pipe_rows
+        return self._extract_line_action_item_rows(section_lines)
+
+    def _is_action_item_table_heading(self, line: str) -> bool:
+        normalized = re.sub(r"\s+", "", str(line or "")).lower()
+        if not normalized:
+            return False
+        return (
+            ("이번회의" in normalized and "실행" in normalized and "항목" in normalized)
+            or ("이번회의에서도출된실행항목" in normalized)
+            or normalized in {"실행항목", "액션아이템", "actionitems", "actionitem"}
+        )
+
+    def _extract_pipe_action_item_rows(self, lines: list[str]) -> list[dict[str, str]]:
+        rows: list[dict[str, str]] = []
+        header_seen = False
+        for line in lines:
+            if not line.strip():
+                if rows:
+                    break
+                continue
+            if "|" not in line:
+                if rows:
+                    break
+                continue
+            cells = self._collapse_adjacent_duplicates(
+                [cell.strip() for cell in line.strip("|").split("|")]
+            )
+            if not cells:
+                continue
+            joined = " ".join(cells)
+            if self._looks_like_action_table_header(joined):
+                header_seen = True
+                continue
+            if not header_seen or self._is_table_separator_row(cells):
+                continue
+            parsed = self._parse_action_item_cells(cells)
+            if parsed:
+                rows.append(parsed)
+        return rows
+
+    def _extract_line_action_item_rows(self, lines: list[str]) -> list[dict[str, str]]:
+        rows: list[dict[str, str]] = []
+        cursor = 0
+        while cursor < len(lines):
+            window = self._collapse_adjacent_duplicates(lines[cursor : cursor + 8])
+            if self._looks_like_action_table_header(" ".join(window)):
+                cursor += max(1, self._action_table_header_length(lines[cursor:]))
+                break
+            cursor += 1
+        else:
+            return []
+
+        while cursor < len(lines):
+            if not lines[cursor].strip():
+                if rows:
+                    break
+                cursor += 1
+                continue
+            if self._is_action_item_table_heading(lines[cursor]):
+                break
+            if not re.match(r"^\d+\.?$", lines[cursor].strip()):
+                if rows:
+                    break
+                cursor += 1
+                continue
+
+            row_no = lines[cursor].strip().rstrip(".")
+            cursor += 1
+            row_cells: list[str] = []
+            while cursor < len(lines):
+                line = lines[cursor].strip()
+                if not line:
+                    break
+                if re.match(r"^\d+\.?$", line) and row_cells:
+                    break
+                if self._is_action_item_table_heading(line):
+                    break
+                row_cells.append(line)
+                cursor += 1
+
+            cells = self._collapse_adjacent_duplicates([row_no, *row_cells])
+            parsed = self._parse_action_item_cells(cells)
+            if parsed:
+                rows.append(parsed)
+            if cursor < len(lines) and not lines[cursor].strip():
+                cursor += 1
+                if rows:
+                    break
+        return rows
+
+    def _looks_like_action_table_header(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", "", str(text or "")).lower()
+        return (
+            ("no" in normalized or "번호" in normalized)
+            and ("실행항목" in normalized or "액션아이템" in normalized)
+            and "담당" in normalized
+            and "기한" in normalized
+        )
+
+    def _action_table_header_length(self, lines: list[str]) -> int:
+        header_cells: list[str] = []
+        for index, line in enumerate(lines[:10], start=1):
+            if not line.strip():
+                continue
+            header_cells.append(line)
+            if self._looks_like_action_table_header(
+                " ".join(self._collapse_adjacent_duplicates(header_cells))
+            ):
+                return index
+        return 1
+
+    def _is_table_separator_row(self, cells: list[str]) -> bool:
+        return all(re.fullmatch(r"[-:\s]+", cell or "") for cell in cells)
+
+    def _parse_action_item_cells(self, cells: list[str]) -> dict[str, str] | None:
+        values = self._collapse_adjacent_duplicates(cells)
+        values = [self._clean_action_table_cell(value) for value in values]
+        values = [value for value in values if value]
+        if len(values) < 3:
+            return None
+
+        row_no = values[0].rstrip(".")
+        if not re.match(r"^\d+$", row_no):
+            return None
+
+        title = values[1]
+        if self._looks_like_action_table_header(title):
+            return None
+
+        assignee = values[2] if len(values) >= 3 else ""
+        due_date = values[3] if len(values) >= 4 else ""
+        if not due_date:
+            assignee, due_date = self._split_assignee_and_due_date(assignee)
+        elif self._contains_due_date(assignee) and not self._contains_due_date(due_date):
+            assignee, due_date = self._split_assignee_and_due_date(assignee)
+
+        if not title or not due_date:
+            return None
+
+        return {
+            "row_no": row_no,
+            "title": title,
+            "assignee": assignee,
+            "due_date": due_date,
+            "row_text": " | ".join(values),
+        }
+
+    def _collapse_adjacent_duplicates(self, values: list[str]) -> list[str]:
+        collapsed: list[str] = []
+        for value in values:
+            normalized = self._clean_action_table_cell(value)
+            if not normalized:
+                continue
+            if collapsed and collapsed[-1] == normalized:
+                continue
+            collapsed.append(normalized)
+        return collapsed
+
+    def _clean_action_table_cell(self, value: str) -> str:
+        text = self._normalize_meeting_notes_text(value)
+        text = re.sub(r"^\|+|\|+$", "", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip(" \t|")
+
+    def _split_assignee_and_due_date(self, value: str) -> tuple[str, str]:
+        text = self._clean_action_table_cell(value)
+        date_pattern = (
+            r"(20\d{2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}(?:\s*\([^)]+\))?"
+            r"|\d{1,2}\s*[./]\s*\d{1,2}(?:\s*\([^)]+\))?"
+            r"|20\d{2}년\s*\d{1,2}월\s*\d{1,2}일"
+            r"|\d{1,2}월\s*\d{1,2}일)"
+        )
+        match = re.search(date_pattern, text)
+        if not match:
+            return text, ""
+        assignee = text[: match.start()].strip()
+        due_date = match.group(0).strip()
+        return assignee, due_date
+
+    def _contains_due_date(self, value: str) -> bool:
+        _, due_date = self._split_assignee_and_due_date(value)
+        return bool(due_date)
 
     def _normalized_meeting_todo_extraction(
         self,
