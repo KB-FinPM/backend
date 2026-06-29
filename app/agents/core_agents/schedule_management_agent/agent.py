@@ -464,6 +464,7 @@ class ScheduleManagementAgent:
         current_date: date,
     ) -> list[dict[str, Any]]:
         rows = self._extract_action_item_table_rows(meeting_notes)
+        meeting_date = self._extract_meeting_date(meeting_notes)
         todos: list[dict[str, Any]] = []
         for row in rows:
             title = self._clean_todo_title(row.get("title") or "")
@@ -472,6 +473,9 @@ class ScheduleManagementAgent:
             assignee = self._clean_action_table_cell(row.get("assignee") or "")
             due_text = self._clean_action_table_cell(row.get("due_date") or "")
             due_date, due_metadata = self._extract_due_date(due_text, current_date)
+            due_date = due_date or self._extract_ymd_date(due_text)
+            start_date = meeting_date or due_date
+            end_date = due_date
             row_text = row.get("row_text") or " | ".join(
                 value
                 for value in (
@@ -489,6 +493,8 @@ class ScheduleManagementAgent:
                     "title": title,
                     "description": title,
                     "assignee": assignee or "미정",
+                    "start_date": start_date,
+                    "end_date": end_date,
                     "due_date": due_date,
                     "related_artifact": None,
                     "related_document": None,
@@ -506,11 +512,62 @@ class ScheduleManagementAgent:
                         "extraction_strategy": "meeting_action_item_table",
                         "section_title": "이번 회의에서 도출된 실행 항목",
                         "row_no": row.get("row_no"),
+                        "meeting_date": meeting_date,
                     },
                 }
             )
 
         return self._dedupe_extracted_todos(todos)
+
+    def _extract_meeting_date(self, meeting_notes: str) -> str | None:
+        text = self._normalize_meeting_notes_text(meeting_notes)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        label_pattern = re.compile(r"(회의\s*일시|회의\s*일자|회의일시|회의일자|일시)")
+
+        for index, line in enumerate(lines):
+            if not label_pattern.search(line):
+                continue
+            candidates = [line]
+            if index + 1 < len(lines):
+                candidates.append(lines[index + 1])
+            for candidate in candidates:
+                parsed = self._extract_ymd_date(candidate)
+                if parsed:
+                    return parsed
+
+        match = re.search(
+            r"(회의\s*일시|회의\s*일자|회의일시|회의일자|일시)[\s\S]{0,80}?"
+            r"(20\d{2})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})",
+            text,
+        )
+        if not match:
+            return None
+        return self._normalize_ymd_date(
+            int(match.group(2)),
+            int(match.group(3)),
+            int(match.group(4)),
+        )
+
+    def _extract_ymd_date(self, text: str) -> str | None:
+        match = re.search(
+            r"(?P<year>20\d{2})\s*(?:[.\-/]|년)\s*"
+            r"(?P<month>\d{1,2})\s*(?:[.\-/]|월)\s*"
+            r"(?P<day>\d{1,2})",
+            str(text or ""),
+        )
+        if not match:
+            return None
+        return self._normalize_ymd_date(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+        )
+
+    def _normalize_ymd_date(self, year: int, month: int, day: int) -> str | None:
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError:
+            return None
 
     def _extract_action_item_table_rows(self, meeting_notes: str) -> list[dict[str, str]]:
         text = self._normalize_meeting_notes_text(meeting_notes)
@@ -666,7 +723,7 @@ class ScheduleManagementAgent:
         elif self._contains_due_date(assignee) and not self._contains_due_date(due_date):
             assignee, due_date = self._split_assignee_and_due_date(assignee)
 
-        if not title or not due_date:
+        if not title:
             return None
 
         return {
